@@ -65,8 +65,7 @@ export function runIntegritySection(projectRoot: string, sessionId: string | nul
             `retire candidate: ${entry.name} owner=${owner ?? "unowned"} command=sasu implement retire --slug ${entry.name}${adoption}`,
           );
         }
-        if ((state.status === "complete" || state.status === "complete-pending-human" || state.status === "blocked" || state.status === "retired")
-          && state.worktree !== null && state.worktree !== undefined && fs.existsSync(state.worktree.path)) {
+        if (state.status === "retired" && state.worktree !== null && state.worktree !== undefined && fs.existsSync(state.worktree.path)) {
           orphans.push(
             `orphan worktree: ${entry.name} status=${state.status} path=${state.worktree.path} branch=${state.worktree.branch}`,
           );

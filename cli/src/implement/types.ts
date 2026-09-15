@@ -1,9 +1,9 @@
-import type { JudgeCallRecord, JudgeFailureCause, ReviewFinding, ReviewResult, ReviewValidationContext } from "../judge/types";
+import type { JudgeCallRecord, JudgeFailureCause } from "../judge/types";
 
-// Each role retains its settled assessment under the original input identity.
-export const IMPLEMENT_SCHEMA = "sasu.implement.state.v10" as const;
+// Implementation state records reproducible execution facts and run authority.
+export const IMPLEMENT_SCHEMA = "sasu.implement.state.v11.stateless-verification" as const;
 export const IMPLEMENT_ACTIVE_SCHEMA = "sasu.implement.active.v3" as const;
-export const RETIRED_IMPLEMENT_SUPPORT_COMMIT = "3f549dcfff71fe1f7fa974a383f6e8a055ce8463";
+export const RETIRED_IMPLEMENT_SUPPORT_COMMIT = "9149d9826fad2af3ba7200761e674b5228ef9b7d";
 export const RETIRED_PARALLEL_REVIEW_SUPPORT_COMMIT = "2b1f638dd587261be7e7b0e600db16657421971d";
 export function retiredImplementSupportCommit(schema: unknown): string {
   return schema === "sasu.implement.state.v9.parallel-review" || schema === "sasu.implement.receipt.v5.parallel-review"
@@ -70,88 +70,6 @@ export interface MechanicalRunRecord {
   logPath: string;
 }
 
-export type FindingOrigin = "prior-unresolved" | "new";
-export type DeltaBasis =
-  | { kind: "changed-path" | "new-evidence"; value: string }
-  | { kind: "contract-counterevidence"; value: string; requirementRefs: string[]; evidenceRefs: string[] };
-export interface HumanResponse { at: string; response: "confirmed" | "rejected"; evidence: string }
-export interface FindingDispositionRecord {
-  at: string;
-  attemptId: string | null;
-  status: "open" | "resolved" | "confirmed" | "amended";
-  reason: string;
-  evidenceRefs: string[];
-  amendmentId?: number;
-}
-export interface TrackedReviewFinding extends ReviewFinding {
-  id: string;
-  originAttemptId: string;
-  status: "open" | "resolved" | "confirmed" | "amended";
-  history: FindingDispositionRecord[];
-  responses: HumanResponse[];
-}
-export interface RiskFinding {
-  id: string;
-  severity: "blocking" | "advisory";
-  text: string;
-  origin?: FindingOrigin;
-  priorFindingId?: string;
-  deltaBasis?: DeltaBasis;
-}
-
-export interface RiskDisposition {
-  id: string;
-  status: "resolved" | "unresolved";
-  reason: string;
-  /** Required when resolving a prior blocking risk. */
-  deltaBasis?: DeltaBasis;
-}
-
-export interface RiskLaneResult {
-  verdict: "PASS" | "FAIL";
-  findings: RiskFinding[];
-  priorDispositions?: RiskDisposition[];
-}
-
-/** One risk finding tracked across attempts in the state-owned ledger. */
-export interface TrackedRiskFinding {
-  /** Stable `RF<n>`, assigned once and never reused. */
-  id: string;
-  severity: "blocking" | "advisory";
-  text: string;
-  /** Attempt where this finding first entered the ledger. */
-  originAttemptId: string;
-  status: "open" | "fixed" | "accepted";
-  /** Judge delta proof for fixed, or verbatim user approval for accepted. */
-  resolution?: { at: string; evidence: string };
-  /**
-   * Declared unfixable, so no further judge round can change it (R16 ③).
-   *
-   * The finding STAYS open - that is the point. It does not release
-   * `finalize --status complete`; it releases the honest `--status blocked`
-   * close without first burning rounds whose outcome is already known.
-   *
-   * The declaration is a human's, quoted verbatim, because whether a defect
-   * is structural is a judgment and the harness has no instrument for it
-   * (D-39). `roundsUnchanged` is the one structural fact the harness DOES
-   * own - how many judged attempts the finding survived - and it rides along
-   * as corroboration in the receipt, never as the gate.
-   */
-  nonConvergence?: { at: string; approval: string; reason: string; declaredBy: IssuerLabel; roundsUnchanged: number };
-}
-
-export interface VerificationInputManifest {
-  source: SourceEntry[];
-  evidence: Array<{ path: string; sha256: string }>;
-}
-export interface VerificationRoundContext {
-  priorAttemptId: string | null;
-  changedPaths: string[];
-  newEvidence: Array<{ path: string; sha256: string }>;
-  /** Exact references available for a newly discovered risk, even on unchanged source. */
-  requirementRefs?: string[];
-  evidenceRefs?: string[];
-}
 export interface LaneRecord<T> {
   invocationId: string;
   startedAt: string;
@@ -161,136 +79,45 @@ export interface LaneRecord<T> {
   result: T | null;
   judge: JudgeCallRecord | null;
   error: JudgeLaneError | null;
-  /**
-   * The attempt this settled lane was reused from, on a repair round. The
-   * invocation, result and judge record are that attempt's, byte for byte;
-   * only the attempt that reads them is new. Absent on a lane this attempt
-   * executed itself.
-   */
-  carriedFrom?: string;
 }
-
-export type RoutineReviewRole = "fidelity" | "code";
-export const ROUTINE_REVIEW_ROLES: readonly RoutineReviewRole[] = ["fidelity", "code"];
-export type VerificationLane = RoutineReviewRole | "risk";
-/**
- * Where an assessment's grounds come from. `reviewed` is this attempt's own
- * inspection; `carried` restates a satisfied ground the same role settled at
- * the focused round's anchor attempt, on evidence whose bytes have not changed
- * since. Absent means `reviewed`: a reviewer that ignores the scoping and
- * re-reviews everything is producing a full review, which is always
- * acceptable, so the harness only has to check what a reviewer explicitly
- * claims to have skipped.
- */
-export type AssessmentBasis = "reviewed" | "carried";
-export interface ReviewAssessment {
-  requirementRefs: string[];
-  conclusion: "satisfied" | "unresolved" | "pending-human";
-  rationale: string;
-  evidenceRefs: string[];
-  basis?: AssessmentBasis;
-}
-/** The reviewer's own account of how far a focused round actually reached. */
-export interface ReviewScopeDeclaration { basis: "focused" | "widened"; reason: string }
-export interface ImplementationReviewResult extends ReviewResult { assessments: ReviewAssessment[]; scope?: ReviewScopeDeclaration }
-/**
- * What a focused round may build on, pinned with the attempt so the record
- * that accepted a carried ground also holds the ground it was carried from
- * and the change set it was checked against.
- */
-export interface FocusedReviewScope {
-  mode: "focused";
-  anchorAttemptId: string;
-  /** Each role's settled assessments at the anchor; a role may carry only from its own. */
-  anchorAssessments: Record<RoutineReviewRole, ReviewAssessment[]>;
-  /** References whose bytes differ from the anchor: changed product paths, their change chunks, and new or replaced evidence. */
-  invalidatedEvidenceRefs: string[];
-  /** Requirements named by open blocking findings at review start; these are re-reviewed, never carried. */
-  reopenedRequirementRefs: string[];
-}
-export type ReviewScope = { mode: "full" } | FocusedReviewScope;
-/**
- * The findings, risk ledger and attributed claims exactly as the reviewers of
- * one attempt were shown them, before that attempt's own reconciliation. A
- * repair round hands the same bytes to the role that failed, so the role that
- * settled and the role that is rerun judged one input and neither saw the
- * other's verdict.
- */
-export interface ReviewLedgerSnapshot {
-  findings: TrackedReviewFinding[];
-  riskFindings: TrackedRiskFinding[];
-  claims: Array<{ origin: ClaimOrigin; subject: string; text: string }>;
-}
-export interface ImplementationReviewContext extends ReviewValidationContext {
-  requiredRequirementRefs: readonly string[];
-  actualEvidenceRefs: readonly string[];
-  humanSources: Readonly<Record<string, string>>;
-  /** Absent only on records made before scoped review existed; those attempts were full reviews. */
-  scope?: ReviewScope;
-  /**
-   * The ledger the reviewers of this attempt were shown; a repair round hands
-   * the same bytes to the lane it reruns and rebuilds the ledger from them.
-   * What licenses the repair is the attempt's `inputFingerprint`,
-   * `reviewPolicySha256` and the verb log, compared in `planReview`; no digest
-   * of this context is pinned, because on a repair the context is built from
-   * these same records and a digest of it could only agree with itself.
-   */
-  ledgerSnapshot?: ReviewLedgerSnapshot;
-}
-/** How one attempt chose to spend its review, recorded for the operator and the receipt. */
-export interface ReviewExecutionRecord {
-  mode: "full" | "focused" | "repair";
-  reason: string;
-  /** focused: the anchor whose grounds may be carried; repair: the attempt whose settled lanes are reused. */
-  referenceAttemptId: string | null;
-  executedLanes: VerificationLane[];
-  carriedLanes: VerificationLane[];
-}
-export type RoutineReviews = Record<RoutineReviewRole, LaneRecord<ImplementationReviewResult> | null>;
 
 export interface UnifiedVerificationAttempt {
   id: string;
   prdSha256: string;
-  reviewContext: ImplementationReviewContext | null;
   inputFingerprint: string;
-  /**
-   * The input identity without source and registered evidence: schema, PRD,
-   * intent, suite ledger and amendments. Equal contract fingerprints across
-   * two attempts mean only the product and its observations moved, which is
-   * the precondition for reviewing the delta rather than the whole.
-   */
-  contractFingerprint?: string;
-  /**
-   * sha256 of what shaped the review policy: the CLI contract version, the
-   * judge routing configuration and the run's review profile. A settled
-   * judgment is reused or built on only under the policy that produced it.
-   */
-  reviewPolicySha256?: string;
   sourceFingerprint: string;
-  inputManifest: VerificationInputManifest;
-  roundContext: VerificationRoundContext;
   intentInput: { routing: "decisions" | "full-qa-log"; contentSha256: string };
   startedAt: string;
   finishedAt: string;
   durationMs: number;
-  phase: "preflight" | "mechanical" | "evidence" | "review" | "complete";
+  phase: "preflight" | "mechanical" | "evidence" | "complete";
   verdict: VerificationStatus;
   prelint: { ok: boolean; findings: unknown[] };
   mechanical: MechanicalRunRecord[];
-  reviews: RoutineReviews;
-  risk: LaneRecord<RiskLaneResult> | null;
-  /** Absent on records made before scoped review existed; those attempts reviewed in full. */
-  reviewScope?: ReviewExecutionRecord;
   error: { stage: string; code: string; message: string } | null;
 }
+
+export interface VerificationReportIdentity {
+  schema: "sasu.verification-report.v1";
+  inputFingerprint: string;
+  prdSha256: string;
+  baseSha: string | null;
+  headSha: string | null;
+  sourceFingerprint: string;
+  generatedAt: string;
+  status: "PASS" | "FAIL" | "ERROR";
+  jsonPath: string;
+  markdownPath: string;
+  /** Hash of the complete verification-report.json bytes. */
+  reportSha256: string;
+}
 export type IssuerLabel = "implementor" | "observer" | "human";
-export type ClaimOrigin = "human" | "observer" | "solver";
-export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "risk" | "verify" | "finalize" | "confirm";
+export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify";
 export interface ImplementEvent {
   id: number; at: string; kind: ImplementEventKind; actor: IssuerLabel;
   subject: string | null; summary: string;
 }
-export type IssuedCommand = "artifact" | "verify" | "finalize" | "risk" | "confirm" | "escalate" | "risk-non-convergent" | "amend" | "retire";
+export type IssuedCommand = "artifact" | "verify" | "escalate" | "amend" | "retire";
 export type VerbRejectionCheck = "arguments" | "authority" | "transition";
 export interface VerbRecord {
   id: number;
@@ -367,7 +194,7 @@ export interface SuiteLedger {
   results: SuiteResult[];
 }
 
-export interface SolverHandoff { prdSnapshotPath: string; diagnosisPath: string; findingsPath: string }
+export interface SolverHandoff { prdSnapshotPath: string; diagnosisPath: string; verificationPath: string }
 export interface EscalationRecord {
   id: number;
   at: string;
@@ -408,7 +235,7 @@ export interface ActiveVerification {
 }
 export interface ImplementState {
   schema: typeof IMPLEMENT_SCHEMA;
-  status: "active" | "complete-pending-human" | "complete" | "blocked" | "retired";
+  status: "active" | "retired";
   topicSlug: string;
   projectRoot: string;
   worktree?: { path: string; branch: string } | null;
@@ -430,12 +257,9 @@ export interface ImplementState {
   adoptions?: { at: string; fromSessionId: string; evidence: string }[];
   requirements: BehaviorRequirement[];
   activeVerification?: ActiveVerification;
-  findings: TrackedReviewFinding[];
   artifacts: RegisteredArtifact[];
   verificationAttempts: UnifiedVerificationAttempt[];
-  budgetGrants?: { at: string; evidence: string; attemptCountBefore: number }[];
   deviations: { at: string; type: string; summary: string }[];
-  riskFindings: TrackedRiskFinding[];
   events: ImplementEvent[];
   evidenceReplacements: EvidenceReplacement[];
   verbs: VerbRecord[];
@@ -448,12 +272,7 @@ export interface ImplementState {
     adoptedFromSessionId?: string;
     adoptionEvidence?: string;
   } | null;
-  completion: {
-    fingerprint: string;
-    completedAt: string;
-    receiptPath: string;
-    implementationResultPath: string;
-  } | null;
+  verificationReport: VerificationReportIdentity | null;
   createdAt: string;
   updatedAt: string;
 }

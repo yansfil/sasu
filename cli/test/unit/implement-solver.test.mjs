@@ -52,7 +52,7 @@ test("AC33: any field beyond the three is refused, so the solver cannot smuggle 
 test("AC33: the prompt tells the solver it does not write, and asks only for the three fields", () => {
   const prompt = solverPrompt({
     target: "T5", reason: "eight rounds on one binding",
-    prd: "PRD BODY", findings: "{}", paneExcerpt: "recent output", paneProblem: null,
+    prd: "PRD BODY", verification: "{}", paneExcerpt: "recent output", paneProblem: null,
   });
   assert.match(prompt, /You do not write code, you do not change state, and you do not act/);
   assert.match(prompt, /PRD BODY/);
@@ -62,7 +62,7 @@ test("AC33: the prompt tells the solver it does not write, and asks only for the
 
 test("AC33: a missing diagnosis channel degrades the envelope instead of hiding the gap", () => {
   const prompt = solverPrompt({
-    target: null, reason: "r", prd: "P", findings: "{}",
+    target: null, reason: "r", prd: "P", verification: "{}",
     paneExcerpt: null, paneProblem: "read unavailable: not running under herdr",
   });
   assert.match(prompt, /Unavailable: read unavailable: not running under herdr/);
@@ -75,7 +75,7 @@ test("AC33: a missing diagnosis channel degrades the envelope instead of hiding 
 const HANDOFF = {
   prdSnapshotPath: "agents/runs/fixture/prd.md",
   diagnosisPath: "agents/runs/fixture/artifacts/solver/diagnosis-1.md",
-  findingsPath: "agents/runs/fixture/artifacts/solver/findings-1.json",
+  verificationPath: "agents/runs/fixture/artifacts/solver/verification-1.json",
 };
 
 test("AC34: the briefing names exactly the three artifacts", () => {
@@ -118,7 +118,7 @@ test("AC35: escalations are accepted below the constant bound and refused at it"
     assert.match(error.message, new RegExp(`used all ${ESCALATE_LIMIT_PER_RUN} escalations`));
     // A refusal that does not say what to do instead leaves the supervisor
     // with nowhere to go, which is how a run gets abandoned instead of closed.
-    assert.match(error.message, /amend the PRD or finalize blocked/);
+    assert.match(error.message, /amend the PRD or record the unresolved limitation/);
     return true;
   });
 });

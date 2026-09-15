@@ -7,7 +7,6 @@ const SKILL_NAMES = Object.freeze([
   "interview-me",
   "gen-prd",
   "implement",
-  "benchmark-implement",
   "ship",
   "sasu-setup",
   "please",

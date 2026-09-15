@@ -4,7 +4,7 @@ import path from "node:path";
 
 // The harness lanes whose output is run state, not reviewable project work.
 // agents/runs/ holds gate verdicts and implement state; agents/quick/ holds a
-// quick lane's generated contract, receipt, verify verdict, evidence blobs and
+// quick lane's generated contract, verification report, evidence blobs and
 // its .quick-active.json pointer. Neither is human-approved before it is
 // written, so neither belongs in a commit or a PR diff. The committed half of
 // the namespace (agents/prd/, agents/rules/, agents/config.json) is approved

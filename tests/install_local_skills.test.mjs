@@ -35,8 +35,8 @@ test("installer installs canonical skills with correct substitutions and no alia
   const result = runInstaller(home);
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, true);
-  assert.equal(report.installed.codex.length, 10);
-  assert.equal(report.installed.claude.length, 10);
+  assert.equal(report.installed.codex.length, 9);
+  assert.equal(report.installed.claude.length, 9);
 
   const codexInterview = path.join(home, ".codex", "skills", "interview-me", "SKILL.md");
   const codexInterviewText = fs.readFileSync(codexInterview, "utf8");
@@ -85,17 +85,6 @@ test("installer installs canonical skills with correct substitutions and no alia
   const claudePlease = fs.readFileSync(path.join(home, ".claude", "skills", "please", "SKILL.md"), "utf8");
   assert.match(claudePlease, /~\/\.claude\/skills\/gen-prd\/SKILL\.md/);
 
-  const codexBenchmark = fs.readFileSync(path.join(home, ".codex", "skills", "benchmark-implement", "SKILL.md"), "utf8");
-  assert.match(codexBenchmark, /\$benchmark-implement/);
-  assert.match(codexBenchmark, /~\/\.codex\/skills\/implement\/SKILL\.md/);
-  assert.match(codexBenchmark, /current coordinator session/);
-  assert.match(codexBenchmark, /Do not spawn an implementation worker session/);
-  assert.doesNotMatch(codexBenchmark, /delegate implementation, gathers/);
-  const claudeBenchmark = fs.readFileSync(path.join(home, ".claude", "skills", "benchmark-implement", "SKILL.md"), "utf8");
-  assert.match(claudeBenchmark, /\/benchmark-implement/);
-  assert.match(claudeBenchmark, /~\/\.claude\/skills\/implement\/SKILL\.md/);
-  assert.doesNotMatch(claudeBenchmark, /\$benchmark-implement/);
-
   // Auxiliary entries are symlinks into the repo; Codex-only entries are skipped for Claude.
   const claudeScripts = path.join(home, ".claude", "skills", "implement", "scripts");
   assert.ok(fs.lstatSync(claudeScripts).isSymbolicLink());
@@ -110,7 +99,7 @@ test("installer installs canonical skills with correct substitutions and no alia
     if (!referenceName.endsWith(".md")) continue;
     const referenceText = fs.readFileSync(path.join(claudeReferences, referenceName), "utf8");
     assert.doesNotMatch(referenceText, /~\/\.codex\/skills\//, `${referenceName} keeps a Codex path`);
-    assert.doesNotMatch(referenceText, /\$(interview-me|gen-prd|implement|benchmark-implement|ship|sasu-setup|please|remember)\b/, `${referenceName} keeps a Codex invocation token`);
+    assert.doesNotMatch(referenceText, /\$(interview-me|gen-prd|implement|ship|sasu-setup|please|remember)\b/, `${referenceName} keeps a Codex invocation token`);
   }
   // Codex references stay symlinked (verbatim source is correct there).
   assert.ok(fs.lstatSync(path.join(home, ".codex", "skills", "implement", "references")).isSymbolicLink());
@@ -148,15 +137,19 @@ test("installer removes owned legacy directories and keeps foreign ones", () => 
   const ownedAlias = path.join(home, ".codex", "skills", "ho-build");
   fs.mkdirSync(ownedAlias, { recursive: true });
   fs.writeFileSync(path.join(ownedAlias, "SKILL.md"), "---\nname: ho-build\n---\n\n# ho-build compatibility alias\n");
+  const retiredBenchmark = path.join(home, ".codex", "skills", "benchmark-implement");
+  fs.mkdirSync(retiredBenchmark, { recursive: true });
+  fs.writeFileSync(path.join(retiredBenchmark, "SKILL.md"), "---\nname: benchmark-implement\n---\n\n# retired receipt benchmark\n");
   // An unrelated skill that happens to use a legacy directory name.
   const foreignLegacy = path.join(home, ".codex", "skills", "intake");
   fs.mkdirSync(foreignLegacy, { recursive: true });
   fs.writeFileSync(path.join(foreignLegacy, "SKILL.md"), "---\nname: someone-elses-intake\n---\n\n# other\n");
 
   const report = JSON.parse(runInstaller(home).stdout);
-  assert.deepEqual(report.removedLegacy.codex, [ownedLegacy, ownedAlias]);
+  assert.deepEqual(report.removedLegacy.codex, [ownedLegacy, ownedAlias, retiredBenchmark]);
   assert.equal(fs.existsSync(ownedLegacy), false);
   assert.equal(fs.existsSync(ownedAlias), false);
+  assert.equal(fs.existsSync(retiredBenchmark), false);
   assert.equal(fs.existsSync(foreignLegacy), true);
 });
 
@@ -285,10 +278,10 @@ test("installer validates every skill target before replacing the CLI shim or an
 test("installer changes no runtime contracts when CLI preparation fails", () => {
   const home = freshHome();
   const fakeBin = path.join(home, "fake-bin");
-  const pnpm = path.join(fakeBin, "pnpm");
+  const npm = path.join(fakeBin, "npm");
   const existing = path.join(home, ".codex", "skills", "implement", "KEEP.txt");
   fs.mkdirSync(fakeBin, { recursive: true });
-  fs.writeFileSync(pnpm, "#!/bin/sh\nexit 17\n", { mode: 0o755 });
+  fs.writeFileSync(npm, "#!/bin/sh\nexit 17\n", { mode: 0o755 });
   fs.mkdirSync(path.dirname(existing), { recursive: true });
   fs.writeFileSync(existing, "unchanged\n");
   fs.writeFileSync(

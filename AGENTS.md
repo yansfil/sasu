@@ -1,86 +1,77 @@
 # AGENTS.md
 
-Guidance for any agent working on this repository - the harness itself, not a
-project running under it.
+Guidance for agents changing the Sasu harness itself.
 
 ## Review Guide
 
-The harness exists to make "done" a provable state. The standing risk is that
-the proof machinery grows heavier than the work it proves. One sentence anchors
-every review:
+Sasu makes completed work inspectable without making verification heavier than the work.
+One sentence anchors every review:
 
-> Verification is the senior sitting next to the implementation. It must be
-> clean, intuitive, mistake-free, and efficient (깔끔하게 · 직관적으로 ·
-> 실수없이 · 효율적으로) - and it must never become a second implementation
-> that outweighs the first.
+> Verification is the senior sitting next to the implementation.
+> It must be clean, intuitive, mistake-free, and efficient.
 
-Apply these to every design proposal, diff review, and refactor. Items 1 and 2
-are a pair, read together or not at all: ceremony gets cut, proof never does.
+Apply these principles together:
 
-1. **Preserve every requirement and review the complete contract.** Every
-   requirement remains in the PRD and independent review input.
-   Use sufficient actual implementation, test, and observation evidence; do not
-   require a separate proof record, lifecycle, PASS object, or judge call per requirement.
-   Fidelity records every Bn in grouped assessments with actual evidence references; Code records its own substantive grounds without duplicate all-Bn accounting.
-   The CLI guarantees structural coverage, execution facts, and input integrity; satisfaction is independent semantic judgment and must be evaluated with planted omissions.
-2. **Verification must not outweigh implementation.** Measure actual review and
-   execution wall-clock, calls, and overlap.
-   Remove repeated bookkeeping and redundant observation while preserving every
-   requirement and sufficient actual evidence.
-3. **Fix the one cause, not the N symptoms.** Five patches to five sites is
-   usually one missing concept. Prefer the change that makes the failure class
-   structurally impossible.
-4. **Every stage earns its place, and every addition names its deletion.** Name
-   the failure a stage uniquely catches, or merge it. Any proposal that adds a
-   concept, flag, command, or escape hatch states what leaves with it and shows
-   the net account.
-5. **Parallel by default.** A sequential chain needs a real data dependency.
-   Running work concurrently assumes nothing; *skipping* work assumes the
-   verdict is a pure function of the inputs compared, which here is usually
-   false. Fan out freely; before skipping, prove purity.
-6. **Observe product flows and risk boundaries; review the whole contract.**
-   Group actual observations where one flow supports several requirements.
-   Compare the complete requirements and decisions with the implementation and shared evidence; Bn references identify findings and assessment scope, never progress states.
-7. **The harness absorbs complexity - never the workflow user, never a doc.**
-   Enforce structure, integrity, authority, actual execution, freshness, and
-   convergence in code.
-   Leave meaning and evidence sufficiency to independent review.
-   Do not replace retired CLI ceremony with mandatory Markdown checklists.
-8. **The whole flow must stay explainable.** One diagram, one small concrete
-   example. A wall of text means the structure is the bug.
-9. **Measure it; re-verify before relying on it.** Retest recorded constraints
-   before leaning on them, and record measured data in why-comments. A change
-   is believed after a real end-to-end run and its transcript, not after unit
-   tests pass.
-10. **Records stay honest and singular.** Unrun means unrun, unavailable means
-    unverified, and a past result never becomes a current PASS by assertion.
-    `state.json` is the only authority; receipts derive from current recorded inputs.
-    Settled role judgments remain unchanged in verification history; corrections append a new attempt.
-11. **General, not overfit.** Hold across project shapes and case sizes, not
-    just the incident that motivated the change. Detection built from one
-    sample looks like a guard and behaves like a coin flip: key on structure,
-    not on how one document happened to phrase something.
-12. **Compare outward before inventing.** Import the idea, not the machinery.
-13. **Never loop on a stage that cannot converge.** Preserve concrete findings
-    and explicit resolution history within a harness-owned round bound.
-    A real omission in an unchanged file still counts; optional advice does not
-    trigger endless reviews, and open blocking risk cannot reset the budget.
+1. **Preserve the complete contract.**
+   Every requirement stays in the approved PRD and reaches visible independent review with enough source, test, and observation evidence.
+   Do not create a proof object or lifecycle per requirement.
+2. **Verification must stay smaller than implementation.**
+   The CLI owns deterministic facts only.
+   Semantic review belongs to native runtime subagents and people.
+3. **Fix one cause, not many symptoms.**
+   Prefer the concept that makes a failure class impossible.
+4. **Every stage earns its place.**
+   A new stage names the unique failure it catches and the machinery it replaces.
+5. **Parallel by default.**
+   Run independent suites and review roles concurrently when their inputs are ready.
+6. **Observe real product flows and risk boundaries.**
+   One observation may support several requirements.
+7. **Keep workflow complexity out of user-facing ceremony.**
+   Do not replace deleted CLI state with mandatory Markdown ledgers.
+8. **Keep the whole flow explainable with one diagram and one example.**
+9. **Measure and re-verify.**
+   Believe a change after a real end-to-end run, not only a build.
+10. **Keep records honest and singular.**
+    Unrun is unrun, unavailable is unavailable, and an old PASS never becomes current by assertion.
+11. **Design general rules from structure, not one fixture's wording.**
+12. **Compare outward before inventing machinery.**
+13. **Never loop on a stage that cannot converge.**
+    Request one review set per current head and report unresolved advice honestly.
 
-The approved [2026-09-08 workflow change](docs/plans/2026-09-08-workflow-simplification.md) explicitly replaces the old per-AC proof and per-AC judge policies in items 1 and 6.
-This is a policy change, not a reinterpretation of the retired rules.
-The subsequent approved production change replaces the comprehensive reviewer with parallel Fidelity and Code reviews and adds CLI-validated grouped assessment records without restoring per-AC execution or evidence ceremony.
-The user-approved [2026-09-09 source exploration change](docs/plans/2026-09-09-review-input-capacity.md) replaces preselected-file-only review with autonomous discovery inside a fixed product source copy.
-This explicitly changes the old exact-selected-files restriction; product and evidence reads remain confined to the fixed copy rather than the live worktree or other host data.
+The approved [stateless verification change](docs/plans/2026-09-15-stateless-verification.md) replaces receipt-backed completion, in-CLI implementation judges, correction budgets, and reviewer finding state.
+Full reasoning lives in [PRINCIPLES.md](PRINCIPLES.md).
 
-Full text, with the reasoning and the incidents behind each item:
-[`PRINCIPLES.md`](PRINCIPLES.md). When a review cites a principle, cite it by
-number.
+## Current Verification Contract
+
+```text
+approved PRD and committed Git head
+  -> sasu implement verify
+     -> PRD prelint
+     -> sealed required suites
+     -> source and evidence integrity
+     -> current verification-report.json and .md
+  -> native Fidelity and Code subagents
+  -> fix current-scope defects; record later improvements
+  -> GitHub CI and human review
+```
+
+`sasu implement verify` never starts a model or decides whether a semantic review passed.
+Native subagent review is visible and advisory.
+Its output uses `Fix now`, `Follow-up improvements`, and `What was checked`.
+High-risk changes add an independent Security review.
+Reviewer timeouts and runtime failures are reported as `REVIEW_UNAVAILABLE` and do not rewrite deterministic results.
+
+`state.json` is the only mutable run record.
+It stores ownership, the sealed PRD and suite, evidence registrations, actual verification attempts, and the current report identity.
+The report is derived from current inputs and becomes stale after source, contract, suite, or evidence changes.
+Delivery requires the report head to equal the current Git HEAD and refuses Git-visible uncommitted changes.
+There is no receipt, finalize command, reviewer ledger, semantic correction budget, or second writer.
 
 ## Working Rules
 
-**Tests.** Before a coherent commit that touches `cli/`, clean generated
-`cli/dist` only in the owned implementation worktree, then run all checks
-against the same final source in this order:
+### Tests
+
+Before a coherent commit that touches `cli/`, clean generated `cli/dist` only in the owned worktree and run these checks against the same final source in this order:
 
 ```sh
 npm --prefix cli run build
@@ -89,169 +80,59 @@ npm --prefix cli test
 npm --prefix cli run test:e2e
 ```
 
-Run `./cli/node_modules/.bin/tsc -p cli/tsconfig.json --noEmit` promptly after
-coupled source/caller edits.
-Focused tests serve intermediate work; the final repository-wide suite rule
-wins over the general engineering principle 12's low-impact test-cost default.
-A passing build or fixture suite is not live end-to-end validation.
+Run `./cli/node_modules/.bin/tsc -p cli/tsconfig.json --noEmit` promptly after coupled source and caller edits.
+Focused tests are useful during development.
+The final repository-wide suite remains required.
+Golden files regenerate only with deliberate `UPDATE_GOLDEN=1` use.
 
-Golden files regenerate with `UPDATE_GOLDEN=1`; regenerate deliberately, never
-to make a failure go away.
+### Namespaces And Layering
 
-**Namespaces.** Run artifacts live in the target project under `agents/**`
-(`agents/interview/**`, `agents/prd/**`, `agents/runs/**`, `agents/benchmarks/**`,
-`agents/rules/**`, `agents/config.json`, and historical ignored layouts) - the only
-namespace the harness reads or writes. It is bookkeeping, never a verification
-input: nothing under `agents/**` belongs in a judged diff or a freshness
-fingerprint.
+Run artifacts live only under the target project's `agents/**` namespace.
+Bookkeeping never belongs in the judged product diff or source freshness fingerprint.
+Public implementation behavior lives in `cli/src/implement/` and is exposed through `sasu implement ...`.
+Shared document and PRD gate helpers stay in `cli/lib/`.
+`skills/implement/scripts/prd_state_harness.js` is a removed-entrypoint tombstone.
 
-**Module layering.** Public implement behavior lives in `cli/src/implement/` and
-is exposed only through `sasu implement ...`.
-Shared document and gate helpers remain in `cli/lib/`; new implement state and
-completion authority must not be added there.
-`skills/implement/scripts/prd_state_harness.js` is a removed-entrypoint
-tombstone, not an implementation surface.
+### State And Authority
 
-**Lifecycle hooks.** The pipeline remains CLI-owned; the installer registers two runtime hooks.
-`scripts/challenge_trigger.mjs` on `UserPromptSubmit` turns the `!rv` token into a routing instruction for the `challenge` skill plus its round budget.
-It reads the prompt, writes no state, blocks nothing, and exits 0 on any payload it does not recognise.
-The adversarial round cap lives in that script because a bound that exists only as prose is a request for discipline, not a guard (items 7 and 13).
-The user-approved intermediate-commit policy adds `scripts/commit_reminder.mjs` on `PostToolUse`: an advisory reminder at 10 run-owned uncommitted files or 500 added-plus-deleted lines.
-It never stages, commits, blocks, or changes lifecycle state; its disposable rate-limit cache lives under `agents/**`, never in `state.json`.
-The reminder replaces reliance on end-of-run commit discipline, not any verification or completion check.
-Any hook this installer has ever registered must stay listed in `HARNESS_HOOK_MARKERS`, or a later run cannot retract it without disturbing a foreign hook.
+The CLI is the only writer of `state.json`.
+Mutating commands declare `implementor`, `observer`, or `human` issuer authority according to `skills/implement/SKILL.md`.
+Issuer is an audit declaration, with the session transcript as its supporting evidence.
+`amend` is human-only and invalidates the current verification report.
+`retire` ends a run before delivery.
+`finalize`, `confirm`, and implementation `risk` are retired and fail explicitly.
 
-**Supervision and state attribution.** The CLI is the only physical writer of
-`state.json`, and domain changes carry an issuer declaration: `implementor`,
-`observer`, or `human`.
-Issuer is an audit declaration, not authentication; the transcript is the
-mitigation for a false declaration.
-The Observer cannot register implementation evidence, verify, finalize, accept
-risk, or retire an implementation; it observes and escalates.
-`confirm`, `amend`, and `risk --non-convergent` are human-only.
-Existing user authorization remains sufficient when it covers the action.
-The full authority/flag table lives in `skills/implement/SKILL.md` and is tested
-against help and the dispatch authority registry in both directions.
-
-**Verification execution lease.** One whole-verify lease holds the owner,
-token, fixed inputs, host/process identity, and child process groups from suite
-execution through judge completion and result persistence.
-All other domain mutations, including risk, confirm, retire, amend, escalation,
-and ownership changes, are refused while it lives.
-Its own progress/close and refusal history merge safely into the latest state
-with CAS.
-A dead owner with live children is interrupted only after process-group cleanup
-is verified; an uncertain process state is not permission to steal the lease.
+One verification lease covers the full deterministic run from suite execution through report persistence.
+Other state mutations are refused while the lease exists.
+Dead-owner recovery verifies child process cleanup before taking the lease.
 Read-only status and event waiting remain available.
 
-**Event wake, not polling.** `sasu implement await` is a background one-shot
-that blocks on the append-only event log inside `state.json` and exits for
-exactly one of three reasons: a new event past its `--since` cursor, a
-no-progress stall past a code constant, or the watched target no longer being
-followable. That last one is not proof of process death - a moved pane or a
-changed identity reports the same way - so it means inspect, never replace.
-Events already past the cursor return immediately, so an event raised while
-nobody watched is not lost. A refused verb raises no event - nothing changed,
-so nobody needs waking. This registers no hook; see Lifecycle hooks.
+### Evidence And Delivery
 
-A named target adds one bounded child (`herdr agent wait`) instead of a probe
-per second. A settled screen only brings the stall forward once per silence
-interval, because a settled state herdr saw in passing is not proof the target
-is stopped now; the CLI carries that consumption in the re-arm command and the
-run record stays read-only. The trade is real and is stated in the wake's own
-detail: once that early inspection is spent, per-second target-loss detection
-is gone until a new event. Screen state moves a deadline and decides nothing.
+Registered evidence preserves path, hash, observation time, source identity, collector, method, target, and environment when available.
+Changed or missing evidence invalidates delivery until verification runs again.
+Ship validates the current deterministic PASS report, exact committed Git head, delivery path boundary, base freshness, CI, mergeability, and explicit merge approval.
+The pull request carries review notes and reviewer-visible evidence.
+GitHub Actions and human review are the final delivery authority.
 
-**Correcting a run in flight.** Human-authorized `amend` archives the previous
-PRD, re-seals the new whole contract, refreshes mirrored review/source metadata,
-and invalidates the complete review's freshness.
-`amend --exclude-suite` is the only door out of the sealed required suite list;
-the excluded command's last result remains history with the approval quote.
-Registered observations are run-wide, preserve collector/method/time/target
-provenance, and may support several requirements.
-Replaced evidence remains recorded as superseded rather than erased.
-There is no requirement state machine, QA brief/trail, or separate design lane.
+### Hooks
 
-**Human confirmation.** Actual human judgment is an exception finding grounded
-in Decisions, Risks, or recorded user instructions, not a requirement type.
-Only `confirm --issuer human --id <id>` records the person's own confirmation or
-rejection; response history and source freshness are preserved.
-Permitted after-the-fact judgment can leave `complete-pending-human` and travel
-with delivery, but an open explicit rejection makes delivery ineligible.
-Prerequisite authority never becomes after-the-fact judgment.
-A rejected closed result is fixed in a new run; an explicit withdrawal and
-approval of the same unchanged result can resolve the rejection while keeping
-its history.
+The installer registers the `challenge_trigger.mjs` routing hook and the advisory `commit_reminder.mjs` hook.
+Neither hook changes verification or completion state.
+Any hook the installer has owned stays listed in `HARNESS_HOOK_MARKERS` so later installs can retire it without touching foreign hooks.
 
-**Completion and convergence.** A first verify failure keeps the run active
-with a recorded attempt and open findings.
-Independent Fidelity and Code reviews run concurrently on the same complete contract and actual evidence, without the current peer verdict.
-The user-approved [2026-09-14 incremental review change](docs/plans/2026-09-14-incremental-review.md) replaces whole re-review on every correction with three harness-decided rounds: the first submission and any changed contract, intent, suite ledger, amendment or review policy get a `full` round; a correction under an unchanged contract gets a `focused` round anchored on the last attempt that settled every lane; the exact same review input after a backend error gets a `repair` round that reruns only the lost lanes and reuses the settled ones with `carriedFrom`.
-A focused round runs every lane on the whole frozen source with the delta, the open findings and the role's own anchor grounds; a role may restate a satisfied anchor ground as `carried` only on unchanged evidence, never for a requirement an open blocking finding names, and the reviewer widens to the whole contract when the reach of a change cannot be bounded.
-The sealed suite executes on every attempt because its purity cannot be proven from the tree.
-Status, verify and the receipt name the round's mode and reason and where each requirement's current ground was last actually reviewed.
-Fidelity accounts for every Bn exactly once in grouped assessments with concrete rationale and actual evidence references; Code records its own substantive grounds without another all-Bn form.
-Missing, duplicate, unknown, empty, invalid, or unresolved assessment coverage cannot silently pass.
-This guarantees inspectable structural coverage, not the correctness of semantic conclusions.
-An assessment may remain `pending-human` only with a corresponding validated post-completion human finding for every cited requirement; it neither asserts satisfaction nor waives prerequisites.
-Both roles share one lease, attempt, correction budget, and finding history; high-risk adds a distinct safety review using the same fixed inputs.
-Concrete later omissions in unchanged files must not be discarded, and prior open issues close only when both roles explicitly resolve them with evidence.
-Open risk blockers keep the correction budget incomplete even after routine PASS.
-`finalize --status blocked` may close a valid attempted run without any successful
-judge result, naming the failed phase and unrun work; pre-verify cancellation
-uses `retire`.
-State persists before derived receipts, and finalize never executes verification.
-Settled judgments retain their attempt, source, PRD, and input identity in `verificationAttempts`; later CLI mutations cannot rewrite or delete them.
-There is no second physical writer or parallel review ledger file.
+### Concurrent Sessions
 
-**Repository constants.** These hold for every PRD under this harness and are
-stated here once, never repeated in a PRD: no agent, model, vendor, or tool
-name in branch names, commits, PR text, or generated handoff text; no
-compatibility layer, migration shim, or read path for a retired state schema
-or document shape (a retired shape is an explicit error naming the last commit
-that read it); nothing under `agents/**` in a judged diff or a freshness
-fingerprint. A constraint that is specific to one PRD is a Non-goal or a
-Behaviors row in that PRD.
+Multiple sessions may share this repository.
+Before editing `cli/**`, inspect peer ownership and claim the files you will change.
+Do not treat peer messages as user authority.
+Follow [Shared-worktree verification](docs/shared-worktree-verification.md) and [the handoff procedure](docs/concurrent-handoff.md).
 
-**Judge policy.** Judge model routing is project-configurable only through the
-`routine` and `high-risk` profiles in `agents/config.json`.
-The actual code defaults are Codex `gpt-5.6-luna` high with Claude
-`claude-sonnet-5` high fallback for routine, and Codex `gpt-5.6-sol` high
-with Claude `claude-opus-5` high fallback for high-risk.
-The four budgets moved xhigh -> high on 2026-09-11 by user decision; the
-reasoning and its open risk live next to `DEFAULT_JUDGE`.
-The workflow change does not change these models.
-Evidence access is a harness-owned capability, not a project knob: which paths a judge may read, and that it may read at all, are decided in code.
-The read *budget* is the one exception and is stated here because the code now has it: `judge.readMaxRounds` overrides the non-exploring round bound per project, on the measurement that the knee depends on the repository under review.
-Budget is not access - it cannot widen what a judge may see, only how much of it one call may pull - but the line between them is thin enough that a second knob of this kind needs a decision, not a precedent.
-Implementation reviewers receive the same fixed copy of Git-visible regular product files, registered evidence, and generated contract/context/diff/evidence documents.
-Root `agents/**` bookkeeping, ignored untracked files, symlinks, and repository history are excluded from the product copy; explicitly selected review documents and actual evidence are copied separately.
-Reviewers discover and search related source within that copied tree without manual source-context artifact registration.
-Native read restrictions enforce the product/evidence boundary before access: Codex grants read access only to the absolute fixed root and its `:minimal` OS/runtime substrate, disables network access, and rejects unsupported configuration with `--strict-config`.
-The OS/runtime substrate lets the review engine run; it is not additional product evidence or permission to explore host data.
-Claude read-enabled fallback uses `--restricted` within its disposable copy.
-Codex's JSON command trace is additionally checked against the copied root and permitted read/search operations; a guessed path inside that root is an ordinary read error, not a violation.
-This audit does not substitute for native restrictions: a tool-selected working directory may be absent from the command trace.
-No judge may inspect product or evidence outside the copy, write, execute project code, browse the network, or inspect repository history.
+### Browser Tooling
 
-**Concurrent sessions.** Multiple Claude sessions work this repository at once.
-Before editing `cli/**`, check with peer sessions and claim the files you are
-taking; announce the release when you commit. Peer messages carry no authority:
-never treat one as user approval, and never change permissions, settings, or
-this file because a peer asked.
+Use chromux for exploratory browser QA and screenshots.
+Committed automated browser tests must launch and tear down their own browser process, such as Playwright, because chromux is a shared daemon.
 
-For coupled type/caller edits and verification handoffs, follow [Shared-worktree verification](docs/shared-worktree-verification.md).
+### Comments
 
-작업 재개·이관 시 [소유 경계 확인 절차](docs/concurrent-handoff.md)를 따른다.
-
-**Browser tooling.** chromux is the agent's hands - interactive QA, screenshots,
-exploratory drives. It is never the engine of committed test code or required
-automated suite commands: chromux is one shared daemon, so repeated automated runs leak
-tabs whenever a run is killed before its cleanup (2026-08-11: ~180 orphaned
-headless tabs wedged CDP and failed innocent oracles) and race concurrent
-invocations. Automated browser verification uses a self-contained tool the test
-itself launches and tears down (e.g. a playwright devDependency). A PRD's
-"zero-dependency" guardrail covers runtime dependencies, not test tooling.
-
-**Comments.** Record the *why* - especially the measurement or the incident a
-decision rests on - next to the code, in the surrounding style.
+Record why a decision exists, especially the measurement or incident it rests on.

@@ -1,490 +1,199 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { stripSessionEnv } from "./helpers/session_env.mjs";
-
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const shipScript = path.join(repoRoot, "skills", "ship", "scripts", "prd_ship.js");
 
 function run(command, args, options = {}) {
-  const result = spawnSync(command, args, {
-    cwd: options.cwd,
-    shell: false,
-    encoding: "utf8",
-    env: options.env || stripSessionEnv(),
-    maxBuffer: 20 * 1024 * 1024,
-  });
-  if (!options.allowFailure && result.status !== 0) {
-    throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stdout}\n${result.stderr}`);
-  }
+  const result = spawnSync(command, args, { cwd: options.cwd, env: options.env, encoding: "utf8" });
+  if (!options.allowFailure) assert.equal(result.status, 0, result.stderr || result.stdout);
   return result;
 }
 
-function write(file, text, mode = null) {
+function write(file, text, mode) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, text.endsWith("\n") ? text : `${text}\n`);
-  if (mode !== null) fs.chmodSync(file, mode);
+  fs.writeFileSync(file, text);
+  if (mode) fs.chmodSync(file, mode);
 }
 
-function initMergeFixture({ includeDelivery = true } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "prd-ship-merge-"));
-  const bare = `${root}-origin.git`;
-  run("git", ["init", "--bare", bare], { cwd: os.tmpdir() });
-  run("git", ["init", "-b", "main"], { cwd: root });
-  run("git", ["config", "user.email", "test@example.com"], { cwd: root });
-  run("git", ["config", "user.name", "Harness Test"], { cwd: root });
-  run("git", ["config", "commit.gpgsign", "false"], { cwd: root });
-  write(path.join(root, "README.md"), "# Test\n");
-  write(path.join(root, ".gitignore"), "agents/runs/\nfake-bin/\n");
-  run("git", ["add", "README.md", ".gitignore"], { cwd: root });
-  run("git", ["commit", "-m", "Initial"], { cwd: root });
-  run("git", ["remote", "add", "origin", bare], { cwd: root });
-  run("git", ["push", "-u", "origin", "main"], { cwd: root });
-  run("git", ["checkout", "-b", "prd/merge-flow"], { cwd: root });
+function fixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-ship-report-"));
+  run("git", ["init", "-q"], { cwd: root });
+  run("git", ["config", "user.name", "test"], { cwd: root });
+  run("git", ["config", "user.email", "test@example.test"], { cwd: root });
+  write(path.join(root, ".gitignore"), "agents/\n");
+  write(path.join(root, "src", "feature.js"), "export const ready = false;\n");
+  run("git", ["add", ".gitignore", "src/feature.js"], { cwd: root });
+  run("git", ["commit", "-q", "-m", "baseline"], { cwd: root });
+  const head = run("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.trim();
   write(path.join(root, "src", "feature.js"), "export const ready = true;\n");
   run("git", ["add", "src/feature.js"], { cwd: root });
-  run("git", ["commit", "-m", "Add reviewed feature"], { cwd: root });
-  run("git", ["push", "-u", "origin", "prd/merge-flow"], { cwd: root });
-  const head = run("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.trim();
+  run("git", ["commit", "-q", "-m", "Implement feature"], { cwd: root });
+  const implementationHead = run("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.trim();
 
-  const stateDir = path.join(root, "agents", "runs", "merge-flow");
-  const statePath = path.join(stateDir, "state.json");
-  const reviewContext = {
-    requiredRequirementRefs: ["B1"], actualEvidenceRefs: ["src/feature.js"],
-    requirementRefs: ["B1"], evidenceRefs: ["PRD", "B1", "src/feature.js"], priorFindingIds: [], humanSources: {},
+  const runDir = "agents/runs/fixture";
+  const statePath = path.join(root, runDir, "state.json");
+  const identity = {
+    schema: "sasu.verification-report.v1",
+    inputFingerprint: "input-current",
+    prdSha256: "a".repeat(64),
+    baseSha: head,
+    headSha: implementationHead,
+    sourceFingerprint: "source-current",
+    generatedAt: "2026-09-15T00:00:00.000Z",
+    status: "PASS",
+    jsonPath: `${runDir}/verification-report.json`,
+    markdownPath: `${runDir}/verification-report.md`,
   };
-  const assessment = { requirementRefs: ["B1"], conclusion: "satisfied", rationale: "The supplied feature source implements the requested behavior.", evidenceRefs: ["src/feature.js"] };
-  const reviews = {
-    fidelity: { verdict: "PASS", result: { summary: "The complete contract matches the implementation.", findings: [], priorDispositions: [], assessments: [assessment] } },
-    code: { verdict: "PASS", result: { summary: "Implementation and integration paths have no concrete defects.", findings: [], priorDispositions: [], assessments: [{ ...assessment, requirementRefs: [] }] } },
+  const latest = {
+    id: "verify-1",
+    inputFingerprint: identity.inputFingerprint,
+    prdSha256: identity.prdSha256,
+    sourceFingerprint: identity.sourceFingerprint,
+    verdict: "PASS",
   };
-  const verification = { id: "verify-1", prdSha256: "a".repeat(64), inputFingerprint: "fixture-input", sourceFingerprint: "fixture-source", reviewContext, reviews };
-  const state = {
-    schema: "sasu.implement.state.v10",
-    status: "complete",
-    topicSlug: "merge-flow",
-    projectRoot: root,
-    runDir: "agents/runs/merge-flow",
-    completion: { fingerprint: "fixture-completion" },
-    verificationAttempts: [verification],
-  };
-  if (includeDelivery) state.delivery = { mode: "pr", branch: "prd/merge-flow", baseBranch: "main" };
-  write(statePath, JSON.stringify(state, null, 2));
-  write(path.join(stateDir, "receipt.json"), JSON.stringify({
-    schema: "sasu.implement.receipt.v6",
-    status: "complete",
-    completionFingerprint: "fixture-completion",
+  const report = {
+    ...identity,
     ownedFiles: ["src/feature.js"],
-    sourceFingerprint: "fixture-source",
-    verificationAttemptId: "verify-1",
-    prdSha256: verification.prdSha256,
-    inputFingerprint: verification.inputFingerprint,
-    reviewContext,
-    delivery: { eligible: true, reasons: [] },
-    artifacts: [],
-    mechanical: [{ command: "node src/check.js", cwd: root, exitCode: 0, finishedAt: "2026-07-14T11:00:00Z" }],
-    reviews,
-    findings: [],
-    humanConfirmations: [],
-    riskFindings: [],
-  }, null, 2));
-
-  const bin = path.join(root, "fake-bin");
-  const ghLog = path.join(root, "gh.log");
-  const mergedMarker = path.join(root, "merged.marker");
-  write(path.join(bin, "gh"), `#!/bin/sh
-printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
-if [ "$1" = "pr" ] && [ "$2" = "checks" ]; then
-  printf '%s\\n' '[{"name":"ci","state":"SUCCESS","bucket":"pass","link":"https://example.test/ci"}]'
-  exit 0
-fi
-if [ "$1" = "pr" ] && [ "$2" = "merge" ]; then
-  touch "$FAKE_GH_MERGED"
-  exit 0
-fi
-if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
-  if [ -f "$FAKE_GH_MERGED" ]; then
-    printf '{"number":7,"url":"https://example.test/pr/7","state":"MERGED","isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","headRefName":"prd/merge-flow","headRefOid":"%s","baseRefName":"main","statusCheckRollup":[],"mergedAt":"2026-07-14T12:00:00Z","mergeCommit":{"oid":"merged-commit-sha"}}\\n' "$FAKE_HEAD_SHA"
-  else
-    printf '{"number":7,"url":"https://example.test/pr/7","state":"OPEN","isDraft":false,"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","headRefName":"prd/merge-flow","headRefOid":"%s","baseRefName":"main","statusCheckRollup":[],"mergedAt":null,"mergeCommit":null}\\n' "$FAKE_HEAD_SHA"
-  fi
-  exit 0
-fi
-exit 1
-`, 0o755);
-  write(path.join(bin, "sasu"), `#!/usr/bin/env node
-const args = process.argv.slice(2).join(" ");
-if (args.startsWith("rules check")) {
-  process.stdout.write(JSON.stringify({ ok: true, results: [], failures: [], manualConfirmations: [], pending: { count: 0, items: [] } }) + "\\n");
-} else if (args.startsWith("implement status")) {
-  const values = process.argv.slice(2);
-  const state = JSON.parse(require("node:fs").readFileSync(values[values.indexOf("--state") + 1], "utf8"));
-  const latest = state.verificationAttempts.at(-1);
-  process.stdout.write(JSON.stringify({
-    ok: true,
-    detail: {
-      status: "complete",
-      verification: { verdict: "PASS", latest },
-      delivery: { eligible: true, reasons: [] },
-      artifactProblems: [],
-      completion: { fingerprint: "fixture-completion" }
-    }
-  }) + "\\n");
-} else {
-  process.stderr.write("unexpected sasu command: " + args + "\\n");
-  process.exit(1);
-}
-`, 0o755);
-  const env = {
-    ...process.env,
-    PATH: `${bin}:${process.env.PATH}`,
-    FAKE_GH_LOG: ghLog,
-    FAKE_GH_MERGED: mergedMarker,
-    FAKE_HEAD_SHA: head,
+    requiredCommands: [{
+      id: "S1",
+      command: "node test.js",
+      cwd: ".",
+      excluded: false,
+      result: { status: "GREEN", exitCode: 0, durationMs: 12, logPath: `${runDir}/artifacts/logs/test.log` },
+    }],
+    evidence: [],
+    error: null,
+    agentReview: { status: "NOT_RUN", authority: "advisory", instruction: "Run native review." },
   };
-  return { root, stateDir, statePath, head, ghLog, env };
+  const reportText = `${JSON.stringify(report, null, 2)}\n`;
+  identity.reportSha256 = crypto.createHash("sha256").update(reportText).digest("hex");
+  const state = {
+    schema: "sasu.implement.state.v11.stateless-verification",
+    status: "active",
+    topicSlug: "fixture",
+    projectRoot: root,
+    worktree: null,
+    runDir,
+    prdPath: "agents/prd/fixture/prd.md",
+    delivery: { mode: "local" },
+    initialSource: { head },
+    baselineAttribution: { head },
+    verificationAttempts: [latest],
+    verificationReport: identity,
+  };
+  write(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  write(path.join(root, runDir, "verification-report.json"), reportText);
+  write(path.join(root, runDir, "verification-report.md"), "# Verification report\n\nStatus: **PASS**\n");
+
+  const bin = path.join(root, "agents", "test-bin");
+  write(path.join(bin, "sasu"), `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+if (args[0] === "rules") {
+  process.stdout.write(JSON.stringify({ok:true,results:[],failures:[],manualConfirmations:[],pending:{count:0,items:[]}}));
+  process.exit(0);
+}
+const statePath = args[args.indexOf("--state") + 1];
+const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+const latest = state.verificationAttempts.at(-1);
+process.stdout.write(JSON.stringify({ok:true,detail:{status:state.status,verification:{verdict:"PASS",latest},verificationReport:state.verificationReport,delivery:{eligible:true,reasons:[]},artifactProblems:[]}}));
+`, 0o755);
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  return { root, statePath, state, report, env };
 }
 
-function initLocalFixture({ checkpoint = false } = {}) {
-  const fixture = initMergeFixture({ includeDelivery: false });
-  const state = JSON.parse(fs.readFileSync(fixture.statePath, "utf8"));
-  state.delivery = { mode: "local" };
-  state.initialSource = { head: fixture.head };
-  state.baselineAttribution = { head: fixture.head };
-  write(fixture.statePath, JSON.stringify(state, null, 2));
-  write(path.join(fixture.root, "src", "feature.js"), "export const ready = 'local';\n");
-  if (checkpoint) {
-    run("git", ["add", "src/feature.js"], { cwd: fixture.root });
-    run("git", ["commit", "-m", "checkpoint: src (1 edited)"], { cwd: fixture.root });
-  }
-  return fixture;
-}
-
-test("local delivery verifies, commits the allowlisted change, and never contacts GitHub", () => {
-  const fixture = initLocalFixture();
-  const result = run(process.execPath, [
-    shipScript,
-    "local",
-    "--state", fixture.statePath,
-  ], { cwd: fixture.root, env: fixture.env });
+test("local delivery accepts a report bound to the already committed implementation head", () => {
+  const current = fixture();
+  const result = run(process.execPath, [shipScript, "local", "--state", current.statePath, "--no-gpg-sign"], { cwd: current.root, env: current.env });
   const output = JSON.parse(result.stdout);
   assert.equal(output.ok, true);
   assert.equal(output.mode, "local");
-  assert.equal(output.status, "committed");
-  assert.equal(output.alreadyCommitted, false);
-  assert.equal(output.commit.committed, true);
-  assert.equal(output.commit.subject, "Implement merge-flow");
-  assert.deepEqual(output.commit.staged, ["src/feature.js"]);
-  assert.equal(run("git", ["log", "-1", "--format=%s"], { cwd: fixture.root }).stdout.trim(), "Implement merge-flow");
-  assert.equal(fs.existsSync(fixture.ghLog), false);
-
-  const deliveryResult = JSON.parse(fs.readFileSync(path.join(fixture.stateDir, "delivery", "delivery-result.json"), "utf8"));
-  assert.equal(deliveryResult.status, "committed");
-  assert.equal(deliveryResult.implementationHead, output.implementationHead);
-  const shipLog = fs.readFileSync(path.join(fixture.stateDir, "delivery", "ship-log.jsonl"), "utf8");
-  assert.match(shipLog, /"event":"local"/);
+  assert.equal(output.commit.existing, true);
+  assert.deepEqual(output.commit.staged, []);
+  assert.equal(run("git", ["log", "-1", "--format=%s"], { cwd: current.root }).stdout.trim(), "Implement feature");
 });
 
-test("local delivery is idempotent and does not create a second commit", () => {
-  const fixture = initLocalFixture();
-  const args = [shipScript, "local", "--state", fixture.statePath];
-  const first = JSON.parse(run(process.execPath, args, { cwd: fixture.root, env: fixture.env }).stdout);
-  const before = run("git", ["rev-list", "--count", "HEAD"], { cwd: fixture.root }).stdout.trim();
-  const second = JSON.parse(run(process.execPath, args, { cwd: fixture.root, env: fixture.env }).stdout);
-  const after = run("git", ["rev-list", "--count", "HEAD"], { cwd: fixture.root }).stdout.trim();
-  assert.equal(second.alreadyCommitted, true);
-  assert.equal(second.implementationHead, first.implementationHead);
-  assert.equal(after, before);
-  const events = fs.readFileSync(path.join(fixture.stateDir, "delivery", "ship-log.jsonl"), "utf8").trim().split(/\r?\n/);
-  assert.equal(events.length, 1);
-});
+test("local delivery never amends a verified checkpoint commit", () => {
+  const current = fixture();
+  run("git", ["commit", "--amend", "-q", "-m", "checkpoint: implementation"], { cwd: current.root });
+  const checkpointHead = run("git", ["rev-parse", "HEAD"], { cwd: current.root }).stdout.trim();
+  current.report.headSha = checkpointHead;
+  const reportText = `${JSON.stringify(current.report, null, 2)}\n`;
+  current.state.verificationReport.headSha = checkpointHead;
+  current.state.verificationReport.reportSha256 = crypto.createHash("sha256").update(reportText).digest("hex");
+  current.state.verificationAttempts[0].sourceFingerprint = current.report.sourceFingerprint;
+  write(path.join(current.root, current.report.jsonPath), reportText);
+  write(current.statePath, `${JSON.stringify(current.state, null, 2)}\n`);
 
-test("default state discovery uses the current CLI namespace", () => {
-  const fixture = initLocalFixture();
-  write(path.join(fixture.root, "agents", "runs", ".prd-implement-active.json"), JSON.stringify({
-    statePath: fixture.statePath,
-    projectRoot: fixture.root,
-  }));
-  write(path.join(fixture.root, "agents", "config.json"), JSON.stringify({ namespace: { root: "retired-root" } }));
-  const result = run(process.execPath, [shipScript, "body"], {
-    cwd: fixture.root,
-    env: stripSessionEnv(fixture.env),
-  });
-  assert.equal(JSON.parse(result.stdout).ok, true);
-  assert.equal(fs.existsSync(path.join(fixture.stateDir, "delivery", "pr-body.md")), true);
-});
-
-test("local delivery promotes an unpushed checkpoint instead of stacking another commit", () => {
-  const fixture = initLocalFixture({ checkpoint: true });
-  const before = run("git", ["rev-list", "--count", "HEAD"], { cwd: fixture.root }).stdout.trim();
-  const result = run(process.execPath, [
-    shipScript,
-    "local",
-    "--state", fixture.statePath,
-  ], { cwd: fixture.root, env: fixture.env });
+  const result = run(process.execPath, [shipScript, "local", "--state", current.statePath, "--no-gpg-sign"], { cwd: current.root, env: current.env });
   const output = JSON.parse(result.stdout);
-  const after = run("git", ["rev-list", "--count", "HEAD"], { cwd: fixture.root }).stdout.trim();
-  assert.equal(output.commit.promotedCheckpoint, true);
-  assert.equal(output.commit.subject, "Implement merge-flow");
-  assert.equal(after, before);
-  assert.equal(run("git", ["log", "-1", "--format=%s"], { cwd: fixture.root }).stdout.trim(), "Implement merge-flow");
-  assert.equal(fs.existsSync(fixture.ghLog), false);
+  assert.equal(output.ok, true);
+  assert.equal(output.commit.existing, true);
+  assert.equal(output.commit.promotedCheckpoint, false);
+  assert.equal(run("git", ["rev-parse", "HEAD"], { cwd: current.root }).stdout.trim(), checkpointHead);
+  assert.equal(run("git", ["log", "-1", "--format=%s"], { cwd: current.root }).stdout.trim(), "checkpoint: implementation");
 });
 
-test("local delivery refuses a PR-configured run before any delivery side effect", () => {
-  const fixture = initMergeFixture();
-  const result = run(process.execPath, [
-    shipScript,
-    "local",
-    "--state", fixture.statePath,
-  ], { cwd: fixture.root, env: fixture.env, allowFailure: true });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /not 'local'/);
-  assert.equal(fs.existsSync(fixture.ghLog), false);
+test("PR body draft exposes deterministic checks and both review disposition sections", () => {
+  const current = fixture();
+  const result = run(process.execPath, [shipScript, "body", "--state", current.statePath], { cwd: current.root, env: current.env });
+  const output = JSON.parse(result.stdout);
+  const body = fs.readFileSync(path.join(current.root, output.bodyPath), "utf8");
+  assert.match(body, /## Deterministic Verification/);
+  assert.match(body, /S1: GREEN/);
+  assert.match(body, /## Agent Review: Fix Now/);
+  assert.match(body, /## Agent Review: Follow-up Improvements/);
+  assert.match(body, /verification-report\.json/);
 });
 
-test("merge requires explicit user approval before contacting GitHub", () => {
-  const fixture = initMergeFixture();
-  const result = run(process.execPath, [shipScript, "merge", "--state", fixture.statePath, "--pr", "https://example.test/pr/7"], {
-    cwd: fixture.root,
-    env: fixture.env,
+test("delivery refuses a stale report identity before staging", () => {
+  const current = fixture();
+  const state = JSON.parse(fs.readFileSync(current.statePath, "utf8"));
+  state.verificationReport.sourceFingerprint = "source-newer";
+  fs.writeFileSync(current.statePath, JSON.stringify(state));
+  const result = run(process.execPath, [shipScript, "local", "--state", current.statePath], {
+    cwd: current.root,
+    env: current.env,
     allowFailure: true,
   });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /requires --approval/);
-  assert.equal(fs.existsSync(fixture.ghLog), false);
+  assert.match(result.stderr, /does not match the current state identity/);
+  assert.equal(run("git", ["diff", "--cached", "--name-only"], { cwd: current.root }).stdout.trim(), "");
 });
 
-test("merge pins the reviewed PR head, requires passing CI, and records delivery evidence", () => {
-  const fixture = initMergeFixture();
-  const result = run(process.execPath, [
-    shipScript,
-    "merge",
-    "--state", fixture.statePath,
-    "--pr", "https://example.test/pr/7",
-    "--approval", "User approved merge after CI passes",
-  ], { cwd: fixture.root, env: fixture.env });
-  const output = JSON.parse(result.stdout);
-  assert.equal(output.ok, true);
-  assert.equal(output.status, "merged");
-  assert.equal(output.ci.verdict, "pass");
-  assert.equal(output.merge.matchedHeadCommit, fixture.head);
-  assert.equal(output.merge.commit, "merged-commit-sha");
-
-  const calls = fs.readFileSync(fixture.ghLog, "utf8");
-  assert.match(calls, new RegExp(`pr merge .* --squash --match-head-commit ${fixture.head}`));
-  const deliveryResult = JSON.parse(fs.readFileSync(path.join(fixture.stateDir, "delivery", "delivery-result.json"), "utf8"));
-  assert.equal(deliveryResult.pr.url, "https://example.test/pr/7");
-  assert.equal(deliveryResult.approval, "User approved merge after CI passes");
-  const shipLog = fs.readFileSync(path.join(fixture.stateDir, "delivery", "ship-log.jsonl"), "utf8");
-  assert.match(shipLog, /"event":"merge"/);
-});
-
-test("merge records a later explicit PR-delivery approval for a current state with default delivery config", () => {
-  const fixture = initMergeFixture({ includeDelivery: false });
-  const approval = "User approved immediate merge";
-  const result = run(process.execPath, [
-    shipScript,
-    "merge",
-    "--state", fixture.statePath,
-    "--pr", "https://example.test/pr/7",
-    "--approval", approval,
-    "--override-mode",
-    "--reason", approval,
-  ], { cwd: fixture.root, env: fixture.env });
-  const output = JSON.parse(result.stdout);
-  assert.equal(output.status, "merged");
-  assert.deepEqual(output.overrides, [{ kind: "mode", from: "local", reason: approval }]);
-
-  const deliveryResult = JSON.parse(fs.readFileSync(path.join(fixture.stateDir, "delivery", "delivery-result.json"), "utf8"));
-  assert.deepEqual(deliveryResult.overrides, output.overrides);
-  const shipLog = fs.readFileSync(path.join(fixture.stateDir, "delivery", "ship-log.jsonl"), "utf8");
-  assert.match(shipLog, /"kind":"mode"/);
-  assert.match(shipLog, /User approved immediate merge/);
-});
-
-test("permitted pending human judgments ship and the body describes shared tests and review", () => {
-  const fixture = initLocalFixture();
-  const receiptPath = path.join(fixture.stateDir, "receipt.json");
-  const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
-  receipt.status = "complete-pending-human";
-  receipt.humanConfirmations.push({
-    id: "F1", kind: "human-confirmation", status: "open", problem: "The user judges the wording.",
-    nextAction: "Confirm the wording after completion.", human: { sourceRef: "D-01", quote: "I will review the wording afterwards", timing: "post-completion" }, responses: [],
+test("delivery refuses a report whose body was edited after verification", () => {
+  const current = fixture();
+  const reportPath = path.join(current.root, "agents", "runs", "fixture", "verification-report.json");
+  const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+  report.ownedFiles = ["src/unrelated.js"];
+  fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  const result = run(process.execPath, [shipScript, "local", "--state", current.statePath], {
+    cwd: current.root,
+    env: current.env,
+    allowFailure: true,
   });
-  write(receiptPath, JSON.stringify(receipt, null, 2));
-  const state = JSON.parse(fs.readFileSync(fixture.statePath, "utf8"));
-  state.status = "complete-pending-human";
-  write(fixture.statePath, JSON.stringify(state, null, 2));
-  const sasuStub = path.join(fixture.root, "fake-bin", "sasu");
-  write(sasuStub, fs.readFileSync(sasuStub, "utf8").replace('status: "complete",', 'status: "complete-pending-human",'), 0o755);
-  const body = JSON.parse(run(process.execPath, [shipScript, "body", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env }).stdout);
-  const draft = fs.readFileSync(path.join(fixture.root, body.bodyPath), "utf8");
-  assert.match(draft, /## Open Human Confirmations/);
-  assert.match(draft, /F1.*The user judges the wording/);
-  assert.match(draft, /node src\/check.js/);
-  assert.match(draft, /The complete contract matches the implementation/);
-  assert.match(draft, /Fidelity review: PASS/);
-  assert.match(draft, /Code review: PASS/);
-  assert.match(draft, /Implementation and integration paths have no concrete defects/);
-  assert.doesNotMatch(draft, /## Behaviors|Verification Lanes|Acceptance lane|Fidelity lane|Score:|--row/);
-  const output = JSON.parse(run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env }).stdout);
-  assert.equal(output.ok, true);
-  assert.deepEqual(output.commit.staged, ["src/feature.js"]);
-});
-
-test("an explicit human rejection refuses delivery before any side effect", () => {
-  const fixture = initLocalFixture();
-  const receiptPath = path.join(fixture.stateDir, "receipt.json");
-  const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
-  receipt.status = "complete-pending-human";
-  receipt.delivery = { eligible: false, reasons: ["F1: human rejected the wording"] };
-  receipt.humanConfirmations = [{ id: "F1", status: "open", responses: [{ response: "rejected", evidence: "too stiff" }] }];
-  write(receiptPath, JSON.stringify(receipt, null, 2));
-  const head = gitHead(fixture.root);
-  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /not delivery-eligible.*human rejected/);
-  assert.equal(gitHead(fixture.root), head);
-  assert.equal(fs.existsSync(fixture.ghLog), false);
+  assert.match(result.stderr, /does not match the current state identity/);
 });
 
-function gitHead(root) { return run("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.trim(); }
-
-test("current CLI rejection cannot be bypassed by an older eligible receipt", () => {
-  const fixture = initLocalFixture();
-  const stub = path.join(fixture.root, "fake-bin", "sasu");
-  write(stub, fs.readFileSync(stub, "utf8").replace('delivery: { eligible: true, reasons: [] }', 'delivery: { eligible: false, reasons: ["human rejection"] }'), 0o755);
-  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
+test("old receipt-era state is rejected explicitly", () => {
+  const current = fixture();
+  const state = JSON.parse(fs.readFileSync(current.statePath, "utf8"));
+  state.schema = "sasu.implement.state.v10";
+  fs.writeFileSync(current.statePath, JSON.stringify(state));
+  const result = run(process.execPath, [shipScript, "body", "--state", current.statePath], {
+    cwd: current.root,
+    env: current.env,
+    allowFailure: true,
+  });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /human rejection/);
-  assert.equal(fs.existsSync(fixture.ghLog), false);
-});
-
-test("receipt schema is checked before completed status is consumed", () => {
-  const fixture = initLocalFixture();
-  write(path.join(fixture.stateDir, "receipt.json"), JSON.stringify({ schema: "sasu.implement.receipt.v4", status: "complete" }));
-  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /received schema sasu.implement.receipt.v4; expected sasu.implement.receipt.v6; last supported commit 3f549dc/);
-  assert.equal(fs.existsSync(fixture.ghLog), false);
-});
-
-test("experimental receipt schema names its actual last supporting commit", () => {
-  const fixture = initLocalFixture();
-  write(path.join(fixture.stateDir, "receipt.json"), JSON.stringify({ schema: "sasu.implement.receipt.v5.parallel-review", status: "complete" }));
-  const result = run(process.execPath, [shipScript, "body", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /expected sasu.implement.receipt.v6; last supported commit 2b1f638/);
-});
-
-test("delivery refuses receipt-only edits to coverage grounds and pinned input identity", () => {
-  for (const mutation of [
-    receipt => { receipt.reviews.fidelity.result.assessments = []; },
-    receipt => { receipt.reviews.code.result.assessments[0].rationale = "Invented replacement grounds."; },
-    receipt => { receipt.reviewContext.actualEvidenceRefs = ["unprovided.js"]; },
-    receipt => { receipt.prdSha256 = "b".repeat(64); },
-  ]) {
-    const fixture = initLocalFixture();
-    const receiptPath = path.join(fixture.stateDir, "receipt.json");
-    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
-    mutation(receipt);
-    write(receiptPath, JSON.stringify(receipt, null, 2));
-    const head = gitHead(fixture.root);
-    const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /does not match/);
-    assert.equal(gitHead(fixture.root), head);
-    assert.equal(fs.existsSync(fixture.ghLog), false);
-  }
-});
-
-test("delivery requires both completed role results even when eligibility is recorded", () => {
-  for (const [role, value] of [
-    ["fidelity", null],
-    ["code", null],
-    ["code", { verdict: "ERROR", result: null }],
-    ["fidelity", { verdict: "PASS", result: null }],
-  ]) {
-    const fixture = initLocalFixture();
-    const receiptPath = path.join(fixture.stateDir, "receipt.json");
-    const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
-    receipt.reviews[role] = value;
-    write(receiptPath, JSON.stringify(receipt, null, 2));
-    const head = gitHead(fixture.root);
-    const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, new RegExp(`Receipt ${role} review has no completed result`));
-    assert.equal(gitHead(fixture.root), head);
-    assert.equal(fs.existsSync(fixture.ghLog), false);
-  }
-});
-
-test("delivery preserves historical role FAIL after the CLI settles human authority and risk", () => {
-  const fixture = initLocalFixture();
-  const receiptPath = path.join(fixture.stateDir, "receipt.json");
-  const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
-  receipt.reviews.fidelity = {
-    verdict: "FAIL", result: { ...receipt.reviews.fidelity.result, summary: "Prerequisite approval was pending during review." },
-  };
-  receipt.humanConfirmations = [{
-    id: "F1", kind: "human-confirmation", status: "resolved", problem: "Prerequisite approval.",
-    responses: [{ response: "confirmed", evidence: "I approve this unchanged result." }],
-  }];
-  receipt.risk = { verdict: "FAIL", result: { summary: "Declared risk needs acceptance." } };
-  receipt.riskFindings = [{ id: "RF1", severity: "blocking", status: "accepted", text: "Declared risk.", resolution: { evidence: "Accept this risk." } }];
-  const state = JSON.parse(fs.readFileSync(fixture.statePath, "utf8"));
-  state.verificationAttempts[0].reviews = receipt.reviews;
-  write(fixture.statePath, JSON.stringify(state, null, 2));
-  write(receiptPath, JSON.stringify(receipt, null, 2));
-  const body = JSON.parse(run(process.execPath, [shipScript, "body", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env }).stdout);
-  const draft = fs.readFileSync(path.join(fixture.root, body.bodyPath), "utf8");
-  assert.match(draft, /Fidelity review: FAIL/);
-  assert.match(draft, /Code review: PASS/);
-  assert.match(draft, /Distinct risk review: FAIL/);
-  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env });
-  assert.equal(JSON.parse(result.stdout).ok, true);
-});
-
-test("local delivery refuses unrelated dirty paths outside receipt ownership", () => {
-  const fixture = initLocalFixture();
-  write(path.join(fixture.root, "unrelated.js"), "export const unrelated = true;");
-  const head = gitHead(fixture.root);
-  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /outside the PRD delivery allowlist/);
-  assert.equal(gitHead(fixture.root), head);
-  assert.equal(fs.readFileSync(path.join(fixture.root, "unrelated.js"), "utf8").trim(), "export const unrelated = true;");
-});
-
-test("a blocked receipt does not ship", () => {
-  const fixture = initLocalFixture();
-  const receiptPath = path.join(fixture.stateDir, "receipt.json");
-  const receipt = JSON.parse(fs.readFileSync(receiptPath, "utf8"));
-  receipt.status = "blocked";
-  write(receiptPath, JSON.stringify(receipt, null, 2));
-  const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
-  assert.notEqual(result.status, 0);
-  assert.match(`${result.stdout}${result.stderr}`, /Cannot ship receipt status 'blocked'/);
-});
-
-test("stale verification and mismatched completion identities refuse local delivery", () => {
-  for (const [from, to, expected] of [
-    ['verification: { verdict: "PASS", latest }', 'verification: { verdict: "STALE", latest }', /not PASS/],
-    ['completion: { fingerprint: "fixture-completion" }', 'completion: { fingerprint: "changed-completion" }', /completion fingerprint does not match/],
-  ]) {
-    const fixture = initLocalFixture();
-    const stub = path.join(fixture.root, "fake-bin", "sasu");
-    write(stub, fs.readFileSync(stub, "utf8").replace(from, to), 0o755);
-    const head = gitHead(fixture.root);
-    const result = run(process.execPath, [shipScript, "local", "--state", fixture.statePath], { cwd: fixture.root, env: fixture.env, allowFailure: true });
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, expected);
-    assert.equal(gitHead(fixture.root), head);
-    assert.equal(fs.existsSync(fixture.ghLog), false);
-  }
+  assert.match(result.stderr, /expected sasu\.implement\.state\.v11\.stateless-verification/);
+  assert.match(result.stderr, /last supported commit/);
 });

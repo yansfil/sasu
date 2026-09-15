@@ -38,16 +38,6 @@ export interface AmendmentInput { issuer: IssuerLabel; approval: string; reason:
 export interface AmendmentOutcome { record: AmendmentRecord; plan: AmendmentPlan; derived: Array<{ file: string; text: string }> }
 export function amendmentArchivePath(runDir: string, id: number): string { return `${runDir}/amendments/prd-${id}-superseded.md`; }
 
-/** Resolve a human item's exact source region; semantics stay with its reviewer. */
-function humanSource(contract: ImplementContract, sourceRef: string, prdPath: string, snapshotPath: string): string | null {
-  const decision = contract.decisions.find((entry) => entry.id === sourceRef);
-  if (decision !== undefined) return `${decision.decision}\n${decision.rationale}`;
-  if (sourceRef === "Risks") return contract.risks;
-  if (sourceRef === "Decisions") return contract.decisions.map((entry) => `${entry.id} ${entry.decision}\n${entry.rationale}`).join("\n");
-  if (sourceRef === prdPath || sourceRef === snapshotPath) return contract.body;
-  return null;
-}
-
 export function applyAmendment(recordRoot: string, state: ImplementState, input: AmendmentInput, at: string): AmendmentOutcome {
   if (input.issuer !== "human") throw new AmendmentRejected("authority", "amend is human-only; PRD and suite changes require the person's recorded approval");
   if (input.approval.trim() === "") throw new AmendmentRejected("arguments", "amend requires --approval <verbatim human approval>");
@@ -75,21 +65,6 @@ export function applyAmendment(recordRoot: string, state: ImplementState, input:
     excludeSuiteCommand(state, { commandId, approval: input.approval.trim(), reason: input.reason.trim() }, at);
     excluded.push({ commandId, command: command.command, priorResult });
   }
-  const closedHumanFindings: string[] = [];
-  for (const finding of state.findings) {
-    if (finding.kind !== "human-confirmation" || finding.status === "amended" || finding.human === undefined) continue;
-    const priorSource = humanSource(current, finding.human.sourceRef, state.prdPath, state.prd.snapshotPath);
-    const nextSource = humanSource(next, finding.human.sourceRef, state.prdPath, state.prd.snapshotPath);
-    // A moved intake changes the provenance namespace even if the same quote
-    // appears in both conversations. Human response history remains intact.
-    const intakeMoved = current.frontmatter["source_intake"] !== next.frontmatter["source_intake"];
-    const inputSource = finding.human.sourceRef === "instruction" || finding.human.sourceRef === current.frontmatter["source_intake"];
-    if ((priorSource !== null && (nextSource === null || !nextSource.includes(finding.human.quote))) || (intakeMoved && inputSource)) {
-      finding.status = "amended";
-      finding.history.push({ at, attemptId: null, status: "amended", reason: `Human-approved amendment ${id} removed or replaced this item's source: ${input.reason.trim()}`, evidenceRefs: [state.prd.snapshotPath], amendmentId: id });
-      closedHumanFindings.push(finding.id);
-    }
-  }
   const previousSnapshotPath = amendmentArchivePath(state.runDir, id);
   state.requirements = next.rows.map(sealRequirement);
   state.prd = {
@@ -100,12 +75,12 @@ export function applyAmendment(recordRoot: string, state: ImplementState, input:
   };
   // The old result stays honest history. Freshness changes for the entire
   // contract, never selected rows; no result is promoted onto this snapshot.
-  state.completion = null;
+  state.verificationReport = null;
   const record: AmendmentRecord = {
     id, at, issuer: "human", approval: input.approval.trim(), reason: input.reason.trim(),
     prdSha256: state.prd.sha256, snapshotPath: state.prd.snapshotPath, previousSnapshotPath,
     changedRequirements: plan.changedRequirements, addedRequirements: plan.addedRequirements,
-    removedRequirements: plan.removedRequirements, closedHumanFindings,
+    removedRequirements: plan.removedRequirements, closedHumanFindings: [],
     suiteSnapshotUpdated: excluded.length > 0,
     ...(excluded.length > 0 ? { excludedSuiteCommands: excluded } : {}),
   };

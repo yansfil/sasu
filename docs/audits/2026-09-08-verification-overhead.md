@@ -45,7 +45,8 @@ Claude Code와 Codex를 모두 조사했다.
 검사별 `durationMs` 합계에는 병렬 실행과 통합 검증 내부의 중첩이 섞인다.
 따라서 이 조사에서는 그것을 구현 시간과 나누어 검증 비율이라고 부르지 않는다.
 현재 벤치마크 보고기의 fallback 역시 실행 시간 합을 총 경과 시간에서 차감하므로, `unattributedSeconds`는 구현 시간이 아니다.
-근거: [`benchmark_report.js`](../../skills/benchmark-implement/scripts/benchmark_report.js#L550).
+근거: 당시의 `skills/benchmark-implement/scripts/benchmark_report.js` 550행.
+해당 벤치마크 스킬은 stateless verification 전환에서 제거되었으며, 이 문장은 역사적 측정 근거로 남긴다.
 
 ## 집계와 대표 사례
 

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { scratchDir } from "../scratch.mjs";
-import { stateFixture, humanFinding, AT } from "../helpers/implement-state.mjs";
+import { stateFixture, AT } from "../helpers/implement-state.mjs";
 import { prd } from "../helpers/implement-fixture.mjs";
 import { applyAmendment, planAmendment, sealRequirement } from "../../dist/implement/amend.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
@@ -47,17 +47,6 @@ test("amendment invalidates the whole contract and refreshes execution metadata 
   assert.equal(loaded.requirements.length, 3);
   assert.equal(fs.readFileSync(path.join(f.root, outcome.record.previousSnapshotPath), "utf8"), f.text);
   assert.equal(fs.readFileSync(f.pinned, "utf8"), text);
-});
-
-test("removed human provenance is closed through explicit amendment history without erasing responses", (t) => {
-  const quote = "The person confirms the visual result after implementation.";
-  const f = fixture(t, prd({ risks: quote }));
-  f.state.findings.push(humanFinding({ responses: [{ at: AT, response: "rejected", evidence: "TEST-FIXTURE: rejected visual result" }] }));
-  const result = applyAmendment(f.root, f.state, input(prd({ risks: "No human review is deferred." })), AT);
-  assert.deepEqual(result.record.closedHumanFindings, ["F1"]);
-  assert.equal(f.state.findings[0].status, "amended");
-  assert.equal(f.state.findings[0].history[0].amendmentId, result.record.id);
-  assert.equal(f.state.findings[0].responses[0].response, "rejected");
 });
 
 test("suite exclusion keeps its observed failure and validates the complete exclusion request first", (t) => {

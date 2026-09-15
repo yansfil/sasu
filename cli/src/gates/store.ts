@@ -7,8 +7,6 @@ import {
   describeJudgeFailureCause,
   sameJudgeFailureCause,
   type Finding,
-  type ReviewFinding,
-  type ReviewResult,
   type GapVerdict,
   type JudgeCallRecord,
   type JudgeFailureCause,
@@ -133,8 +131,6 @@ export interface VouchedTreeFingerprint {
 
 
 export interface GateRecord {
-  fullReview?: ReviewResult;
-  reviewFindings?: (ReviewFinding & { id: string })[];
   /**
    * PRD gates (gap-audit/spec) end a judged round in one of three states
    * derived from the open findings set alone: PASS (empty, sealed),
@@ -929,8 +925,6 @@ export function recordGateResult(
     | {
         kind: "verdict";
         verdict: GapVerdict["verdict"] | "NEEDS_HUMAN" | "FAIL";
-        review?: ReviewResult;
-        reviewFindings?: (ReviewFinding & { id?: string })[];
         /** Open concrete findings. */
         findings: Finding[];
         /** PRD gates: recorded advisories (see GateRecord.warnings). */
@@ -986,13 +980,6 @@ export function recordGateResult(
     let summary: GateRunSummary;
     if (outcome.kind === "verdict") {
     record.verdict = outcome.verdict;
-    if (outcome.review !== undefined) {
-      record.fullReview = outcome.review;
-      let seq = record.findingSeq ?? 0;
-      record.reviewFindings = (outcome.reviewFindings ?? []).map((finding) => ({ ...finding, id: finding.id ?? `F${++seq}` }));
-      record.findingSeq = seq;
-    }
-
     if (prdGate) {
       // Harness-assigned finding ids: a rerun judge echoes them to say "still
       // open", so they must be stable and never reused on this gate. Findings

@@ -1,5 +1,3 @@
-import { validateImplementationReviewResult } from "./review-contract";
-import type { ImplementationReviewResult } from "./types";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,12 +6,9 @@ import { loadConfig } from "../config";
 import { readGateStatus } from "../gates/commands";
 import { prelintPrd } from "../gates/prelint";
 import { runJudge, judgeCallRecordFrom } from "../judge/runner";
-import { JUDGE_ERROR_LOOP_THRESHOLD, JudgeError, describeJudgeFailureCause, judgeFailureCause, type JudgeFailureCause } from "../judge/types";
+import { JudgeError, judgeFailureCause } from "../judge/types";
 import { runDirRel } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
-import { reconcileAttemptLedger, reconciliationBase, reconcileReviewFindings, validateRiskVerdict, verificationInputManifest, verificationRoundContext } from "./convergence";
-import { ledgerSnapshot, planReview, requirementGrounds, reviewPolicyFor, reviewPolicySha256, reviewPrior, type ReviewPlan } from "./review-scope";
-import { buildSha256, contractVersion } from "../version";
 import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { parseImplementContract, reviewProfile, suiteCommands } from "./contract";
 import { planRunUnits, runBatch, parseCommandArgv, type RunUnit, type RunUnitResult } from "./runner";
@@ -21,15 +16,15 @@ import { suiteScore } from "./suite";
 import { assertCommandAuthority, isIssuedCommand, recordVerb, resolveIssuer, VerbRejected } from "./verbs";
 import { recordEvent } from "./events";
 import { AmendmentRejected, applyAmendment } from "./amend";
-import { assertNoActiveVerification, recoverVerification, preserveSettledFindings, cancelVerificationExecution, completeVerificationExecution, beginVerification, progressVerification, prepareVerificationExecution, recordVerificationExecution, finishVerification } from "./verification-activity";
+import { assertNoActiveVerification, recoverVerification, cancelVerificationExecution, completeVerificationExecution, beginVerification, progressVerification, prepareVerificationExecution, recordVerificationExecution, finishVerification } from "./verification-activity";
 import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEscalation, renderDiagnosis, solverPrompt, validateDiagnosis } from "./solver";
 import { waitForEvent } from "./waiter";
 import { herdrCapabilities, readPane, spawnImplementor } from "./herdr";
 import { DispatchRejected, dispatchImplementor, parseEnvPairs } from "./dispatch";
-import { reviewPrompt, intentSource, riskPrompt, reviewInputDocuments, diffChunkPath, REVIEW_INPUT_PATHS, type ReviewPromptMaterial, type RunOwnedChange, type RunOwnedChangeSet } from "./prompts";
+import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, parseImplementState, StateConflictError } from "./store";
-import { IMPLEMENT_SCHEMA, ROUTINE_REVIEW_ROLES, type RoutineReviewRole, type ReviewExecutionRecord, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type RiskLaneResult, type SolverHandoff, type TrackedRiskFinding, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, ESCALATE_LIMIT_PER_RUN, STALL_THRESHOLD_MS } from "./types";
+import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type SolverHandoff, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, ESCALATE_LIMIT_PER_RUN, STALL_THRESHOLD_MS } from "./types";
 
 export interface ImplementArgs {
   positional: string[];
@@ -303,12 +298,9 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
       ownerSessionId: currentSessionId(),
       adoptions: [],
       requirements: contract.rows.map(({ id, behavior, decisionIds }) => ({ id, behavior, decisionIds })),
-      findings: [],
       artifacts: [],
       verificationAttempts: [],
-      budgetGrants: [],
       deviations: [],
-      riskFindings: [],
       events: [],
       verbs: [],
       amendments: [],
@@ -330,7 +322,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
       },
       escalations: [],
       retirement: null,
-      completion: null,
+      verificationReport: null,
       createdAt,
       updatedAt: createdAt,
     };
@@ -364,7 +356,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     ? `implement run started: ${slug}`
     : `implement run started: ${slug} in isolated worktree ${startedWorktree.path} (branch ${startedWorktree.branch})` +
       `${occupant !== null ? ` because run '${occupant}' is active in this tree` : ""} - implement the contract there; records stay in this tree's agents/`;
-  return result("start", true, message, publicState(state, config.judge.retryBudget));
+  return result("start", true, message, publicState(state));
 }
 
 /**
@@ -402,11 +394,6 @@ function assertRunOwnership(statePath: string, state: ImplementState, args: Impl
 
 function assertRunOpenForMutation(state: ImplementState): void {
   if (state.status === "retired") throw new Error("implement run is retired; start a new approved PRD under a new slug");
-  if (state.status === "blocked") throw new Error("implement run is closed (blocked); start a new approved run");
-  if (state.status === "complete") throw new Error("implement run is already complete");
-  // Closed for implementation the moment finalize accepts it: only the
-  // human's confirm may still write, and a closed run never reopens (R8).
-  if (state.status === "complete-pending-human") throw new Error("implement run is closed (complete-pending-human); only `sasu implement confirm --id <F#>` may still write, and a closed run never reopens");
 }
 
 function retire(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -433,7 +420,7 @@ function retire(projectRoot: string, args: ImplementArgs): ImplementCommandResul
       ? { adoptedFromSessionId: previousOwner, adoptionEvidence }
       : {}),
   };
-  state.completion = null;
+  state.verificationReport = null;
   persistState(statePath, state);
   return result("retire", true, `implement run retired and tree occupancy released: ${state.topicSlug}`, {
     status: state.status,
@@ -578,15 +565,12 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
   const reason = flag(args, "reason")?.trim() ?? "";
   if (reason === "") throw new EscalateRejected("arguments", "escalate requires --reason <what the implementor is stuck on>");
   const target = flag(args, "target")?.trim().toUpperCase() || null;
-  if (target !== null && !state.findings.some((entry) => entry.id === target) && !state.riskFindings.some((entry) => entry.id === target)) {
-    throw new EscalateRejected("arguments", `unknown --target ${target}; name an open finding in this run`);
-  }
   const agent = flag(args, "agent")?.trim() || null;
 
   // Read-only preparation. `readPane` is diagnosis input and nothing else: a
   // missing pane degrades the envelope, it does not stop the escalation (R9).
   const prd = requirePinnedPrd(projectRoot, state);
-  const ledger = JSON.stringify({ findings: state.findings, risks: state.riskFindings, attempts: state.verificationAttempts.map(attemptSummary) }, null, 2);
+  const ledger = JSON.stringify({ attempts: state.verificationAttempts.map(attemptSummary), currentReport: state.verificationReport }, null, 2);
   const pane = agent === null
     ? { ok: false, value: null, problem: "no --agent given, so there is no pane to read" }
     : readPane({ name: agent });
@@ -602,7 +586,7 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
       target,
       reason,
       prd,
-      findings: ledger,
+      verification: ledger,
       paneExcerpt: pane.value,
       paneProblem: pane.problem,
     }),
@@ -644,11 +628,11 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
   const handoff: SolverHandoff = {
     prdSnapshotPath: state.prd.snapshotPath,
     diagnosisPath: `${solverDir}/diagnosis-${id}.md`,
-    findingsPath: `${solverDir}/findings-${id}.json`,
+    verificationPath: `${solverDir}/verification-${id}.json`,
   };
   fs.mkdirSync(path.join(projectRoot, solverDir), { recursive: true });
   writeTextAtomic(path.join(projectRoot, handoff.diagnosisPath), renderDiagnosis({ id, at, target, reason }, diagnosis));
-  writeTextAtomic(path.join(projectRoot, handoff.findingsPath), `${ledger}\n`);
+  writeTextAtomic(path.join(projectRoot, handoff.verificationPath), `${ledger}\n`);
 
   const briefing = buildHandoffBriefing(handoff);
   const reset = agent === null
@@ -745,8 +729,8 @@ function assertEvidencePathInsideProject(projectRoot: string, target: { absolute
 function harnessOwnedRunPath(state: ImplementState, relative: string): boolean {
   return relative === `${state.runDir}/state.json`
     || relative === state.prd.snapshotPath
-    || relative === `${state.runDir}/receipt.json`
-    || relative === `${state.runDir}/implementation-result.md`
+    || relative === `${state.runDir}/verification-report.json`
+    || relative === `${state.runDir}/verification-report.md`
     || relative.startsWith(`${state.runDir}/artifacts/logs/`)
     || relative.startsWith(`${state.runDir}/gates/`)
     || relative === "agents/config.json"
@@ -772,83 +756,6 @@ function canonicalRunRelative(state: ImplementState, target: { absolute: string;
     // rejects missing files with its own message.
   }
   return target.relative;
-}
-
-function riskNonConvergent(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
-  const { statePath, state } = loadState(projectRoot, stateOptions(args));
-  assertRunOpenForMutation(state);
-  assertRunOwnership(statePath, state, args);
-  const id = requiredFlag(args, "id").toUpperCase();
-  const approval = requiredFlag(args, "approval");
-  const reason = requiredFlag(args, "reason");
-  const entry = state.riskFindings.find((candidate) => candidate.id === id);
-  if (entry === undefined) {
-    const known = openRiskFindings(state).map((candidate) => candidate.id);
-    throw new Error(`unknown risk finding: ${id}${known.length === 0 ? "" : ` (open: ${known.join(", ")})`}`);
-  }
-  if (entry.status !== "open") {
-    throw new Error(`${id} is ${entry.status}, not open: only an open finding can be declared non-convergent`);
-  }
-  // The structural fact the harness owns: how many judged attempts this
-  // finding has already survived. Corroboration in the record, never the gate.
-  const originIndex = state.verificationAttempts.findIndex((attempt) => attempt.id === entry.originAttemptId);
-  const roundsUnchanged = originIndex === -1 ? 0 : state.verificationAttempts.length - originIndex - 1;
-  const declaredAt = nowIso();
-  entry.nonConvergence = { at: declaredAt, approval, reason, declaredBy: "human", roundsUnchanged };
-  // Recorded for the same reason as `risk --accept` above: a repair round
-  // rebuilds the ledger from a snapshot taken before this declaration.
-  recordVerb(state, { verb: "risk-non-convergent", issuer: resolveIssuer(flag(args, "issuer")), target: id, reason: approval, at: declaredAt, outcome: "accepted" });
-  persistState(statePath, state);
-  return result(
-    "risk",
-    true,
-    `${id} declared non-convergent after ${roundsUnchanged} judged round(s) unchanged; it stays open and `
-      + `\`finalize --status complete\` stays refused, but \`--status blocked\` no longer waits for the judge budget`,
-    { finding: entry, open: openRiskFindings(state) },
-  );
-}
-
-function risk(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
-  if (args.flags.get("non-convergent") === true) return riskNonConvergent(projectRoot, args);
-  if (args.flags.get("accept") !== true) throw new Error("risk requires --accept or --non-convergent");
-  const { statePath, state } = loadState(projectRoot, stateOptions(args));
-  assertRunOpenForMutation(state);
-  assertRunOwnership(statePath, state, args);
-  const id = requiredFlag(args, "id").toUpperCase();
-  const evidence = requiredFlag(args, "evidence");
-  const entry = state.riskFindings.find((candidate) => candidate.id === id);
-  if (entry === undefined) {
-    const known = openRiskFindings(state).map((candidate) => candidate.id);
-    throw new Error(`unknown risk finding: ${id}${known.length === 0 ? "" : ` (open: ${known.join(", ")})`}`);
-  }
-  if (entry.status === "accepted") {
-    if (entry.resolution?.evidence !== evidence) throw new Error(`${id} is already accepted with different evidence`);
-    // Ownership adoption is itself state even when the finding transition is
-    // already settled, so the idempotent path must not discard it.
-    persistState(statePath, state);
-    return result("risk", true, `${id} was already accepted with the same evidence`, {
-      finding: entry,
-      open: openRiskFindings(state),
-    });
-  }
-  if (entry.status === "fixed") throw new Error(`${id} is already fixed by a later risk review`);
-  const acceptedAt = nowIso();
-  entry.status = "accepted";
-  entry.resolution = { at: acceptedAt, evidence };
-  // A human decision on the ledger is a domain command and must be recorded
-  // as one. Without this verb, `repairReason` sees no accepted command since
-  // the last attempt, chooses a repair round, and rebuilds the ledger from
-  // that attempt's pinned snapshot - which does not contain this acceptance.
-  // The approval then reverted to `open` with its evidence gone and no
-  // deviation recorded (2026-09-14). PRINCIPLES 10: human-only decisions are
-  // appended, never silently undone.
-  recordVerb(state, { verb: "risk", issuer: resolveIssuer(flag(args, "issuer")), target: id, reason: evidence, at: acceptedAt, outcome: "accepted" });
-  persistState(statePath, state);
-  const open = openRiskFindings(state);
-  return result("risk", true, `${id} accepted; ${open.length} risk finding(s) remain open`, {
-    finding: entry,
-    open,
-  });
 }
 
 function writeMechanicalLog(
@@ -947,71 +854,6 @@ function attributeToSuite(state: ImplementState, result: RunUnitResult, attemptI
  * current trees are already staged per file, so asking git once per file
  * needs no parser at all.
  */
-function runOwnedDiffChunks(
-  projectRoot: string, state: ImplementState, paths: string[], frozenRoot: string, currentPaths: Set<string>,
-): { changeSet: RunOwnedChangeSet; files: Record<string, string> } {
-  if (paths.length === 0) return { changeSet: { changes: [], notes: ["No product source changed."] }, files: {} };
-  const scratch = fs.mkdtempSync(path.join(path.dirname(frozenRoot), "diff-"));
-  const baselineRoot = path.join(scratch, "a"), currentRoot = path.join(scratch, "b");
-  fs.mkdirSync(baselineRoot); fs.mkdirSync(currentRoot);
-  const git = (args: string[], cwd: string) => spawnSync("git", args, { cwd, maxBuffer: 128 * 1024 * 1024 });
-  try {
-    const head = state.initialSource.head;
-    const atHead = new Set<string>();
-    if (head !== null) {
-      const tracked = git(["ls-tree", "-r", "--name-only", "-z", head], projectRoot);
-      if (tracked.error || tracked.status !== 0) throw new Error(`cannot read review diff baseline ${head}: ${tracked.error?.message ?? tracked.stderr.toString()}`);
-      for (const entry of tracked.stdout.toString("utf8").split("\0")) if (entry) atHead.add(entry);
-    }
-    const initialPaths = new Set(state.initialSource.entries.map((entry) => entry.path));
-    const unavailable: string[] = [];
-    const changes: RunOwnedChange[] = [];
-    const files: Record<string, string> = {};
-    for (const relative of paths) {
-      // A fingerprint has no historical body. Non-git/pre-existing untracked
-      // source must never be misrepresented as a new file or an unchanged deletion.
-      if (!atHead.has(relative) && initialPaths.has(relative)) {
-        unavailable.push(`${relative} (${currentPaths.has(relative) ? "modified" : "deleted"}; pre-run bytes were not captured)`);
-        continue;
-      }
-      let baselineArg = "/dev/null";
-      if (atHead.has(relative)) {
-        const baseline = git(["show", `${head}:${relative}`], projectRoot);
-        if (baseline.error || baseline.status !== 0) throw new Error(`cannot read review diff baseline file ${relative}: ${baseline.error?.message ?? baseline.stderr.toString()}`);
-        const dest = normalizeProjectPath(baselineRoot, relative).absolute;
-        fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.writeFileSync(dest, baseline.stdout);
-        baselineArg = `a/${relative}`;
-      }
-      let currentArg = "/dev/null";
-      if (currentPaths.has(relative)) {
-        const dest = normalizeProjectPath(currentRoot, relative).absolute;
-        fs.mkdirSync(path.dirname(dest), { recursive: true });
-        fs.copyFileSync(normalizeProjectPath(frozenRoot, relative).absolute, dest);
-        currentArg = `b/${relative}`;
-      }
-      const diff = git(["diff", "--no-index", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-prefix", baselineArg, currentArg], scratch);
-      // --no-index exits 1 for differences, 0 for identical inputs, and >1 on error.
-      if (diff.error || (diff.status !== 0 && diff.status !== 1)) throw new Error(`cannot generate frozen review diff for ${relative}: ${diff.error?.message ?? diff.stderr.toString()}`);
-      const text = diff.stdout.toString("utf8");
-      if (text.length === 0) continue;
-      const lines = text.split("\n");
-      const chunkPath = diffChunkPath(relative);
-      changes.push({ path: relative, chunkPath,
-        addedLines: lines.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length,
-        removedLines: lines.filter((line) => line.startsWith("-") && !line.startsWith("---")).length });
-      files[chunkPath] = text;
-    }
-    const notes: string[] = [];
-    if (unavailable.length > 0) {
-      notes.push(`Diff unavailable for these pre-existing paths; their baseline has no committed bytes. Do not infer unchanged behavior or a complete deletion review:\n${unavailable.join("\n")}`);
-    }
-    if (changes.length === 0) {
-      notes.push(unavailable.length > 0 ? "No other changes have a reconstructible diff." : "The changed files are byte-identical to the pre-run commit.");
-    }
-    return { changeSet: { changes, notes }, files };
-  } finally { fs.rmSync(scratch, { recursive: true, force: true }); }
-}
-
 async function judgeLane<T>(
   invocationId: string,
   run: () => Promise<{ value: T; record: LaneRecord<T>["judge"] }>,
@@ -1061,160 +903,88 @@ function specGateIsFresh(projectRoot: string, state: ImplementState): boolean {
 }
 
 
-/**
- * Two identities from one set of parts. `input` is the whole pinned input
- * and keeps its historical layout, so fingerprints already recorded on
- * active runs stay comparable. `contract` leaves out the source digest and
- * the registered evidence: when only those two differ between attempts, the
- * product moved under an unchanged contract, which is what a focused round
- * requires.
- */
-function inputIdentity(state: ImplementState, sourceDigest: string, intentInput: UnifiedVerificationAttempt["intentInput"]): { input: string; contract: string } {
+/** One digest covers every reproducible input to deterministic verification. */
+function inputIdentity(state: ImplementState, sourceDigest: string, intentInput: UnifiedVerificationAttempt["intentInput"]): string {
   const artifacts = state.artifacts.filter((entry) => entry.command === undefined)
     .map(({ path, sha256, description, provenance, observedAt, target, environment, requirementRefs }) => ({ path, sha256, description, provenance, observedAt, target, environment, requirementRefs }))
     .sort((a, b) => a.path.localeCompare(b.path));
   const sourcePath = state.prd.sourceIntake && state.prd.sourceIntake != "current conversation" ? normalizeProjectPath(state.projectRoot, state.prd.sourceIntake).absolute : null;
   const sourceIntake = sourcePath === null ? null : sha256(fs.readFileSync(sourcePath));
-  const parts = { schema: state.schema, prd: state.prd.sha256, sourceDigest, artifacts, intentInput, sourceIntake, suite: { commands: state.suite.commands, exclusions: state.suite.exclusions }, amendments: state.amendments };
-  const { sourceDigest: _source, artifacts: _artifacts, ...contract } = parts;
-  return { input: sha256(JSON.stringify(parts)), contract: sha256(JSON.stringify(contract)) };
-}
-
-function currentReviewPolicy(state: ImplementState, config: ReturnType<typeof loadConfig>): string {
-  return reviewPolicySha256(reviewPolicyFor(config, state.prd.reviewProfile, { contractVersion: contractVersion(), build: buildSha256() }));
+  return sha256(JSON.stringify({ schema: state.schema, prd: state.prd.sha256, sourceDigest, artifacts, intentInput, sourceIntake, suite: { commands: state.suite.commands, exclusions: state.suite.exclusions }, amendments: state.amendments }));
 }
 
 function attemptSummary(attempt: UnifiedVerificationAttempt): Record<string, unknown> {
-  const slim = <T>(lane: LaneRecord<T> | null) => lane === null ? null : {
-    invocationId: lane.invocationId, verdict: lane.verdict, result: lane.result,
-    startedAt: lane.startedAt, finishedAt: lane.finishedAt, durationMs: lane.durationMs, error: lane.error,
-    ...(lane.carriedFrom === undefined ? {} : { carriedFrom: lane.carriedFrom }),
+  return {
+    id: attempt.id,
+    prdSha256: attempt.prdSha256,
+    verdict: attempt.verdict,
+    phase: attempt.phase,
+    inputFingerprint: attempt.inputFingerprint,
+    sourceFingerprint: attempt.sourceFingerprint,
+    startedAt: attempt.startedAt,
+    finishedAt: attempt.finishedAt,
+    durationMs: attempt.durationMs,
+    prelint: attempt.prelint,
+    mechanical: attempt.mechanical,
+    error: attempt.error,
   };
-  return { id: attempt.id, prdSha256: attempt.prdSha256, reviewContext: attempt.reviewContext, verdict: attempt.verdict, phase: attempt.phase, inputFingerprint: attempt.inputFingerprint,
-    sourceFingerprint: attempt.sourceFingerprint, startedAt: attempt.startedAt, finishedAt: attempt.finishedAt,
-    durationMs: attempt.durationMs, prelint: attempt.prelint, mechanical: attempt.mechanical, reviewScope: attempt.reviewScope ?? null,
-    reviews: { fidelity: slim(attempt.reviews.fidelity), code: slim(attempt.reviews.code) }, risk: slim(attempt.risk), error: attempt.error };
 }
 
-/**
- * The operator's one-line account of an attempt's review: why it was full,
- * focused or a repair, and where each requirement's current ground was last
- * actually inspected. Carried counts are named so a round that carried
- * everything reads as what it is.
- */
-function reviewScopeLines(state: ImplementState, attempt: UnifiedVerificationAttempt | null): string[] {
-  if (attempt === null || attempt.reviewScope === undefined) return [];
-  const scope = attempt.reviewScope;
-  const lines = [`Review scope: ${scope.mode}${scope.referenceAttemptId ? ` (reference attempt ${scope.referenceAttemptId})` : ""}; ${scope.reason}`];
-  if (scope.mode === "repair") lines.push(`Reused settled lanes: ${scope.carriedLanes.join(", ")}; executed: ${scope.executedLanes.join(", ") || "none"}`);
-  for (const role of ROUTINE_REVIEW_ROLES) {
-    const result = attempt.reviews[role]?.result;
-    if (result === undefined || result === null) continue;
-    const carried = result.assessments.filter((entry) => entry.basis === "carried").length;
-    if (scope.mode !== "full" || carried > 0 || result.scope !== undefined) lines.push(`${role}: ${result.assessments.length - carried} assessment(s) reviewed, ${carried} carried${result.scope?.basis === "widened" ? `; widened: ${result.scope.reason}` : ""}`);
+function effectiveVerdict(attempt: UnifiedVerificationAttempt): VerificationStatus {
+  if (attempt.error !== null) return attempt.verdict === "FAIL" ? "FAIL" : "ERROR";
+  if (attempt.mechanical.some((entry) => entry.status !== "PASS")) return "FAIL";
+  return attempt.verdict;
+}
+
+function nativeReviewNames(state: ImplementState): string {
+  return state.prd.reviewProfile === "high-risk" ? "Fidelity, Code, and Security" : "Fidelity and Code";
+}
+
+function verificationNextActions(state: ImplementState, verdict: VerificationStatus): string[] {
+  if (verdict !== "PASS") {
+    return [
+      "Next action: fix the deterministic failures in the report, then rerun sasu implement verify.",
+      "Do not review or ship this head until deterministic verification passes.",
+    ];
   }
-  const grounds = requirementGrounds(state, attempt);
-  const reviewedNow = grounds.filter((entry) => entry.reviewedInAttempt === attempt.id).length;
-  const carried = grounds.filter((entry) => entry.reviewedInAttempt !== null && entry.reviewedInAttempt !== attempt.id);
-  const unreviewed = grounds.filter((entry) => entry.reviewedInAttempt === null).length;
-  if (grounds.length > 0 && attempt.reviews.fidelity?.result) {
-    const origins = [...new Set(carried.map((entry) => entry.reviewedInAttempt))].join(", ");
-    lines.push(`Requirement grounds: ${reviewedNow} reviewed in this attempt, ${carried.length} carried from ${origins || "no earlier attempt"}, ${unreviewed} without a current ground`);
-  }
-  return lines;
+  return [
+    `Next action: spawn native ${nativeReviewNames(state)} review subagents in parallel from this runtime for this exact verified head.`,
+    "Review output: Fix now, Follow-up improvements, and What was checked. Sasu sets no reviewer turn limit; if a reviewer fails, record REVIEW_UNAVAILABLE with the visible cause.",
+    "Then fix valid current-scope findings. If source or material evidence changes, commit it and rerun verify and review; otherwise continue to ship.",
+  ];
 }
 
-// Repeating the same preparation failure is bounded separately: it made no
-// semantic review call and must never inflate the recorded judge round count.
-const PREJUDGE_FAILURE_LIMIT = 3;
-function verificationBudget(state: ImplementState, budget: number) {
-  let fixAttempts = 0, consecutiveErrors = 0, prejudgeFailures = 0;
-  let lastPrejudgeKey: string | null = null;
-  let judgeErrorCause: string | null = null, lastErrorKey: string | null = null;
-  const grants = state.budgetGrants ?? [];
-  for (const attempt of state.verificationAttempts.slice(grants.at(-1)?.attemptCountBefore ?? 0)) {
-    if (attempt.verdict === "NOT_RUN") continue;
-    if (attempt.verdict === "PASS") { fixAttempts = 0; consecutiveErrors = 0; prejudgeFailures = 0; lastPrejudgeKey = null; lastErrorKey = null; judgeErrorCause = null; continue; }
-    if (ROUTINE_REVIEW_ROLES.every((role) => attempt.reviews[role] === null) && attempt.risk === null && attempt.error !== null) {
-      const key = JSON.stringify([attempt.inputFingerprint, attempt.error.stage, attempt.error.code, attempt.error.message]);
-      prejudgeFailures = key === lastPrejudgeKey ? prejudgeFailures + 1 : 1;
-      lastPrejudgeKey = key;
-    } else { prejudgeFailures = 0; lastPrejudgeKey = null; }
-    const failures = [...ROUTINE_REVIEW_ROLES.map((role) => attempt.reviews[role]), attempt.risk].flatMap((lane) => lane?.error?.cause ? [lane.error.cause] : []);
-    if (attempt.verdict === "ERROR" && failures.length > 0) {
-      const key = failures.map((cause) => `${cause.backend}:${cause.code}:${cause.reason ?? ""}`).sort().join("|");
-      consecutiveErrors = key === lastErrorKey ? consecutiveErrors + 1 : 1;
-      lastErrorKey = key; judgeErrorCause = failures.map(describeJudgeFailureCause).join(", ");
-      continue;
-    }
-    consecutiveErrors = 0; lastErrorKey = null; judgeErrorCause = null;
-    // Count actual non-completing semantic rounds, including a routine PASS
-    // with an open blocking risk. Preflight and suite failures called no judge.
-    if (ROUTINE_REVIEW_ROLES.some((role) => attempt.reviews[role]?.result) || attempt.risk?.result) fixAttempts += 1;
-  }
-  return { fixAttempts, totalAttempts: state.verificationAttempts.length, budget,
-    budgetExhausted: fixAttempts >= budget, consecutiveErrors, judgeErrorThreshold: JUDGE_ERROR_LOOP_THRESHOLD,
-    judgeErrorCause, judgeErrorLoop: consecutiveErrors >= JUDGE_ERROR_LOOP_THRESHOLD,
-    prejudgeFailures, prejudgeFailureLimit: PREJUDGE_FAILURE_LIMIT, prejudgeFailureLoop: prejudgeFailures >= PREJUDGE_FAILURE_LIMIT, grants: grants.length };
-}
-
-function terminalBudgetMessage(view: ReturnType<typeof verificationBudget>): string | null {
-  const next = 'close honestly with `sasu implement finalize --status blocked`, or record explicit user approval with `verify --grant-budget "<user words>"`';
-  return view.budgetExhausted ? `verification fix budget exhausted (${view.fixAttempts}/${view.budget}); ${next}`
-    : view.judgeErrorLoop ? `judge error loop (${view.consecutiveErrors}/${view.judgeErrorThreshold}, ${view.judgeErrorCause}); ${next}`
-    : view.prejudgeFailureLoop ? `repeated preparation failure (${view.prejudgeFailures}/${view.prejudgeFailureLimit}); ${next}` : null;
-}
-
-function blockedReason(state: ImplementState): string | null {
-  const view = verificationBudget(state, loadConfig(state.projectRoot).judge.retryBudget);
-  if (view.budgetExhausted) return "budget-exhausted";
-  if (view.judgeErrorLoop) return "judge-error-loop";
-  if (view.prejudgeFailureLoop) return "prejudge-failure-loop";
-  const blocking = openRiskFindings(state).filter((entry) => entry.severity === "blocking");
-  const latest = state.verificationAttempts.at(-1);
-  // Human risk authority cannot waive product defects or an uncompleted
-  // review/suite. All remaining blockers must be the declared risk findings.
-  return blocking.length > 0 && blocking.every((entry) => entry.nonConvergence !== undefined)
-    && latest?.error === null && ROUTINE_REVIEW_ROLES.every((role) => latest.reviews[role]?.result != null) && latest.risk?.result != null
-    && latest.mechanical.every((entry) => entry.status === "PASS")
-    && !openFindings(state).some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing !== "post-completion"))
-    && openHumanRejections(state).length === 0 ? "non-convergent-findings" : null;
-}
-
-export function openRiskFindings(state: ImplementState): TrackedRiskFinding[] { return state.riskFindings.filter((entry) => entry.status === "open"); }
-function openFindings(state: ImplementState) { return state.findings.filter((entry) => entry.status === "open"); }
-function humanConfirmations(state: ImplementState) { return state.findings.filter((entry) => entry.kind === "human-confirmation"); }
-function openHumanRejections(state: ImplementState) {
-  return humanConfirmations(state).filter((entry) => entry.status !== "amended" && entry.responses.at(-1)?.response === "rejected");
-}
-function effectiveVerdict(state: ImplementState, attempt: UnifiedVerificationAttempt): VerificationStatus {
-  if (attempt.verdict !== "FAIL") return attempt.verdict;
-  if (attempt.error !== null || ROUTINE_REVIEW_ROLES.some((role) => attempt.reviews[role]?.result == null) || attempt.mechanical.some((entry) => entry.status !== "PASS")) return attempt.verdict;
-  if (state.prd.reviewProfile === "high-risk" && attempt.risk?.result == null) return attempt.verdict;
-  if (ROUTINE_REVIEW_ROLES.some((role) => attempt.reviews[role]?.result?.assessments.some((entry) => entry.conclusion === "unresolved"))) return "FAIL";
-  if (openFindings(state).some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing !== "post-completion"))) return "FAIL";
-  if (openRiskFindings(state).some((entry) => entry.severity === "blocking")) return "FAIL";
-  return "PASS";
-}
 function delivery(state: ImplementState, freshness: string[] = []) {
   const reasons = [...freshness];
-  if (state.status !== "complete" && state.status !== "complete-pending-human") reasons.push(`run is ${state.status}`);
-  reasons.push(...openFindings(state).filter((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing !== "post-completion")).map((entry) => `${entry.id}: ${entry.problem}`));
-  reasons.push(...openRiskFindings(state).filter((entry) => entry.severity === "blocking").map((entry) => `${entry.id}: ${entry.text}`));
-  reasons.push(...openHumanRejections(state).map((entry) => `${entry.id}: human rejected: ${entry.responses.at(-1)!.evidence}`));
+  if (state.status === "retired") reasons.push("run is retired");
+  if (state.verificationReport === null) reasons.push("current deterministic verification report is missing");
+  else if (state.verificationReport.status !== "PASS") reasons.push(`deterministic verification is ${state.verificationReport.status}`);
   return { eligible: reasons.length === 0, reasons };
 }
 
-function publicState(state: ImplementState, retryBudget: number, currentSourceDigest?: string, currentInputFingerprint?: string): Record<string, unknown> {
+function publicState(state: ImplementState, currentSourceDigest?: string, currentInputFingerprint?: string): Record<string, unknown> {
   const latest = state.verificationAttempts.at(-1) ?? null;
   const stale = latest !== null && ((currentSourceDigest !== undefined && latest.sourceFingerprint !== currentSourceDigest) || (currentInputFingerprint !== undefined && latest.inputFingerprint !== currentInputFingerprint));
-  return { schema: state.schema, status: state.status, topicSlug: state.topicSlug, prdPath: state.prdPath, prdSnapshotPath: state.prd.snapshotPath,
-    baselineAttribution: state.baselineAttribution, workingRoot: state.worktree?.path ?? state.projectRoot, worktree: state.worktree ?? null,
-    reviewProfile: state.prd.reviewProfile, escalations: { used: state.escalations.length, limit: ESCALATE_LIMIT_PER_RUN, remaining: ESCALATE_LIMIT_PER_RUN - state.escalations.length }, requirementCount: state.requirements.length, suite: suiteScore(state),
-    findings: openFindings(state), humanConfirmations: humanConfirmations(state), riskFindings: { open: openRiskFindings(state), openCount: openRiskFindings(state).length },
-    verification: { verdict: stale ? "STALE" : latest ? effectiveVerdict(state, latest) : "NOT_RUN", attempts: state.verificationAttempts.length, budget: verificationBudget(state, retryBudget), latest: latest ? attemptSummary(latest) : null },
-    activeVerification: state.activeVerification ?? null, artifacts: state.artifacts, retirement: state.retirement, completion: state.completion,
-    delivery: delivery(state, stale ? ["verification is STALE"] : []) };
+  return {
+    schema: state.schema,
+    status: state.status,
+    topicSlug: state.topicSlug,
+    prdPath: state.prdPath,
+    prdSnapshotPath: state.prd.snapshotPath,
+    baselineAttribution: state.baselineAttribution,
+    workingRoot: state.worktree?.path ?? state.projectRoot,
+    worktree: state.worktree ?? null,
+    reviewProfile: state.prd.reviewProfile,
+    escalations: { used: state.escalations.length, limit: ESCALATE_LIMIT_PER_RUN, remaining: ESCALATE_LIMIT_PER_RUN - state.escalations.length },
+    requirementCount: state.requirements.length,
+    suite: suiteScore(state),
+    verification: { verdict: stale ? "STALE" : latest ? effectiveVerdict(latest) : "NOT_RUN", attempts: state.verificationAttempts.length, latest: latest ? attemptSummary(latest) : null },
+    activeVerification: state.activeVerification ?? null,
+    artifacts: state.artifacts,
+    retirement: state.retirement,
+    verificationReport: state.verificationReport,
+    delivery: delivery(state, stale ? ["verification is STALE"] : []),
+  };
 }
 
 function currentInputs(state: ImplementState) {
@@ -1223,13 +993,13 @@ function currentInputs(state: ImplementState) {
   const contract = parseImplementContract(held.text);
   const context = intentSource(state.projectRoot, contract, specGateIsFresh(state.projectRoot, state));
   const intentInput = { routing: context.routing, contentSha256: sha256(context.content) };
-  const identity = inputIdentity(state, source.digest, intentInput);
-  return { source, held, contract, context, intentInput, fingerprint: identity.input, contractFingerprint: identity.contract };
+  const fingerprint = inputIdentity(state, source.digest, intentInput);
+  return { source, held, contract, context, intentInput, fingerprint };
 }
 
 function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { state } = loadState(projectRoot, stateOptions(args));
-  const config = loadConfig(state.projectRoot), herdr = herdrCapabilities();
+  const herdr = herdrCapabilities();
   let sourceDigest: string | undefined, fingerprint: string | undefined;
   const problems = artifactIntegrityProblems(state.projectRoot, state);
   try {
@@ -1238,21 +1008,20 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
     if (inputs.held.drift !== null) { problems.push("PRD changed after the sealed snapshot"); fingerprint = "PRD_DRIFT"; }
   } catch (error) { problems.push(error instanceof Error ? error.message : String(error)); fingerprint = "INPUT_ERROR"; }
   if (problems.length > 0) fingerprint = "INPUT_ERROR";
-  const detail = publicState(state, config.judge.retryBudget, sourceDigest, fingerprint);
+  const detail = publicState(state, sourceDigest, fingerprint);
+  const verificationVerdict = (detail.verification as {verdict:string}).verdict;
   const currentDelivery = delivery(state, problems.concat((detail.verification as {verdict:string}).verdict === "STALE" ? ["verification is STALE"] : []));
-  const latest = state.verificationAttempts.at(-1) ?? null;
-  return result("status", true, `${state.topicSlug}: ${state.status}`, { ...detail, delivery: currentDelivery, artifactProblems: problems, requirementGrounds: requirementGrounds(state),
+  return result("status", true, `${state.topicSlug}: ${state.status}`, { ...detail, delivery: currentDelivery, artifactProblems: problems,
     herdr: { available: herdr.available, unavailableHoles: (["spawn", "read", "alive"] as const).filter((hole) => !herdr.holes[hole]), reason: herdr.reason } }, [
       `${state.topicSlug}: ${state.status}; ${(detail.verification as {verdict:string}).verdict}`,
       `Source: ${sourceDigest ?? "unavailable"}; ${state.requirements.length} requirements retained in the contract`,
       `Required suite: ${JSON.stringify(suiteScore(state))}`,
-      ...reviewScopeLines(state, latest),
-      `escalations: ${state.escalations.length} of ${ESCALATE_LIMIT_PER_RUN} used${state.escalations.length >= ESCALATE_LIMIT_PER_RUN ? "; bound spent; amend with human approval or finalize blocked" : ""}`,
-      ...openFindings(state).map((entry) => `${entry.id} [${entry.kind}] ${entry.problem} - ${entry.nextAction}`),
-      ...openRiskFindings(state).map((entry) => `${entry.id} [risk ${entry.severity}] ${entry.text}`),
+      `Verification report: ${state.verificationReport?.markdownPath ?? "not generated"}`,
+      `Agent Review: ${verificationVerdict === "PASS" && currentDelivery.eligible ? `spawn native ${nativeReviewNames(state)} subagents in parallel; record Fix now and Follow-up improvements in the PR` : "wait for a current deterministic PASS"}`,
+      `escalations: ${state.escalations.length} of ${ESCALATE_LIMIT_PER_RUN} used${state.escalations.length >= ESCALATE_LIMIT_PER_RUN ? "; bound spent" : ""}`,
       ...currentDelivery.reasons.map((reason) => `Delivery: ${reason}`),
       ...(state.activeVerification ? [`Verification in progress: ${state.activeVerification.attemptId}`] : []),
-      `Next: ${state.status === "active" ? "implement or fix findings, then verify and finalize" : state.status === "complete-pending-human" ? "confirm the remaining human item IDs using the user's words" : "inspect the current receipt"}`,
+      `Next: ${state.status !== "active" ? "start a new run if more work is required" : verificationVerdict === "PASS" && currentDelivery.eligible ? "run native agent review, fix in-scope findings, rerun deterministic verify after source changes, then deliver" : "resolve the reported deterministic or freshness failure and rerun verify"}`,
     ]);
 }
 
@@ -1310,124 +1079,122 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   return result("artifact", true, `${registered.length} run evidence file(s) registered; unchanged bytes retain their original observation time`, { artifacts: registered });
 }
 
-function reviewInputs(state: ImplementState, attempt: UnifiedVerificationAttempt, inputs: ReturnType<typeof currentInputs>, plan: ReviewPlan): { material: ReviewPromptMaterial; cwd: string; evidencePaths: string[]; images: string[] } {
-  const workRoot = requireWorkRoot(state);
-  const changed = changedPathsSince(state.initialSource, inputs.source);
-  const currentSource = new Map(inputs.source.entries.map((entry) => [entry.path, entry.sha256]));
-  const cwd = path.join(state.projectRoot, state.runDir, "review-inputs", attempt.id);
-  fs.mkdirSync(cwd, { recursive: true });
-  const paths = new Set<string>(), images: string[] = [];
-  const copy = (root: string, relative: string, expectedHash: string) => {
-    const from = normalizeProjectPath(root, relative); assertEvidencePathInsideProject(root, from);
-    if (!fs.lstatSync(from.absolute).isFile()) throw new Error(`review input is not a regular file: ${relative}`);
-    // Hash the same bytes we stage. A later source freshness check alone can
-    // miss a file changed during copying and restored before the check.
-    const buffer = fs.readFileSync(from.absolute);
-    if (sha256(buffer) !== expectedHash) throw new Error(`review input changed before snapshot copy: ${relative}`);
-    const dest = normalizeProjectPath(cwd, relative);
-    if (paths.has(relative)) {
-      if (sha256(fs.readFileSync(dest.absolute)) !== expectedHash) throw new Error(`review input collision: evidence ${relative} differs from the current product source; register observations under a distinct path`);
-      return;
-    }
-    fs.mkdirSync(path.dirname(dest.absolute), { recursive: true });
-    fs.writeFileSync(dest.absolute, buffer); paths.add(relative);
+function verificationReportData(state: ImplementState, attempt: UnifiedVerificationAttempt) {
+  const jsonPath = `${state.runDir}/verification-report.json`;
+  const markdownPath = `${state.runDir}/verification-report.md`;
+  const generatedAt = nowIso();
+  const status: "PASS" | "FAIL" | "ERROR" = attempt.verdict === "PASS" ? "PASS" : attempt.verdict === "FAIL" ? "FAIL" : "ERROR";
+  const current = captureSourceSnapshot(requireWorkRoot(state));
+  const sourceChanged = current.digest !== attempt.sourceFingerprint;
+  if (status === "PASS" && sourceChanged) {
+    throw new Error("source changed before the verification report could be published");
+  }
+  const reportFields = {
+    schema: "sasu.verification-report.v1" as const,
+    inputFingerprint: attempt.inputFingerprint,
+    prdSha256: attempt.prdSha256,
+    baseSha: state.initialSource.head,
+    headSha: current.head,
+    sourceFingerprint: attempt.sourceFingerprint,
+    generatedAt,
+    status,
+    jsonPath,
+    markdownPath,
   };
-  // The product fingerprint already covers the whole git-visible regular
-  // tree. Freeze that exact set so reviewers discover unchanged callers,
-  // without an implementer selecting or re-registering every surrounding file.
-  for (const entry of inputs.source.entries) {
-    if (entry.state !== "present" || entry.sha256 === null) throw new Error(`frozen source has no current bytes: ${entry.path}`);
-    copy(workRoot, entry.path, entry.sha256);
-  }
-  // A repair round reuses a lane whose result cites the suite logs of the
-  // attempt it ran in. Those logs stay readable and citable here, positioned
-  // as an earlier execution of the same sealed command on the same source,
-  // so the reused result validates against this attempt's references and the
-  // rerun role sees what its peer saw in addition to this attempt's own run.
-  const priorLogs: RegisteredArtifact[] = plan.record.mode === "repair"
-    ? plan.reference!.mechanical.map((run) => ({ kind: "command-log", path: run.logPath, description: `mechanical ${run.status}: ${run.command} (attempt ${plan.reference!.id})`,
-      ...inspectArtifactFile(path.join(state.projectRoot, run.logPath), "log"), registeredAt: run.finishedAt, observedAt: run.finishedAt, sourceDigest: plan.reference!.sourceFingerprint,
-      provenance: `CLI executed ${run.command} in ${run.cwd} during attempt ${plan.reference!.id} on the same source`, command: run.command, cwd: run.cwd, exitCode: run.exitCode }))
-    : [];
-  const artifacts = [...state.artifacts, ...priorLogs.filter((prior) => !state.artifacts.some((entry) => entry.path === prior.path))];
-  for (const artifact of artifacts) {
-    if (currentSource.has(artifact.path) && currentSource.get(artifact.path) !== artifact.sha256) {
-      throw new Error(`registered source context ${artifact.path} differs from current product source; refresh the shared artifact`);
-    }
-    copy(state.projectRoot, artifact.path, artifact.sha256);
-    const buffer = fs.readFileSync(path.join(cwd, artifact.path));
-    const image = artifact.kind === "image" || artifact.kind === "screenshot";
-    if (image) images.push(path.join(cwd, artifact.path));
-    else if (buffer.includes(0)) throw new Error(`unsupported binary evidence: ${artifact.path}; provide a judge-readable actual capture`);
-  }
-  const checks = attempt.mechanical.map((run) => ({ command: run.command, exitCode: run.exitCode, logPath: run.logPath, startedAt: run.startedAt,
-    provenance: `CLI execution ${run.startedAt}; cwd=${run.cwd}; log=${run.logPath}` }));
-  // Chunks are readable evidence like any product file: they must be citable,
-  // and for a deleted file the chunk is the only surviving record of its code.
-  const diff = runOwnedDiffChunks(workRoot, state, changed, cwd, new Set(currentSource.keys()));
-  const chunkPaths = Object.keys(diff.files);
-  // The workspace the reviewer sees is registered evidence, change chunks, and
-  // the documents the harness authors - and every one of the three must be
-  // citable. Naming the third here rather than at the write loop below is what
-  // keeps the citable set from drifting behind the readable one: a document
-  // absent from this registry never reaches the workspace, because the write
-  // loop refuses it.
-  const generatedDocPaths: string[] = Object.values(REVIEW_INPUT_PATHS);
-  const refs = [...new Set(["PRD", "Decisions", "Risks", "instruction", ...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id), ...paths, ...chunkPaths, ...generatedDocPaths])];
-  const ledger = plan.ledger;
-  const openRisks = ledger.riskFindings.filter((entry) => entry.status === "open");
-  const priorRisk: RiskLaneResult | null = ledger.riskFindings.length === 0 ? null : { verdict: openRisks.some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS", findings: openRisks.map(({ id, severity, text }) => ({ id, severity, text })) };
-  const actualEvidenceRefs = [...paths, ...chunkPaths].filter((entry) => ![state.prdPath, state.prd.snapshotPath, inputs.contract.frontmatter["source_intake"]].includes(entry));
-  const requirementRefs = [...state.requirements.map((entry) => entry.id), ...inputs.contract.decisions.map((entry) => entry.id)];
-  const humanSources = { Decisions: inputs.contract.decisions.map((entry) => `${entry.decision}\n${entry.rationale}`).join("\n"), Risks: inputs.contract.risks, instruction: inputs.context.content, ...Object.fromEntries(inputs.contract.decisions.map((entry) => [entry.id, entry.decision])) };
-  const priorFindingIds = ledger.findings.filter((entry) => entry.status === "open").map((entry) => entry.id);
-  const material: ReviewPromptMaterial = { prdText: inputs.held.text, approval: state.prd.approval, contract: inputs.contract, intentSource: inputs.context,
-    changedPaths: changed, workspacePaths: [...paths, ...chunkPaths, ...generatedDocPaths], changeSet: diff.changeSet, checks,
-    sourceDigest: attempt.sourceFingerprint, artifacts,
-    referenceContext: { requiredRequirementRefs: state.requirements.map((entry) => entry.id),
-      // Deliberately narrower than `refs`: a generated document is citable but
-      // is not implementation material, and the contract already says so
-      // ("path metadata alone do not establish implementation").
-      actualEvidenceRefs, requirementRefs, evidenceRefs: refs, priorFindingIds, humanSources,
-      scope: plan.scope, ledgerSnapshot: ledger },
-    priorFindings: ledger.findings, priorRiskResult: priorRisk,
-    roundContext: plan.roundContext, facts: { suiteExclusions: state.suite.exclusions, amendments: state.amendments },
-    claims: ledger.claims };
-  const citable = new Set(refs);
-  for (const [relative, text] of Object.entries({ ...diff.files, ...reviewInputDocuments(material) })) {
-    if (paths.has(relative)) throw new Error(`registered evidence collides with a reserved review document: ${relative}`);
-    // A file the reviewer can open but cannot cite fails the whole review for
-    // quoting what the harness handed it. Refusing here means the two sets
-    // cannot silently diverge again the next time a document is added.
-    if (!citable.has(relative)) throw new Error(`review document is not a citable reference: ${relative}; declare it in REVIEW_INPUT_PATHS`);
-    const dest = normalizeProjectPath(cwd, relative);
-    fs.mkdirSync(path.dirname(dest.absolute), { recursive: true });
-    fs.writeFileSync(dest.absolute, text); paths.add(relative);
-  }
-  return { material, cwd, evidencePaths: [...paths], images };
+  const nextActions = verificationNextActions(state, status);
+  const evidence = state.artifacts
+    .filter((entry) => entry.command === undefined)
+    .map((entry) => ({
+      path: entry.path,
+      kind: entry.kind,
+      description: entry.description,
+      sha256: entry.sha256,
+      observedAt: entry.observedAt,
+      sourceFingerprint: entry.sourceDigest,
+      provenance: entry.provenance,
+      target: entry.target ?? null,
+      environment: entry.environment ?? null,
+    }));
+  const requiredCommands = state.suite.commands.map((command) => ({
+    id: command.id,
+    command: command.command,
+    cwd: command.cwd,
+    excluded: state.suite.exclusions.some((entry) => entry.commandId === command.id),
+    result: state.suite.results.find((entry) => entry.commandId === command.id && entry.attemptId === attempt.id) ?? null,
+  }));
+  const data = {
+    ...reportFields,
+    ownedFiles: changedPathsSince(state.initialSource, current),
+    observedSourceFingerprint: current.digest,
+    sourceChangedAfterVerification: sourceChanged,
+    requiredCommands,
+    evidence,
+    error: attempt.error,
+    agentReview: {
+      status: "NOT_RUN",
+      authority: "advisory",
+      instruction: nextActions.join(" "),
+    },
+  };
+  const commandLines = requiredCommands.length === 0
+    ? ["- No required commands configured."]
+    : requiredCommands.map((entry) => `- ${entry.excluded ? "EXCLUDED" : entry.result?.status ?? "NOT_RUN"}: \`${entry.command}\` (cwd \`${entry.cwd}\`)`);
+  const evidenceLines = evidence.length === 0
+    ? ["- No runtime evidence registered."]
+    : evidence.map((entry) => `- ${entry.kind}: \`${entry.path}\` - ${entry.description} (observed ${entry.observedAt})`);
+  const markdown = [
+    "# Verification report",
+    "",
+    `Status: **${status}**`,
+    `Generated: ${generatedAt}`,
+    `Base: ${reportFields.baseSha ?? "unavailable"}`,
+    `Head: ${reportFields.headSha ?? "unavailable"}`,
+    "",
+    "## Required commands",
+    "",
+    ...commandLines,
+    "",
+    "## Runtime evidence",
+    "",
+    ...evidenceLines,
+    "",
+    "## Agent Review",
+    "",
+    ...nextActions,
+    "",
+  ].join("\n");
+  const json = jsonText(data);
+  const identity = { ...reportFields, reportSha256: sha256(json) };
+  return { identity, json, markdown };
 }
 
 async function verify(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
   let { statePath, state } = loadState(projectRoot, stateOptions(args));
-  assertRunOpenForMutation(state); assertRunOwnership(statePath, state, args);
-  const config = loadConfig(state.projectRoot), issuer = resolveIssuer(flag(args, "issuer"));
-  if (args.flags.has("grant-budget")) {
-    const evidence = requiredFlag(args, "grant-budget");
-    if (terminalBudgetMessage(verificationBudget(state, config.judge.retryBudget)) === null) throw new Error("--grant-budget requires an exhausted verification budget");
-    state.budgetGrants = [...(state.budgetGrants ?? []), { at: nowIso(), evidence, attemptCountBefore: state.verificationAttempts.length }];
-  }
-  const beforeBudget = verificationBudget(state, config.judge.retryBudget), terminal = terminalBudgetMessage(beforeBudget);
-  if (terminal) return result("verify", false, terminal, { verificationBudget: beforeBudget, judgeCalls: 0 });
-  let inputs: ReturnType<typeof currentInputs> | undefined, preflightError: unknown;
+  assertRunOpenForMutation(state);
+  assertRunOwnership(statePath, state, args);
+  const config = loadConfig(state.projectRoot);
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  if (args.flags.has("grant-budget")) throw new Error("--grant-budget is retired; deterministic verification has no reviewer or correction budget");
+
+  let inputs: ReturnType<typeof currentInputs> | undefined;
+  let preflightError: unknown;
   try { inputs = currentInputs(state); } catch (error) { preflightError = error; }
   const source = inputs?.source ?? state.initialSource;
-  const manifest = verificationInputManifest(state.initialSource, source, state.artifacts);
-  const policySha256 = currentReviewPolicy(state, config);
-  const attempt: UnifiedVerificationAttempt = { id: crypto.randomUUID(), inputFingerprint: inputs?.fingerprint ?? sha256(JSON.stringify({ prd: state.prd.sha256, source: source.digest, invalid: true })),
-    contractFingerprint: inputs?.contractFingerprint ?? sha256(JSON.stringify({ prd: state.prd.sha256, invalid: true })), reviewPolicySha256: policySha256,
-    prdSha256: state.prd.sha256, reviewContext: null, sourceFingerprint: source.digest, inputManifest: manifest, roundContext: verificationRoundContext(manifest, reviewPrior(state.verificationAttempts)),
-    intentInput: inputs?.intentInput ?? { routing: "full-qa-log", contentSha256: sha256("") }, startedAt: nowIso(), finishedAt: nowIso(), durationMs: 0,
-    phase: "preflight", verdict: "NOT_RUN", prelint: { ok: false, findings: [] }, mechanical: [], reviews: { fidelity: null, code: null }, risk: null, error: null };
+  const attempt: UnifiedVerificationAttempt = {
+    id: crypto.randomUUID(),
+    inputFingerprint: inputs?.fingerprint ?? sha256(JSON.stringify({ prd: state.prd.sha256, source: source.digest, invalid: true })),
+    prdSha256: state.prd.sha256,
+    sourceFingerprint: source.digest,
+    intentInput: inputs?.intentInput ?? { routing: "full-qa-log", contentSha256: sha256("") },
+    startedAt: nowIso(),
+    finishedAt: nowIso(),
+    durationMs: 0,
+    phase: "preflight",
+    verdict: "NOT_RUN",
+    prelint: { ok: false, findings: [] },
+    mechanical: [],
+    error: null,
+  };
   const started = Date.now();
   state = beginVerification(statePath, state, attempt);
   const update = (apply: (fresh: ImplementState, current: UnifiedVerificationAttempt) => void) => {
@@ -1450,251 +1217,86 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     if (preflightError) throw preflightError;
     if (!inputs) throw new Error("current verification inputs are unavailable");
     requirePinnedPrd(state.projectRoot, state);
-    const lint = prelintPrd(inputs.held.text); update((_fresh, held) => { held.prelint = { ok: lint.ok, findings: lint.findings }; });
+    const lint = prelintPrd(inputs.held.text);
+    update((_fresh, held) => { held.prelint = { ok: lint.ok, findings: lint.findings }; });
     if (!lint.ok) throw new Error(`PRD prelint failed: ${JSON.stringify(lint.findings)}`);
     if (changedPathsSince(state.initialSource, source).length === 0) throw new VerifyInvariantError("empty-run-owned-change-set", "run-owned change set is empty; start before implementation or attribute existing implementation as run-owned");
     const problems = artifactIntegrityProblems(state.projectRoot, state);
     if (problems.length > 0) throw new Error(`evidence integrity failed: ${problems.join("; ")}`);
-    phase = "mechanical"; update((_fresh, held) => { held.phase = phase; });
+
+    phase = "mechanical";
+    update((_fresh, held) => { held.phase = phase; });
     const units = planRunUnits(state);
     progress(units.length === 0 ? "no required project suites are configured or detected" : `running ${units.length} required command(s)`);
     const batch = await runBatch(state, requireWorkRoot(state), units, config.verify.commandTimeoutMs, (completed) => {
-      const base: Omit<MechanicalRunRecord, "logPath"> = { command: completed.unit.command, cwd: completed.unit.cwd, startedAt: completed.startedAt, finishedAt: completed.finishedAt,
-        durationMs: completed.durationMs, exitCode: completed.exitCode, mutatedTree: completed.mutatedTree, status: completed.outcome === "green" ? "PASS" : "FAIL" };
+      const base: Omit<MechanicalRunRecord, "logPath"> = {
+        command: completed.unit.command,
+        cwd: completed.unit.cwd,
+        startedAt: completed.startedAt,
+        finishedAt: completed.finishedAt,
+        durationMs: completed.durationMs,
+        exitCode: completed.exitCode,
+        mutatedTree: completed.mutatedTree,
+        status: completed.outcome === "green" ? "PASS" : "FAIL",
+      };
       const logPath = writeMechanicalLog(state.projectRoot, state, base, completed.stdout, completed.stderr, completed.tmpdir);
-      update((fresh, held) => { const run = { ...base, logPath }; held.mechanical.push(run); upsertCommandArtifacts(fresh, run, fresh.projectRoot, completed.tree.product); attributeToSuite(fresh, completed, attempt.id, logPath); });
+      update((fresh, held) => {
+        const run = { ...base, logPath };
+        held.mechanical.push(run);
+        upsertCommandArtifacts(fresh, run, fresh.projectRoot, completed.tree.product);
+        attributeToSuite(fresh, completed, attempt.id, logPath);
+      });
       progress(`${base.status}: ${base.command} (${(base.durationMs / 1000).toFixed(1)}s)`);
     }, executionHooks());
     if (batch.treeMoved !== null || batch.results.some((entry) => entry.outcome !== "green")) {
-      update((_fresh, held) => { held.verdict = "FAIL"; held.error = { stage: "mechanical", code: batch.treeMoved ? "source-moved" : "suite-failed", message: "required suite failed or changed the source under verification" }; });
+      update((_fresh, held) => {
+        held.verdict = "FAIL";
+        held.error = { stage: "mechanical", code: batch.treeMoved ? "source-moved" : "suite-failed", message: "required suite failed or changed the source under verification" };
+      });
     } else {
-      phase = "evidence"; update((_fresh, held) => { held.phase = phase; });
+      phase = "evidence";
+      update((_fresh, held) => { held.phase = phase; });
       const integrity = artifactIntegrityProblems(state.projectRoot, state);
-      if (integrity.length) throw new Error(integrity.join("; "));
-      const active = state.verificationAttempts.find((entry) => entry.id === attempt.id)!;
-      const currentLedger = ledgerSnapshot(state);
-      const plan = planReview(state, active, { policySha256, ledger: currentLedger });
-      const prepared = reviewInputs(state, active, inputs, plan);
-      const referenceContext = prepared.material.referenceContext;
-      const executed = new Set(plan.record.executedLanes);
-      active.roundContext = { ...plan.roundContext, requirementRefs: [...referenceContext.requirementRefs], evidenceRefs: [...referenceContext.evidenceRefs] };
-      const reviewTexts = { fidelity: reviewPrompt(prepared.material, "fidelity"), code: reviewPrompt(prepared.material, "code") };
-      const priorFindings = structuredClone(plan.ledger.findings);
-      const riskText = executed.has("risk") ? riskPrompt(prepared.material) : null;
-      const reference = plan.reference;
-      phase = "review"; update((_fresh, held) => {
-        held.phase = phase; held.roundContext = active.roundContext; held.reviewContext = structuredClone(referenceContext); held.reviewScope = structuredClone(plan.record);
-        // Reused lanes are recorded before any fresh lane starts, so an
-        // interruption after this point still shows which judgments this
-        // attempt rests on and where they came from.
-        // `carriedFrom` names the attempt that actually produced the judgment,
-        // not the one it was copied through. Two consecutive failures of the
-        // same lane carry a carry: naming the reference would stack
-        // `carriedFrom` inside the copied record, and the reader compares a
-        // record with one stripped layer against an origin that still has the
-        // other, so the writer is refused by its own reader (2026-09-14).
-        for (const role of ROUTINE_REVIEW_ROLES) if (plan.record.carriedLanes.includes(role)) held.reviews[role] = { ...structuredClone(reference!.reviews[role]!), carriedFrom: reference!.reviews[role]!.carriedFrom ?? reference!.id };
-        if (plan.record.carriedLanes.includes("risk")) held.risk = { ...structuredClone(reference!.risk!), carriedFrom: reference!.risk!.carriedFrom ?? reference!.id };
-      });
-      progress(`review ${plan.record.mode}: ${plan.record.reason}; executing ${plan.record.executedLanes.join(", ")}${plan.record.carriedLanes.length > 0 ? `; reusing ${plan.record.carriedLanes.join(", ")} from attempt ${reference!.id}` : ""}`);
-      const options = { cwd: prepared.cwd, agentic: true, explore: true, evidencePaths: prepared.evidencePaths, images: prepared.images };
-      const validate = (role: RoutineReviewRole) => (value: unknown): ImplementationReviewResult | string => {
-        const parsed = validateImplementationReviewResult(value, referenceContext, role);
-        if (typeof parsed === "string") return parsed;
-        try { reconcileReviewFindings(priorFindings, parsed, attempt.id, nowIso()); }
-        catch (error) { return error instanceof Error ? error.message : String(error); }
-        return parsed;
-      };
-      const carriedLane = <T>(lane: "fidelity" | "code" | "risk"): LaneRecord<T> => {
-        const held = state.verificationAttempts.find((entry) => entry.id === attempt.id)!;
-        return (lane === "risk" ? held.risk : held.reviews[lane]) as LaneRecord<T>;
-      };
-      // Two real executions replace the general review, under one lease and
-      // budget. Persist each settlement even if its sibling is still running.
-      const routine = async (role: RoutineReviewRole) => {
-        if (!executed.has(role)) return carriedLane<ImplementationReviewResult>(role);
-        const lane = await judgeLane(crypto.randomUUID(), () => runJudge(config, `implement:${role}`, "routine", reviewTexts[role], validate(role),
-          { ...options, execution: executionHooks() }), (value) => value.findings.some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing === "prerequisite")) ? "FAIL" : "PASS");
-        update((_fresh, held) => { held.reviews[role] = lane; });
-        return lane;
-      };
-      const nextRiskId = Math.max(0, ...plan.ledger.riskFindings.map((entry) => Number(entry.id.slice(2)))) + 1;
-      const settled = await Promise.allSettled([
-        routine("fidelity"), routine("code"),
-        riskText === null ? Promise.resolve(plan.record.carriedLanes.includes("risk") ? carriedLane<RiskLaneResult>("risk") : null) : judgeLane(crypto.randomUUID(), () => runJudge(config, "implement:risk", "high-risk", riskText,
-          (value) => validateRiskVerdict(value, prepared.material.priorRiskResult ?? null, active.roundContext, nextRiskId), { ...options, execution: executionHooks() })).then((lane) => {
-            update((_fresh, held) => { held.risk = lane; });
-            return lane;
-          }),
-      ]);
-      // A persistence failure must not let verify close while another owned
-      // execution is still running. Drain every role before surfacing failure.
-      const [fidelity, code, riskResult] = settled.map((entry) => {
-        if (entry.status === "rejected") throw entry.reason;
-        return entry.value;
-      }) as [LaneRecord<ImplementationReviewResult>, LaneRecord<ImplementationReviewResult>, LaneRecord<RiskLaneResult> | null];
-      update((fresh, held) => {
-        const ledgers = reconcileAttemptLedger(reconciliationBase(fresh, held), held, { fidelity: fidelity.result, code: code.result, risk: riskResult?.result ?? null }, nowIso());
-        fresh.findings = ledgers.findings; fresh.riskFindings = ledgers.riskFindings;
-        const errors = [fidelity.error, code.error, riskResult?.error].filter((entry) => entry != null);
-        held.verdict = errors.length > 0 ? "ERROR" : openFindings(fresh).some((entry) => entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing === "prerequisite")) || openRiskFindings(fresh).some((entry) => entry.severity === "blocking") ? "FAIL" : "PASS";
-        held.error = errors.length > 0 ? { stage: "review", code: "judge-error", message: errors.map((entry) => entry!.message).join("; ") } : null;
-      });
+      if (integrity.length > 0) throw new Error(integrity.join("; "));
+      update((_fresh, held) => { held.verdict = "PASS"; held.error = null; });
     }
-    // Recheck the actual inputs after every external process settles. State
-    // bookkeeping never makes an old source or observation current.
     const after = currentInputs(state);
     if (after.held.drift !== null || after.fingerprint !== attempt.inputFingerprint || artifactIntegrityProblems(state.projectRoot, state).length > 0) throw new Error("verification inputs changed while verification was running");
   } catch (error) {
-    update((fresh, held) => {
-      preserveSettledFindings(fresh, held, nowIso());
-      held.verdict = "ERROR"; held.error = { stage: phase, code: error instanceof VerifyInvariantError ? error.reason : "verification-input-error", message: error instanceof Error ? error.message : String(error) };
+    update((_fresh, held) => {
+      if (held.verdict !== "FAIL") {
+        held.verdict = "ERROR";
+        held.error = { stage: phase, code: error instanceof VerifyInvariantError ? error.reason : "verification-input-error", message: error instanceof Error ? error.message : String(error) };
+      }
     });
   }
+  let report: ReturnType<typeof verificationReportData> | undefined;
   state = finishVerification(statePath, state, (fresh) => {
     const held = fresh.verificationAttempts.find((entry) => entry.id === attempt.id)!;
-    held.phase = "complete"; held.finishedAt = nowIso(); held.durationMs = Date.now() - started;
-    if (held.verdict === "NOT_RUN") { held.verdict = "ERROR"; held.error = { stage: phase, code: "verification-unfinished", message: "verification ended without a result" }; }
+    held.phase = "complete";
+    held.finishedAt = nowIso();
+    held.durationMs = Date.now() - started;
+    if (held.verdict === "NOT_RUN") {
+      held.verdict = "ERROR";
+      held.error = { stage: phase, code: "verification-unfinished", message: "verification ended without a result" };
+    }
     recordVerb(fresh, { verb: "verify", issuer, target: null, reason: held.verdict, at: nowIso(), outcome: "accepted" });
     recordEvent(fresh, { kind: "verify", actor: issuer, subject: null, summary: `verify ${held.verdict} (${held.id})`, at: nowIso() });
+  }, (fresh) => {
+    const held = fresh.verificationAttempts.find((entry) => entry.id === attempt.id)!;
+    report = verificationReportData(fresh, held);
+    fresh.verificationReport = report.identity;
+    return [
+      { file: path.join(fresh.projectRoot, report.identity.jsonPath), text: report.json },
+      { file: path.join(fresh.projectRoot, report.identity.markdownPath), text: report.markdown },
+    ];
   });
+  if (report === undefined) throw new Error("verification report was not generated");
   const final = state.verificationAttempts.find((entry) => entry.id === attempt.id)!;
   progress(`verification ${final.verdict}; ${(final.durationMs / 1000).toFixed(1)}s`);
-  const message = `verification ${final.verdict}; ${state.status} run retained${terminalBudgetMessage(verificationBudget(state, config.judge.retryBudget)) ? `; ${terminalBudgetMessage(verificationBudget(state, config.judge.retryBudget))}` : ""}`;
-  return result("verify", final.verdict === "PASS", message, { attempt: attemptSummary(final), findings: openFindings(state), riskFindings: openRiskFindings(state), verificationBudget: verificationBudget(state, config.judge.retryBudget), requirementGrounds: requirementGrounds(state, final) },
-    [message, ...reviewScopeLines(state, final), ...openFindings(state).map((entry) => `${entry.id} [${entry.kind}] ${entry.problem} - ${entry.nextAction}`)]);
-}
-
-const RECEIPT_SCHEMA = "sasu.implement.receipt.v6";
-function completionFingerprint(state: ImplementState, sourceDigest: string | null, attempt: UnifiedVerificationAttempt): string {
-  return sha256(JSON.stringify({ schema: RECEIPT_SCHEMA, input: attempt.inputFingerprint, sourceDigest, attempt: attempt.id }));
-}
-function closingStatus(state: ImplementState): "complete" | "complete-pending-human" {
-  return openFindings(state).some((entry) => entry.kind === "human-confirmation") ? "complete-pending-human" : "complete";
-}
-function completionProblems(state: ImplementState): string[] {
-  const problems = artifactIntegrityProblems(state.projectRoot, state);
-  const latest = state.verificationAttempts.at(-1);
-  if (!latest) return [...problems, "no verification attempt"];
-  try {
-    const inputs = currentInputs(state);
-    if (inputs.held.drift) problems.push("PRD changed after the approved snapshot");
-    if (latest.sourceFingerprint !== inputs.source.digest) problems.push("verification is STALE: source changed");
-    if (latest.inputFingerprint !== inputs.fingerprint) problems.push("verification is STALE: PRD, linked intent, suite, or registered evidence changed");
-  } catch (error) { problems.push(error instanceof Error ? error.message : String(error)); }
-  if (effectiveVerdict(state, latest) !== "PASS") problems.push(`verification is ${latest.verdict}${latest.error ? ` at ${latest.error.stage}: ${latest.error.message}` : ""}`);
-  const executed = new Set(latest.mechanical.filter((run) => run.status === "PASS").map((run) => `${run.cwd}\0${run.command}`));
-  for (const unit of planRunUnits(state)) if (!executed.has(`${unit.cwd}\0${unit.command}`)) problems.push(`required suite was not passed in the current attempt: ${unit.command} (cwd ${unit.cwd})`);
-  for (const role of ROUTINE_REVIEW_ROLES) {
-    const reviewed = latest.reviews[role]?.result;
-    if (reviewed == null) problems.push(`independent ${role} review did not complete`);
-    else if (latest.reviewContext === null) problems.push(`independent ${role} review has no pinned context`);
-    else {
-      const validated = validateImplementationReviewResult(reviewed, latest.reviewContext, role);
-      if (typeof validated === "string") problems.push(`${role}: ${validated}`);
-      else if (validated.assessments.some((entry) => entry.conclusion === "unresolved")) problems.push(`${role} requirement/evidence assessment is unresolved`);
-    }
-  }
-  if (state.prd.reviewProfile === "high-risk" && latest.risk?.result == null) problems.push("required high-risk review did not complete");
-  for (const entry of openFindings(state)) {
-    if (entry.kind === "defect" || (entry.kind === "human-confirmation" && entry.human?.timing !== "post-completion")) problems.push(`${entry.id}: ${entry.problem}`);
-  }
-  problems.push(...openRiskFindings(state).filter((entry) => entry.severity === "blocking").map((entry) => `${entry.id}: ${entry.text}`));
-  problems.push(...openHumanRejections(state).map((entry) => `${entry.id}: human rejected: ${entry.responses.at(-1)!.evidence}`));
-  return problems;
-}
-function receiptData(state: ImplementState, source: ReturnType<typeof captureSourceSnapshot> | null, openItems: string[] = []) {
-  const latest = state.verificationAttempts.at(-1)!;
-  const completion = state.completion!;
-  return { schema: RECEIPT_SCHEMA, status: state.status, topicSlug: state.topicSlug, prdPath: state.prdPath, prdSnapshotPath: state.prd.snapshotPath,
-    prdJudge: state.prd.judge, baselineAttribution: state.baselineAttribution, completedAt: completion.completedAt,
-    completionFingerprint: completion.fingerprint, sourceFingerprint: source?.digest ?? null, sourceAvailability: source === null ? "unavailable" : "captured", inputFingerprint: latest.inputFingerprint,
-    verificationAttemptId: latest.id, prdSha256: latest.prdSha256, reviewContext: latest.reviewContext, unifiedVerdict: latest.verdict, phase: latest.phase, error: latest.error,
-    reviews: attemptSummary(latest).reviews, risk: attemptSummary(latest).risk, reviewScope: latest.reviewScope ?? null, requirementGrounds: requirementGrounds(state, latest),
-    mechanical: latest.mechanical, artifacts: state.artifacts, findings: state.findings, humanConfirmations: humanConfirmations(state), riskFindings: state.riskFindings,
-    suite: state.suite, ownedFiles: source ? changedPathsSince(state.initialSource, source) : [], requirementCount: state.requirements.length,
-    verificationBudget: verificationBudget(state, loadConfig(state.projectRoot).judge.retryBudget), openItems,
-    delivery: delivery(state, openItems), deviations: state.deviations, adoptions: state.adoptions ?? [], worktree: state.worktree ?? null,
-    executionCallsDuringFinalize: 0,
-    ...(state.status === "blocked" ? { terminalReason: blockedReason(state) } : {}) };
-}
-function implementationReport(state: ImplementState, receipt: ReturnType<typeof receiptData>): string {
-  const latest = state.verificationAttempts.at(-1)!;
-  return ["# Implementation result", "", `Status: ${state.status}.`, `PRD: ${state.prdPath}.`,
-    `Source: ${receipt.sourceFingerprint}.`, `Verification attempt: ${latest.id}.`, "", "## Result", "",
-    ...ROUTINE_REVIEW_ROLES.map((role) => `${role}: ${latest.reviews[role]?.result?.summary ?? "Independent review was not completed."}${latest.reviews[role]?.carriedFrom ? ` (settled in attempt ${latest.reviews[role]!.carriedFrom} on this same input)` : ""}`),
-    ...reviewScopeLines(state, latest),
-    "", "## Actual verification", "", ...(latest.mechanical.length === 0 ? ["No required project suite was configured or detected; no suite execution is claimed."] : latest.mechanical.map((entry) => `- ${entry.status}: ${entry.command} (cwd ${entry.cwd}, exit ${entry.exitCode}, ${entry.durationMs} ms); ${entry.logPath}`)),
-    "", ...state.artifacts.filter((entry) => entry.command === undefined).map((entry) => `- [${entry.description}](${entry.path}), collected ${entry.observedAt}; ${entry.provenance}${entry.target ? `; target ${entry.target}` : ""}${entry.environment ? `; environment ${entry.environment}` : ""}`),
-    "", "## Review and remaining findings", "", ...state.findings.map((entry) => `- ${entry.id} [${entry.kind}, ${entry.status}] ${entry.requirementRefs.join(", ")}: ${entry.problem} ${entry.nextAction}`),
-    ...state.riskFindings.map((entry) => `- ${entry.id} [risk ${entry.severity}, ${entry.status}] ${entry.text}`),
-    ...humanConfirmations(state).flatMap((entry) => entry.responses.map((response) => `- ${entry.id}: human ${response.response} at ${response.at}: ${response.evidence}`)),
-    ...receipt.openItems.map((entry) => `- ${entry}`), "", `Delivery eligible: ${receipt.delivery.eligible}.`,
-    "The CLI verifies execution facts, input identity, evidence integrity, and authority.",
-    "Requirement satisfaction is the independent reviewer's semantic judgment against the complete contract and actual evidence.", ""].join("\n");
-}
-function writeCompletion(statePath: string, state: ImplementState, source: ReturnType<typeof captureSourceSnapshot> | null, openItems: string[]) {
-  const receipt = receiptData(state, source, openItems), completion = state.completion!;
-  persistClose(statePath, state, [
-    { file: path.join(state.projectRoot, completion.receiptPath), text: jsonText(receipt) },
-    { file: path.join(state.projectRoot, completion.implementationResultPath), text: implementationReport(state, receipt) },
-  ]);
-  return receipt;
-}
-function finalize(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
-  const requested = flag(args, "status") ?? "complete";
-  if (requested !== "complete" && requested !== "blocked") throw new Error("finalize --status must be complete or blocked");
-  const { statePath, state } = loadState(projectRoot, stateOptions(args));
-  if (state.status === "retired") throw new Error("retired run cannot be finalized");
-  assertRunOwnership(statePath, state, args);
-  const latest = state.verificationAttempts.at(-1);
-  if (!latest) throw new Error("finalize requires an actual verification attempt; retire a run cancelled before verification");
-  const problems = completionProblems(state);
-  if (requested === "complete" && problems.length) throw new Error(`finalize refused:\n- ${problems.join("\n- ")}`);
-  if (requested === "blocked" && problems.length === 0) throw new Error("a verified complete result cannot be relabeled blocked without a remaining problem");
-  if (requested === "blocked" && blockedReason(state) === null) throw new Error("finalize --status blocked refused: verification can still run; fix the recorded problems and re-run verify until the bounded terminal condition or recorded human non-convergence applies");
-  if ((state.status === "complete" || state.status === "complete-pending-human") && requested === "blocked") throw new Error("closed implementation cannot be reopened; record human rejection or start a new run");
-  let source: ReturnType<typeof captureSourceSnapshot> | null = null;
-  try { source = captureSourceSnapshot(requireWorkRoot(state)); }
-  catch (error) {
-    if (requested !== "blocked") throw error;
-    problems.push(`current source unavailable: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  const fingerprint = completionFingerprint(state, source?.digest ?? null, latest);
-  if (state.completion && state.completion.fingerprint === fingerprint && state.status !== "active") {
-    const receiptPath = path.join(state.projectRoot, state.completion.receiptPath);
-    if (!fs.existsSync(receiptPath) || !fs.existsSync(path.join(state.projectRoot, state.completion.implementationResultPath))) throw new Error("closed state is missing a derived receipt or implementation result");
-    return result("finalize", true, `already closed ${state.status} on the same inputs`, { completion: state.completion, receipt: JSON.parse(fs.readFileSync(receiptPath, "utf8")), executionCalls: 0 });
-  }
-  state.status = requested === "blocked" ? "blocked" : closingStatus(state);
-  state.completion = { fingerprint, completedAt: nowIso(), receiptPath: `${state.runDir}/receipt.json`, implementationResultPath: `${state.runDir}/implementation-result.md` };
-  recordVerb(state, { verb: "finalize", issuer: resolveIssuer(flag(args, "issuer")), target: null, reason: state.status, at: nowIso(), outcome: "accepted" });
-  recordEvent(state, { kind: "finalize", actor: resolveIssuer(flag(args, "issuer")), subject: null, summary: `run closed ${state.status}`, at: nowIso() });
-  const receipt = writeCompletion(statePath, state, source, problems);
-  return result("finalize", true, `implementation closed ${state.status}; delivery ${receipt.delivery.eligible ? "eligible" : "ineligible"}`, { completion: state.completion, receipt, executionCalls: 0 });
-}
-
-function confirm(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
-  const { statePath, state } = loadState(projectRoot, stateOptions(args));
-  if (state.status === "retired" || state.status === "blocked") throw new Error(`confirm cannot modify a ${state.status} run`);
-  assertRunOwnership(statePath, state, args);
-  const id = requiredFlag(args, "id"), evidence = requiredFlag(args, "evidence");
-  const finding = state.findings.find((entry) => entry.id === id && entry.kind === "human-confirmation");
-  if (!finding || finding.status === "amended") throw new Error(`${id} is not a current human confirmation item`);
-  const inputs = currentInputs(state), latest = state.verificationAttempts.at(-1);
-  if (inputs.held.drift || !latest || inputs.fingerprint !== latest.inputFingerprint || artifactIntegrityProblems(state.projectRoot, state).length > 0) throw new Error("confirmation refused: reviewed source, PRD, intent, or evidence is STALE; fix closed implementations in a new run");
-  const rejected = args.flags.get("reject") === true, at = nowIso();
-  finding.responses.push({ at, response: rejected ? "rejected" : "confirmed", evidence });
-  finding.status = rejected ? "open" : "confirmed";
-  finding.history.push({ at, attemptId: null, status: finding.status, reason: evidence, evidenceRefs: [] });
-  recordVerb(state, { verb: "confirm", issuer: "human", target: id, reason: evidence, at, outcome: "accepted" });
-  recordEvent(state, { kind: "confirm", actor: "human", subject: id, summary: `${id} ${rejected ? "rejected" : "confirmed"}`, at });
-  let receipt: ReturnType<typeof receiptData> | null = null;
-  if (state.completion !== null) {
-    state.status = closingStatus(state);
-    receipt = writeCompletion(statePath, state, inputs.source, completionProblems(state));
-  } else persistState(statePath, state);
-  return result("confirm", true, `${id} ${rejected ? "remains open after rejection" : "confirmed"}; run ${state.status}`, { finding, runStatus: state.status, delivery: delivery(state), receipt });
+  const message = `deterministic verification ${final.verdict}; report ${report.identity.markdownPath}`;
+  const nextActions = verificationNextActions(state, final.verdict);
+  return result("verify", final.verdict === "PASS", message, { attempt: attemptSummary(final), report: report.identity, agentReview: nextActions.join(" ") }, nextActions);
 }
 
 function recordRefusal(projectRoot: string, args: ImplementArgs, subject: IssuedCommand, issuer: IssuerLabel, check: "authority" | "transition" | "arguments", message: string): void {
@@ -1713,7 +1315,7 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
   const subject = subcommand === "risk" && args.flags.get("non-convergent") === true ? "risk-non-convergent" : subcommand;
   const issuer = resolveIssuer(flag(args, "issuer"));
   try {
-    if (["check", "park", "resume", "qa-brief", "trail", "design"].includes(subcommand ?? "")) throw new Error(`implement ${subcommand} is retired in contract 0.9.0; last support commit 488d3cc7d6e99742e7f68a1680fcb101710c8e20. Use autonomous implementation, run evidence, verify, and finalize.`);
+    if (["check", "park", "resume", "qa-brief", "trail", "design", "risk", "finalize", "confirm"].includes(subcommand ?? "")) throw new Error(`implement ${subcommand} is retired in contract 0.11.0; last support commit 9149d9826fad2af3ba7200761e674b5228ef9b7d. Use autonomous implementation, collect evidence, run deterministic verify, then deliver.`);
     if (args.flags.has("row")) throw new Error("--row is retired; requirements are references, not workflow state");
     if (subject !== undefined) assertCommandAuthority(subject, issuer);
     if (subject !== undefined && isIssuedCommand(subject)) {
@@ -1730,12 +1332,9 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "artifact") return artifact(projectRoot, args);
     if (subcommand === "amend") return amend(projectRoot, args);
     if (subcommand === "escalate") return await escalate(projectRoot, args);
-    if (subcommand === "risk") return risk(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "verify") return await verify(projectRoot, args);
-    if (subcommand === "finalize") return finalize(projectRoot, args);
-    if (subcommand === "confirm") return confirm(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, dispatch, status, await, artifact, amend, escalate, risk, retire, verify, finalize, or confirm" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, dispatch, status, await, artifact, amend, escalate, retire, or verify" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const check = error instanceof VerbRejected || error instanceof AmendmentRejected || error instanceof EscalateRejected ? error.check : "transition";

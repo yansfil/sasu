@@ -1,3 +1,8 @@
+# Historical review: state corruption in the retired verification design
+
+Status: superseded by the [2026-09-15 stateless verification decision](docs/plans/2026-09-15-stateless-verification.md).
+The source locations and repair proposal below describe the retired pre-0.11 implementation and are preserved as incident evidence.
+
 Your read of the mechanism is correct. I confirmed every link in source: `runner.ts:204` folds `mutatedTree` into `green`, `commands.ts:2155` persists `outcome` from `green` alongside the true exit code and drops `mutatedTree`, `store.ts:299` recomputes green from exit code, timeout and signal only, and throws on disagreement. `persistState` at `store.ts:802` never runs the parser, so nothing stands between the writer and the disk. Two things your framing does not have belong ahead of Q1 to Q4.
 
 **The suite axis has the same defect in the opposite disguise.** At `commands.ts:2116` the mechanical record is written as `exitCode: result.green ? 0 : (result.exitCode === 0 ? 1 : result.exitCode)`. When a command exits 0 but moves the tree, the AC ledger keeps the true exit code and violates its invariant, while the suite ledger falsifies the exit code to preserve its invariant. Same dropped bit, two different lies, one of them silent. That is a class, not a field, and it is direct evidence for PRINCIPLES 3 and 10.

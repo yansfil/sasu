@@ -60,10 +60,10 @@ user the content, get confirmation, and rerun with `--adopt-claude-md`.
 Then interview:
 
 1. Delivery mode: `local` (default) or `pr`.
-   Local means a complete receipt ends with one semantic local commit and no
+   Local means a current deterministic PASS report ends with one semantic local commit and no
    push, PR, or CI side effect.
    Remind the user that `pr` means implement runs end into `ship`
-   (branch, PR, CI) automatically after the receipt, and that per-PRD approval
+   (branch, PR, CI) automatically after verification, and that per-PRD approval
    still happens in the PRD Summary checklist.
 2. When mode is `pr`: base branch and branch prefix (default `gen-prd`).
    Always write `baseBranch` explicitly: when it is omitted, the harness
@@ -89,7 +89,7 @@ Then interview:
      `agents/rules/**`, `agents/config.json`.
    - Generated run state is ignored: `agents/runs/**` (one run dir per slug
      holding gate verdicts and implement state) and `agents/quick/**` (a quick
-     path's generated contract, receipt, verify verdict and evidence blobs),
+     path's generated contract, verification report, verify result and evidence blobs),
      plus the legacy `agents/implement/**` and `agents/gates/**` in projects
      that still carry old-layout runs.
    - Any sasu command auto-provisions both runtime roots into
@@ -121,7 +121,7 @@ Then interview:
    - `judge.readMaxRounds`: read rounds a non-exploring agentic judge may
      spend before its reply is discarded (default 29). Rounds only: claude's
      API-turn cap is a separate constant. Raise it per project when a
-     non-exploring review (quick, gate verify) is rejected for over-reading
+     non-exploring PRD review is rejected for over-reading
      rather than for a wrong answer; explore calls are already exempt.
    - `judge.fanout`: lane-parallel judging for gap-audit (4 document-area
      lanes) and spec (2 review-axis lanes), merged mechanically by the CLI

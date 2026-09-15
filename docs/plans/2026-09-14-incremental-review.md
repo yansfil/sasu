@@ -1,6 +1,6 @@
 # Impact-scoped re-review and same-input lane repair
 
-Status: implemented on branch `incremental-review`; deterministic regression and live before/after measurement recorded below.
+Status: superseded by the [2026-09-15 stateless verification decision](2026-09-15-stateless-verification.md); the measurements below remain historical evidence.
 Issue: [yansfil/sasu#3](https://github.com/yansfil/sasu/issues/3).
 
 ## Approved change in direction

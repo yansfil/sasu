@@ -1,61 +1,42 @@
-# Worktrees And Delivery
+# Worktrees and delivery
 
-Read this reference when delivery is `pr`, a run reports a worktree, or post-receipt delivery is requested.
+Read this reference when a run uses a worktree or the approved delivery mode is `pr`.
 
-## Worktree Isolation
+## Trees
 
-The harness, not the agent, decides and creates worktrees at `sasu implement start`:
+`sasu implement start` may return an isolated worktree.
+Make product changes and run verification there.
+The record tree retains `state.json`, the approved PRD snapshot, registered evidence metadata, verification reports, and delivery logs under `agents/**`.
+Use the explicit `--state` path when crossing between them.
 
-- One working tree hosts at most one active in-place run.
-  A start in an occupied tree is automatically isolated into a fresh git worktree (branch `prd/<slug>` at HEAD), with the configured `worktree.link`/`copy`/`setup` preparation applied.
-- `worktree.enabled: true` isolates every run from the start.
-- The start response reports `workingRoot`.
-  Edit files there; `sasu` commands work from either tree and always operate on the run's own trees.
+## Delivery boundary
 
-Records never move: `state.json`, receipt, PRD, config, and rules stay in the record tree's `agents/` namespace.
-The worktree holds only the judged source.
-Do not remove a run's worktree before its branch is merged or shipped; uncommitted work there is not recoverable, while the run record survives regardless.
-A local-delivery run ends with a recorded semantic commit on its current branch;
-the finalize response names the branch or worktree and the follow-up delivery command.
+Delivery starts after the current deterministic verification report is PASS.
+No finalize command or receipt is required.
+`$ship` validates report freshness, the exact committed head, delivery path boundaries, base freshness, learned rules, CI, mergeability, and explicit merge approval.
 
-## Boundary
+Local delivery:
 
-Implementation completion and PR delivery are separate outcomes.
-Local intermediate commits may preserve coherent work during implementation.
-`sasu implement finalize` creates the implementation receipt before recorded delivery, push, PR creation, CI observation, or merge.
+```sh
+node ~/.codex/skills/ship/scripts/prd_ship.js local --state agents/runs/<slug>/state.json
+```
 
-## Local Delivery
+PR delivery:
 
-The default delivery mode is local.
-After a current delivery-eligible receipt, run the local delivery command to validate freshness and
-rules, commit remaining allowlisted implementation changes with a semantic project message or validate existing unpushed implementation history, and
-record `delivery/delivery-result.json`.
-It never pushes, opens a PR, watches CI, or merges.
-Running it again for the same receipt and HEAD is idempotent.
+```sh
+node ~/.codex/skills/ship/scripts/prd_ship.js preflight --state agents/runs/<slug>/state.json
+node ~/.codex/skills/ship/scripts/prd_ship.js body --state agents/runs/<slug>/state.json
+node ~/.codex/skills/ship/scripts/prd_ship.js ship --state agents/runs/<slug>/state.json --title '<title>'
+```
 
-## PR Delivery
+The Claude installation substitutes its own skill root.
 
-When PR delivery is authorized:
+The PR body carries the deterministic report, visible agent review notes, Fix now dispositions, Follow-up improvements, actual evidence, and human review focus.
+A reviewer process does not grant or remove delivery eligibility.
+A source fix after review changes the head, so rerun deterministic verification and fresh native reviews before updating the PR.
 
-1. Complete the implementation receipt in the intended checkout or configured worktree.
-2. Follow the repository PR template.
-3. Stage only implementation-owned changes and preserve unrelated dirty files.
-4. Use `$ship` for the PR delivery commit, push, PR creation, and CI handoff.
+Use reviewer-visible screenshot URLs or committed stable paths.
+Do not use a local absolute path as the only PR evidence.
 
-PR creation and CI are never required to prove implementation completion.
-
-## Existing Runs
-
-The new implement state schema does not migrate old runs.
-Start a new run in the intended checkout.
-Do not add compatibility adapters or copy old completion verdicts into the new state.
-An active unfinished run that must be abandoned, with no live verify lease, can release its occupancy with `sasu implement retire --slug <topic-slug>`.
-Retirement permits implementor and human issuers.
-Retiring a run owned by another session requires `--adopt '<verbatim user approval>'`, and the evidence is recorded with the transition.
-Run `sasu doctor` to list active retire candidates and worktrees that remain after their run ended.
-
-Permitted pending human confirmation travels with delivery; an open explicit rejection blocks delivery even when the receipt says `complete-pending-human`.
-
-## Attribution
-
-Do not add agent, model, vendor, or tool attribution to branches, commits, PR text, release notes, or generated handoff content.
+Merge remains a separate human-authorized action.
+The delivery script pins the PR head and requires CI and repository merge conditions to pass.

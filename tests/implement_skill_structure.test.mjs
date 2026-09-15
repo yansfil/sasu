@@ -27,7 +27,7 @@ test("implement keeps a compact entrypoint with explicit conditional reference r
   const skill = fs.readFileSync(skillPath, "utf8");
   assert.ok(physicalLineCount(skill) < 500, "SKILL.md must stay below the progressive-disclosure line budget");
   assert.match(skill, /^## Reference Routing$/m);
-  assert.match(skill, /Read each directly linked reference completely when its condition applies\./);
+  assert.match(skill, /Read each linked reference completely when its condition applies\./);
 
   const linkedReferences = [...skill.matchAll(/\]\(references\/([^)]+\.md)\)/g)]
     .map(match => match[1])
@@ -60,28 +60,34 @@ test("implement references stay direct, bounded, and navigable", () => {
   }
 });
 
-test("implement entrypoint retains lifecycle, safety, and completion authority", () => {
+test("implement entrypoint keeps deterministic verification and visible review boundaries", () => {
   const skill = fs.readFileSync(skillPath, "utf8");
-  // Approved workflow plan sections 7-12: complete review input, current
-  // receipt authority, real execution, human rejection, and run-level lease.
+  const reviewReference = fs.readFileSync(path.join(referencesDir, "reviews-and-finalization.md"), "utf8");
   const requiredContracts = [
-    /Never implement a pending PRD without explicit human approval or the user's verbatim conversational approval/,
-    /`state\.json` is the only machine record/,
-    /Every requirement remains in the sealed PRD and independent review input/,
-    /`sasu implement finalize` never runs tests, judges, capture tools, or external commands/,
-    /`state\.json` is the completion authority/,
-    /Local intermediate commits preserve coherent implementation units; they do not establish completion/,
-    /Recorded delivery, push, PR creation, CI, and merge are post-receipt delivery outcomes/,
-    /whole verify execution holds one lease/,
-    /sasu implement confirm --issuer human --id/,
-    /explicit open rejection/,
-    /first failed verify leaves the run active/,
-    /^## Hard Stops$/m,
+    /`state\.json` stores run ownership/,
+    /writes the current `verification-report\.json` and `verification-report\.md`/,
+    /It does not start reviewers/,
+    /follow the CLI's `Next action:` response/,
+    /native subagent facility directly/,
+    /^## Review Disposition$/m,
+    /^## Delivery$/m,
     /^## Final Report$/m,
   ];
 
   for (const contract of requiredContracts) {
     assert.match(skill, contract);
+  }
+  for (const contract of [
+    /Fidelity checks every approved behavior/,
+    /Code checks implementation quality, integration, concurrency, data flow, and error paths/,
+    /Security checks authentication, authorization, secrets, destructive data, and abuse boundaries/,
+    /Sasu sets no reviewer turn limit/,
+    /REVIEW_UNAVAILABLE/,
+    /^### Fix now$/m,
+    /^### Follow-up improvements$/m,
+    /^### What was checked$/m,
+  ]) {
+    assert.match(reviewReference, contract);
   }
 });
 
@@ -95,8 +101,7 @@ test("gen-prd and implement preserve all requirements without per-requirement ce
   }
   assert.match(genPrd, /\| D-n \| 결정 \| 근거 \|/);
   assert.match(genPrd, /\| # \| 사용자가 관찰하는 행동 \| 결정 \|/);
-  assert.match(implement, /complete-pending-human/);
-  assert.match(implement, /Markdown checkboxes or a manually maintained coverage ledger/);
+  assert.match(implement, /follow the CLI's `Next action:` response/);
   const activeDocuments = [
     genPrd, implement,
     ...expectedReferences.map((name) => fs.readFileSync(path.join(referencesDir, name), "utf8")),
@@ -107,6 +112,7 @@ test("gen-prd and implement preserve all requirements without per-requirement ce
       /--row\b/, /\| 검사 방법 \|/, /\bparkedRows\b/,
       /Acceptance and fidelity are separate LLM calls/,
       /one result per row/, /each row's status and attempts/,
+      /complete-pending-human/, /receipt\.json/, /sasu implement finalize/,
     ]) assert.doesNotMatch(document, retired);
   }
 });
@@ -117,6 +123,6 @@ test("removed dispatcher rejects direct legacy invocations with new-command guid
     const result = spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
     assert.equal(result.status, 2);
     assert.match(result.stderr, /prd_state_harness\.js was removed/);
-    assert.match(result.stderr, /sasu implement start\|artifact\|status\|verify\|finalize/);
+    assert.match(result.stderr, /sasu implement start\|artifact\|status\|verify\|amend\|retire/);
   }
 });

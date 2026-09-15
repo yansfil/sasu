@@ -14,7 +14,6 @@ import {
   type SourceSnapshot,
 } from "./types";
 import { ISSUED_COMMANDS } from "./verbs";
-import { validateImplementationReviewResult } from "./review-contract";
 import { ACTIVE_POINTER_REL, activePointerReadPath, activePointerWriteRel, implementStatePathFor } from "../runs/paths";
 import { currentSessionId } from "../runs/session";
 import { siblingWorktrees } from "./worktree";
@@ -208,62 +207,6 @@ function ledger(value: unknown, label: string): Record<string, unknown>[] {
     return entry;
   });
 }
-function assertInputManifest(value: unknown, label: string): void {
-  assertRecord(value, label);
-  assertSourceEntries(value["source"], `${label}.source`);
-  for (const entry of array(value["evidence"], `${label}.evidence`)) {
-    assertRecord(entry, `${label}.evidence`);
-    assertString(entry["path"], `${label}.evidence.path`);
-    assertSha256(entry["sha256"], `${label}.evidence.sha256`);
-    if ("rowId" in entry) throw new Error(`retired implement input field: ${label}.evidence.rowId`);
-  }
-  if ("checkLedger" in value) throw new Error(`retired implement input field: ${label}.checkLedger`);
-}
-
-function assertReviewContext(value: unknown): void {
-  const label = "verificationAttempts[].reviewContext";
-  assertRecord(value, label);
-  for (const field of ["requirementRefs", "requiredRequirementRefs", "evidenceRefs", "actualEvidenceRefs", "priorFindingIds"] as const) {
-    assertStringArray(value[field], `${label}.${field}`);
-    if (new Set(value[field]).size !== value[field].length) throw new Error(`malformed implement state: ${label}.${field} contains duplicate references`);
-  }
-  const requirements = value["requirementRefs"] as string[];
-  const required = value["requiredRequirementRefs"] as string[];
-  const evidence = value["evidenceRefs"] as string[];
-  if (required.length === 0 || required.some((ref) => !/^B[1-9]\d*$/.test(ref) || !requirements.includes(ref))
-    || requirements.some((ref) => /^B[1-9]\d*$/.test(ref) && !required.includes(ref))) throw new Error(`malformed implement state: ${label}.requiredRequirementRefs must name every reviewed Behavior`);
-  if ((value["actualEvidenceRefs"] as string[]).some((ref) => !evidence.includes(ref))) throw new Error(`malformed implement state: ${label}.actualEvidenceRefs must belong to evidenceRefs`);
-  assertRecord(value["humanSources"], `${label}.humanSources`);
-  for (const [ref, source] of Object.entries(value["humanSources"])) {
-    if (ref.trim() === "" || typeof source !== "string") throw new Error(`malformed implement state: ${label}.humanSources must map exact references to source text`);
-  }
-  // `identity` digested the prepared review input so a repair could compare it
-  // with the reference attempt's. On a repair that input is built from the
-  // reference's own pinned snapshot and scope, and its other parts follow
-  // from the fingerprint and policy already compared, so the two digests were
-  // one set of records hashed twice and the comparison never failed. A record
-  // carrying it was written by a CLI whose repair gate was partly fictional;
-  // it is refused rather than read around (repository constant: no read path
-  // for a retired shape).
-  if (value["identity"] !== undefined) throw new Error(`malformed implement state: ${label}.identity was retired; last read by commit dd19ce3`);
-  if (value["scope"] !== undefined) {
-    const scope = value["scope"];
-    assertRecord(scope, `${label}.scope`);
-    enumValue(scope["mode"], ["full", "focused"], `${label}.scope.mode`);
-    if (scope["mode"] === "focused") {
-      assertString(scope["anchorAttemptId"], `${label}.scope.anchorAttemptId`);
-      assertStringArray(scope["invalidatedEvidenceRefs"], `${label}.scope.invalidatedEvidenceRefs`);
-      assertStringArray(scope["reopenedRequirementRefs"], `${label}.scope.reopenedRequirementRefs`);
-      assertRecord(scope["anchorAssessments"], `${label}.scope.anchorAssessments`);
-      for (const role of ["fidelity", "code"]) array(scope["anchorAssessments"][role], `${label}.scope.anchorAssessments.${role}`);
-    }
-  }
-  if (value["ledgerSnapshot"] !== undefined) {
-    assertRecord(value["ledgerSnapshot"], `${label}.ledgerSnapshot`);
-    for (const field of ["findings", "riskFindings", "claims"]) array(value["ledgerSnapshot"][field], `${label}.ledgerSnapshot.${field}`);
-  }
-}
-
 export function parseImplementState(text: string): ImplementState {
   let parsed: unknown;
   try { parsed = JSON.parse(text); }
@@ -272,15 +215,15 @@ export function parseImplementState(text: string): ImplementState {
   if (parsed["schema"] !== IMPLEMENT_SCHEMA) {
     throw new Error(`unsupported implement state schema ${String(parsed["schema"] ?? "missing")}; only ${IMPLEMENT_SCHEMA} is accepted. Retired contracts were last supported by ${retiredImplementSupportCommit(parsed["schema"])}; start a new run, no migration is available`);
   }
-  for (const field of ["rows", "activeCheck", "qaBriefs", "trails", "designComments", "tasks", "checks"]) {
-    if (field in parsed) throw new Error(`retired implement state field: ${field}; last support ${RETIRED_IMPLEMENT_SUPPORT_COMMIT}`);
+  for (const field of ["rows", "activeCheck", "qaBriefs", "trails", "designComments", "tasks", "checks", "findings", "riskFindings", "budgetGrants", "completion"]) {
+    if (field in parsed) throw new Error(`retired implement state field: ${field}; start a new run under the stateless verification contract`);
   }
   const candidate = parsed as unknown as ImplementState;
-  enumValue(candidate.status, ["active", "complete-pending-human", "complete", "blocked", "retired"], "status");
+  enumValue(candidate.status, ["active", "retired"], "status");
   for (const field of ["topicSlug", "projectRoot", "runDir", "prdPath"] as const) assertString(candidate[field], field);
   assertIsoTimestamp(candidate.createdAt, "createdAt");
   assertIsoTimestamp(candidate.updatedAt, "updatedAt");
-  if (candidate.worktree !== null) {
+  if (candidate.worktree !== null && candidate.worktree !== undefined) {
     assertRecord(candidate.worktree, "worktree");
     assertString(candidate.worktree["path"], "worktree.path");
     assertString(candidate.worktree["branch"], "worktree.branch");
@@ -292,13 +235,14 @@ export function parseImplementState(text: string): ImplementState {
   enumValue(candidate.prd.approval.source, ["frontmatter", "conversation"], "prd.approval.source");
   assertString(candidate.prd.approval.evidence, "prd.approval.evidence");
   enumValue(candidate.prd.reviewProfile, ["trivial", "standard", "high-risk"], "prd.reviewProfile");
-  for (const field of ["reviewRationale", "sourceIntake"] as const) {
-    if (typeof candidate.prd[field] !== "string") throw new Error(`malformed implement state: prd.${field} must be a string`);
+  if (typeof candidate.prd.reviewRationale !== "string" || typeof candidate.prd.sourceIntake !== "string") throw new Error("malformed implement state: PRD review metadata must be strings");
+
+  for (const [label, snapshot] of [["initialSource", candidate.initialSource]] as const) {
+    assertRecord(snapshot, label);
+    assertNullableString(snapshot.head, `${label}.head`);
+    assertSha256(snapshot.digest, `${label}.digest`);
+    assertSourceEntries(snapshot.entries, `${label}.entries`);
   }
-  assertRecord(candidate.initialSource, "initialSource");
-  assertNullableString(candidate.initialSource.head, "initialSource.head");
-  assertSha256(candidate.initialSource.digest, "initialSource.digest");
-  assertSourceEntries(candidate.initialSource.entries, "initialSource.entries");
   assertRecord(candidate.baselineAttribution, "baselineAttribution");
   enumValue(candidate.baselineAttribution.disposition, ["clean", "pre-existing", "run-owned", "mixed"], "baselineAttribution.disposition");
   assertSha256(candidate.baselineAttribution.baselineDigest, "baselineAttribution.baselineDigest");
@@ -308,6 +252,7 @@ export function parseImplementState(text: string): ImplementState {
     assertString(entry["path"], "baselineAttribution.paths[].path");
     enumValue(entry["disposition"], ["pre-existing", "run-owned"], "baselineAttribution.paths[].disposition");
   }
+
   const requirementIds = new Set<string>();
   for (const entry of array(candidate.requirements, "requirements")) {
     assertRecord(entry, "requirements[]");
@@ -316,24 +261,10 @@ export function parseImplementState(text: string): ImplementState {
     requirementIds.add(entry["id"]);
     assertString(entry["behavior"], "requirements[].behavior");
     assertStringArray(entry["decisionIds"], "requirements[].decisionIds");
-    for (const key of Object.keys(entry)) if (!["id", "behavior", "decisionIds"].includes(key)) throw new Error(`retired or unknown requirement field: ${key}; requirements are static references`);
   }
   if (requirementIds.size === 0) throw new Error("malformed implement state: requirements must not be empty");
-  for (const field of ["artifacts", "verificationAttempts", "findings", "riskFindings", "deviations", "escalations"] as const) array(candidate[field], field);
-  for (const escalation of candidate.escalations) {
-    assertRecord(escalation, "escalations[]");
-    positiveInteger(escalation.durationMs, "escalations[].durationMs", 0);
-    if (escalation.judge !== null) {
-      assertRecord(escalation.judge, "escalations[].judge");
-      for (const [label, call] of [["judge", escalation.judge], ["judge.fallback", escalation.judge.fallback]] as const) {
-        if (call === undefined) continue;
-        assertRecord(call, `escalations[].${label}`);
-        assertIsoTimestamp(call.at, `escalations[].${label}.at`);
-        positiveInteger(call.durationMs, `escalations[].${label}.durationMs`, 0);
-        positiveInteger(call.attempts, `escalations[].${label}.attempts`, 0);
-      }
-    }
-  }
+
+  for (const field of ["artifacts", "verificationAttempts", "deviations", "events", "verbs", "amendments", "evidenceReplacements", "escalations"] as const) array(candidate[field], field);
   for (const artifact of candidate.artifacts) {
     assertRecord(artifact, "artifacts[]");
     for (const field of ["kind", "path", "description", "provenance"] as const) assertString(artifact[field], `artifacts[].${field}`);
@@ -341,81 +272,17 @@ export function parseImplementState(text: string): ImplementState {
     positiveInteger(artifact.bytes, "artifacts[].bytes");
     assertIsoTimestamp(artifact.registeredAt, "artifacts[].registeredAt");
     assertIsoTimestamp(artifact.observedAt, "artifacts[].observedAt");
-    if (artifact.sourceDigest !== undefined) assertSha256(artifact.sourceDigest, "artifacts[].sourceDigest");
-    if ("rowId" in artifact) throw new Error("retired artifact rowId");
   }
-  const findingIds = new Set<string>();
-  for (const finding of candidate.findings) {
-    assertRecord(finding, "findings[]");
-    assertString(finding.id, "findings[].id");
-    if (!/^F[1-9]\d*$/.test(finding.id) || findingIds.has(finding.id)) throw new Error("malformed implement state: invalid or duplicate finding id");
-    findingIds.add(finding.id);
-    enumValue(finding.kind, ["defect", "advisory", "human-confirmation"], "findings[].kind");
-    enumValue(finding.status, ["open", "resolved", "confirmed", "amended"], "findings[].status");
-    for (const field of ["problem", "nextAction", "originAttemptId"] as const) assertString(finding[field], `findings[].${field}`);
-    assertStringArray(finding.requirementRefs, "findings[].requirementRefs");
-    assertStringArray(finding.evidenceRefs, "findings[].evidenceRefs");
-    array(finding.history, "findings[].history");
-    array(finding.responses, "findings[].responses");
-    if (finding.kind === "human-confirmation") {
-      assertRecord(finding.human, "findings[].human");
-      assertString(finding.human["sourceRef"], "findings[].human.sourceRef");
-      assertString(finding.human["quote"], "findings[].human.quote");
-      enumValue(finding.human["timing"], ["post-completion", "prerequisite"], "findings[].human.timing");
-      for (const response of finding.responses) {
-        assertIsoTimestamp(response.at, "findings[].responses[].at");
-        enumValue(response.response, ["confirmed", "rejected"], "findings[].responses[].response");
-        assertString(response.evidence, "findings[].responses[].evidence");
-      }
-      if (finding.status === "confirmed" && finding.responses.at(-1)?.response !== "confirmed") throw new Error("malformed implement state: confirmed human finding lacks a human confirmation");
-      if (finding.status === "resolved") throw new Error("malformed implement state: human confirmation cannot be resolved by review");
-      if (finding.responses.at(-1)?.response === "rejected" && finding.status !== "open" && finding.status !== "amended") throw new Error("malformed implement state: human rejection must remain open");
-    } else if (finding.responses.length !== 0 || finding.human !== undefined) throw new Error("malformed implement state: only human findings carry human responses");
-  }
-  for (const risk of candidate.riskFindings) {
-    assertString(risk.id, "riskFindings[].id");
-    assertString(risk.text, "riskFindings[].text");
-    assertString(risk.originAttemptId, "riskFindings[].originAttemptId");
-    enumValue(risk.severity, ["blocking", "advisory"], "riskFindings[].severity");
-    enumValue(risk.status, ["open", "fixed", "accepted"], "riskFindings[].status");
-    if (risk.status !== "open") { assertRecord(risk.resolution, "riskFindings[].resolution"); assertString(risk.resolution["evidence"], "riskFindings[].resolution.evidence"); }
-    if (risk.nonConvergence !== undefined) {
-      if (risk.nonConvergence.declaredBy !== "human") throw new Error("malformed implement state: risk non-convergence is human-only");
-      assertString(risk.nonConvergence.approval, "riskFindings[].nonConvergence.approval");
-    }
-  }
-  for (const event of ledger(candidate.events, "events")) {
-    enumValue(event["kind"], ["amendment", "escalate", "artifact", "risk", "verify", "finalize", "confirm"], "events[].kind");
-    enumValue(event["actor"], ["implementor", "observer", "human"], "events[].actor");
-    assertNullableString(event["subject"], "events[].subject");
-    assertString(event["summary"], "events[].summary");
-  }
-  for (const verb of ledger(candidate.verbs, "verbs")) {
-    enumValue(verb["verb"], ISSUED_COMMANDS, "verbs[].verb");
-    enumValue(verb["issuer"], ["implementor", "observer", "human"], "verbs[].issuer");
-    enumValue(verb["outcome"], ["accepted", "rejected"], "verbs[].outcome");
-    if (verb["outcome"] === "rejected") {
-      assertRecord(verb["rejection"], "verbs[].rejection");
-      enumValue(verb["rejection"]["check"], ["arguments", "authority", "transition"], "verbs[].rejection.check");
-      assertString(verb["rejection"]["message"], "verbs[].rejection.message");
-    } else if (verb["rejection"] !== null) throw new Error("malformed implement state: accepted verb has rejection");
-  }
-  for (const replacement of ledger(candidate.evidenceReplacements, "evidenceReplacements")) {
-    enumValue(replacement["kind"], ["artifact"], "evidenceReplacements[].kind");
-    enumValue(replacement["priorDisposition"], ["invalidated"], "evidenceReplacements[].priorDisposition");
-    assertString(replacement["previous"], "evidenceReplacements[].previous");
-    assertString(replacement["next"], "evidenceReplacements[].next");
-  }
-  for (const amendment of ledger(candidate.amendments, "amendments")) {
-    if (amendment["issuer"] !== "human") throw new Error("malformed implement state: amendments are human-only");
-    for (const field of ["approval", "reason", "snapshotPath", "previousSnapshotPath"]) assertString(amendment[field], `amendments[].${field}`);
-    assertSha256(amendment["prdSha256"], "amendments[].prdSha256");
-    for (const field of ["changedRequirements", "addedRequirements", "removedRequirements", "closedHumanFindings"]) assertStringArray(amendment[field], `amendments[].${field}`);
-  }
+  ledger(candidate.events, "events");
+  for (const event of candidate.events) enumValue(event.kind, ["amendment", "escalate", "artifact", "verify"], "events[].kind");
+  ledger(candidate.verbs, "verbs");
+  for (const verb of candidate.verbs) enumValue(verb.verb, ISSUED_COMMANDS, "verbs[].verb");
+  ledger(candidate.amendments, "amendments");
+  ledger(candidate.evidenceReplacements, "evidenceReplacements");
+
   assertRecord(candidate.suite, "suite");
   assertIsoTimestamp(candidate.suite.sealedAt, "suite.sealedAt");
   const suiteIds = new Set<string>();
-  const suiteExecutions = new Set<string>();
   for (const item of array(candidate.suite.commands, "suite.commands")) {
     assertRecord(item, "suite.commands[]");
     assertString(item["id"], "suite.commands[].id");
@@ -424,15 +291,10 @@ export function parseImplementState(text: string): ImplementState {
     assertString(item["command"], "suite.commands[].command");
     assertString(item["cwd"], "suite.commands[].cwd");
     assertStringArray(item["argv"], "suite.commands[].argv", true);
-    const identity = JSON.stringify([path.normalize(item["cwd"]), item["argv"]]);
-    if (suiteExecutions.has(identity)) throw new Error("malformed implement state: duplicate suite execution identity");
-    suiteExecutions.add(identity);
   }
   for (const item of array(candidate.suite.exclusions, "suite.exclusions")) {
     assertRecord(item, "suite.exclusions[]");
     if (!suiteIds.has(String(item["commandId"]))) throw new Error("malformed implement state: suite exclusion names unknown command");
-    assertString(item["approval"], "suite.exclusions[].approval");
-    assertString(item["reason"], "suite.exclusions[].reason");
   }
   for (const item of array(candidate.suite.results, "suite.results")) {
     assertRecord(item, "suite.results[]");
@@ -440,88 +302,28 @@ export function parseImplementState(text: string): ImplementState {
     assertString(item["attemptId"], "suite.results[].attemptId");
     enumValue(item["status"], ["GREEN", "RED"], "suite.results[].status");
     if (!Number.isInteger(item["exitCode"]) || typeof item["mutatedTree"] !== "boolean") throw new Error("malformed implement state: invalid suite execution result");
-    if (item["status"] === "GREEN" && (item["exitCode"] !== 0 || item["mutatedTree"])) throw new Error("malformed implement state: suite GREEN contradicts execution result");
   }
+
   const attemptIds = new Set<string>();
   for (const attempt of candidate.verificationAttempts) {
     assertRecord(attempt, "verificationAttempts[]");
+    for (const retired of ["reviewContext", "reviewPolicySha256", "inputManifest", "roundContext", "reviews", "risk", "reviewScope"]) {
+      if (retired in attempt) throw new Error(`retired verification field: ${retired}`);
+    }
     assertString(attempt.id, "verificationAttempts[].id");
     if (attemptIds.has(attempt.id)) throw new Error("malformed implement state: duplicate verification attempt id");
     attemptIds.add(attempt.id);
-    assertSha256(attempt.inputFingerprint, "verificationAttempts[].inputFingerprint");
-    if (attempt.contractFingerprint !== undefined) assertSha256(attempt.contractFingerprint, "verificationAttempts[].contractFingerprint");
-    if (attempt.reviewPolicySha256 !== undefined) assertSha256(attempt.reviewPolicySha256, "verificationAttempts[].reviewPolicySha256");
-    if (attempt.reviewScope !== undefined) {
-      const scope = attempt.reviewScope;
-      assertRecord(scope, "verificationAttempts[].reviewScope");
-      enumValue(scope.mode, ["full", "focused", "repair"], "verificationAttempts[].reviewScope.mode");
-      assertString(scope.reason, "verificationAttempts[].reviewScope.reason");
-      assertNullableString(scope.referenceAttemptId, "verificationAttempts[].reviewScope.referenceAttemptId");
-      for (const field of ["executedLanes", "carriedLanes"] as const) {
-        assertStringArray(scope[field], `verificationAttempts[].reviewScope.${field}`);
-        for (const lane of scope[field]) enumValue(lane, ["fidelity", "code", "risk"], `verificationAttempts[].reviewScope.${field}[]`);
-      }
-      if (scope.mode === "repair" && (scope.referenceAttemptId === null || !attemptIds.has(scope.referenceAttemptId) || scope.carriedLanes.length === 0)) throw new Error("malformed implement state: repair attempt must name an earlier attempt and the lanes reused from it");
-      if (scope.mode !== "repair" && scope.carriedLanes.length !== 0) throw new Error("malformed implement state: only a repair attempt reuses lanes");
-    }
-    assertSha256(attempt.sourceFingerprint, "verificationAttempts[].sourceFingerprint");
-    assertSha256(attempt.prdSha256, "verificationAttempts[].prdSha256");
-    if (attempt.reviewContext === undefined) throw new Error("malformed implement state: verificationAttempts[].reviewContext must be null or an object");
-    if (attempt.reviewContext !== null) assertReviewContext(attempt.reviewContext);
-    assertInputManifest(attempt.inputManifest, "verificationAttempts[].inputManifest");
-    assertRecord(attempt.roundContext, "verificationAttempts[].roundContext");
-    assertNullableString(attempt.roundContext.priorAttemptId, "verificationAttempts[].roundContext.priorAttemptId");
-    assertStringArray(attempt.roundContext.changedPaths, "verificationAttempts[].roundContext.changedPaths");
-    array(attempt.roundContext.newEvidence, "verificationAttempts[].roundContext.newEvidence");
+    for (const field of ["inputFingerprint", "sourceFingerprint", "prdSha256"] as const) assertSha256(attempt[field], `verificationAttempts[].${field}`);
     assertRecord(attempt.intentInput, "verificationAttempts[].intentInput");
     assertSha256(attempt.intentInput.contentSha256, "verificationAttempts[].intentInput.contentSha256");
     assertIsoTimestamp(attempt.startedAt, "verificationAttempts[].startedAt");
     assertIsoTimestamp(attempt.finishedAt, "verificationAttempts[].finishedAt");
     positiveInteger(attempt.durationMs, "verificationAttempts[].durationMs", 0);
-    enumValue(attempt.phase, ["preflight", "mechanical", "evidence", "review", "complete"], "verificationAttempts[].phase");
-    enumValue(attempt.verdict, ["NOT_RUN", "PASS", "FAIL", "BLOCKED", "ERROR", "STALE"], "verificationAttempts[].verdict");
+    enumValue(attempt.phase, ["preflight", "mechanical", "evidence", "complete"], "verificationAttempts[].phase");
+    enumValue(attempt.verdict, ["NOT_RUN", "PASS", "FAIL", "ERROR", "STALE"], "verificationAttempts[].verdict");
     assertRecord(attempt.prelint, "verificationAttempts[].prelint");
     array(attempt.mechanical, "verificationAttempts[].mechanical");
-    assertRecord(attempt.reviews, "verificationAttempts[].reviews");
-    for (const [field, result] of [["reviews.fidelity", attempt.reviews.fidelity], ["reviews.code", attempt.reviews.code], ["risk", attempt.risk]] as const) {
-      if (result === undefined) throw new Error(`malformed implement state: verificationAttempts[].${field} must be null or an object`);
-      if (result !== null) {
-        assertRecord(result, `verificationAttempts[].${field}`);
-        enumValue(result.verdict, ["NOT_RUN", "PASS", "FAIL", "BLOCKED", "ERROR", "STALE"], `verificationAttempts[].${field}.verdict`);
-        if (result.carriedFrom !== undefined) {
-          // A reused lane is that earlier attempt's record byte for byte;
-          // anything else is a rewritten judgment wearing an old invocation id.
-          const origin = candidate.verificationAttempts.find((entry) => entry.id === result.carriedFrom);
-          const lane = field === "risk" ? "risk" : field === "reviews.fidelity" ? "fidelity" : "code";
-          const original = origin === undefined ? undefined : lane === "risk" ? origin.risk : origin.reviews[lane];
-          // The reference is the attempt this repair reused; the origin is
-          // where that judgment was first produced, which is the reference
-          // itself unless the reference had already carried it. Requiring the
-          // reference to BE the origin breaks the moment a carry is carried.
-          const referenceId = attempt.reviewScope?.mode === "repair" ? attempt.reviewScope.referenceAttemptId : undefined;
-          const reference = candidate.verificationAttempts.find((entry) => entry.id === referenceId);
-          const referenced = reference === undefined ? undefined : lane === "risk" ? reference.risk : reference.reviews[lane];
-          const expectedOrigin = referenced == null ? undefined : referenced.carriedFrom ?? referenceId;
-          if (origin === undefined || origin === attempt || attempt.reviewScope?.mode !== "repair" || expectedOrigin !== result.carriedFrom || !attempt.reviewScope.carriedLanes.includes(lane)) throw new Error(`malformed implement state: ${field} names a carried origin the attempt's repair record does not`);
-          // Both sides lose the pointer before the comparison. The judgment is
-          // what must match byte for byte; where it was copied through is not
-          // part of it.
-          const { carriedFrom, ...reused } = result;
-          const { carriedFrom: _originCarriedFrom, ...originalJudgment } = original ?? {};
-          if (original == null || JSON.stringify(reused) !== JSON.stringify(originalJudgment)) throw new Error(`malformed implement state: carried ${field} differs from attempt ${carriedFrom}`);
-        }
-        if (field !== "risk" && result.result === undefined) throw new Error(`malformed implement state: ${field}.result must be null or an object`);
-        if (result.result !== null && field !== "risk") {
-          if (attempt.reviewContext === null) throw new Error(`malformed implement state: ${field}.result requires its pinned reviewContext`);
-          const review = validateImplementationReviewResult(result.result, attempt.reviewContext, field === "reviews.fidelity" ? "fidelity" : "code");
-          if (typeof review === "string") throw new Error(`malformed implement state: verificationAttempts[].${field}.result: ${review}`);
-          if (result.verdict === "PASS" && review.findings.some((finding) => finding.kind === "defect")) throw new Error("malformed implement state: review PASS carries a defect");
-          if (result.verdict === "PASS" && review.assessments.some((assessment) => assessment.conclusion === "unresolved")) throw new Error("malformed implement state: review PASS contradicts unresolved assessments");
-        }
-      }
-    }
-    if (attempt.verdict === "PASS" && ([attempt.reviews.fidelity, attempt.reviews.code].some((review) => review?.verdict !== "PASS" || review.result == null || review.error !== null) || attempt.error !== null || attempt.mechanical.some((run) => run.status !== "PASS"))) throw new Error("malformed implement state: verification PASS contradicts its actual result");
-    for (const field of ["review", "lanes", "parkedRows", "fidelityInput", "roundContexts"]) if (field in attempt) throw new Error(`retired verification field: ${field}`);
+    if (attempt.verdict === "PASS" && (attempt.error !== null || attempt.mechanical.some((run) => run.status !== "PASS"))) throw new Error("malformed implement state: verification PASS contradicts its deterministic result");
   }
   if (candidate.activeVerification !== undefined) {
     const active = candidate.activeVerification;
@@ -532,47 +334,20 @@ export function parseImplementState(text: string): ImplementState {
     positiveInteger(active.pendingSpawns, "activeVerification.pendingSpawns", 0);
     array(active.executionPids, "activeVerification.executionPids").forEach((pid) => positiveInteger(pid, "activeVerification.executionPids[]"));
     assertIsoTimestamp(active.startedAt, "activeVerification.startedAt");
-    if (!attemptIds.has(active.attemptId)) throw new Error("malformed implement state: active verification attempt missing");
-    const attempt = candidate.verificationAttempts.at(-1)!;
-    if (attempt.id !== active.attemptId || attempt.inputFingerprint !== active.inputFingerprint || attempt.prdSha256 !== active.prdSha256
-      || attempt.startedAt !== active.startedAt || candidate.prd.sha256 !== active.prdSha256) throw new Error("malformed implement state: active verification contradicts its pinned attempt identity");
-    if (candidate.status !== "active") throw new Error("malformed implement state: active verification on a closed run");
+    if (!attemptIds.has(active.attemptId) || candidate.status !== "active") throw new Error("malformed implement state: active verification identity is invalid");
   }
-  for (const field of ["retirement", "completion"] as const) {
-    if (candidate[field] === undefined) throw new Error(`malformed implement state: ${field} must be null or an object`);
-    if (candidate[field] !== null) assertRecord(candidate[field], field);
-  }
-  if (candidate.completion !== null) {
-    for (const field of ["fingerprint", "completedAt", "receiptPath", "implementationResultPath"] as const) assertString(candidate.completion[field], `completion.${field}`);
-  }
-  if (candidate.status === "complete" || candidate.status === "complete-pending-human") {
-    const latest = candidate.verificationAttempts.at(-1);
-    if (candidate.completion === null || latest === undefined || [latest.reviews.fidelity, latest.reviews.code].some((review) => review?.result == null || review.error !== null || !["PASS", "FAIL"].includes(review.verdict)) || latest.error !== null || latest.mechanical.some((run) => run.status !== "PASS")) throw new Error("malformed implement state: completed run requires both completed reviews, successful execution and receipt identity");
-    if ([latest.reviews.fidelity, latest.reviews.code].some((review) => review!.result!.assessments.some((assessment) => assessment.conclusion === "unresolved"))) throw new Error("malformed implement state: completed run contradicts unresolved assessments");
-    for (const lane of [latest.reviews.fidelity, latest.reviews.code]) {
-      const review = lane!.result!;
-      for (const assessment of review.assessments.filter((entry) => entry.conclusion === "pending-human")) {
-        for (const ref of assessment.requirementRefs.length > 0 ? assessment.requirementRefs : [null]) {
-          const recorded = review.findings.some((finding) => finding.kind === "human-confirmation" && finding.human?.timing === "post-completion"
-            && (ref === null || finding.requirementRefs.includes(ref)) && candidate.findings.some((tracked) => tracked.kind === "human-confirmation"
-              && ["open", "confirmed"].includes(tracked.status) && (ref === null || tracked.requirementRefs.includes(ref))
-              && (finding.priorFindingId ? tracked.id === finding.priorFindingId : tracked.originAttemptId === latest.id)
-              && tracked.human?.timing === finding.human?.timing && tracked.human?.sourceRef === finding.human?.sourceRef && tracked.human?.quote === finding.human?.quote));
-          if (!recorded) throw new Error("malformed implement state: completed pending-human assessment requires its recorded human finding");
-        }
-      }
-    }
-    const excluded = new Set(candidate.suite.exclusions.map((entry) => entry.commandId));
-    for (const command of candidate.suite.commands.filter((entry) => !excluded.has(entry.id))) {
-      const execution = candidate.suite.results.find((entry) => entry.commandId === command.id);
-      if (execution?.attemptId !== latest.id || execution.status !== "GREEN") throw new Error("malformed implement state: completed run lacks a current required suite result");
-    }
-    if (candidate.prd.reviewProfile === "high-risk" && latest.risk?.result == null) throw new Error("malformed implement state: completed high-risk run requires its risk review");
-    const open = candidate.findings.filter((finding) => finding.status === "open");
-    if (open.some((finding) => finding.kind === "defect" || (finding.kind === "human-confirmation" && finding.human?.timing === "prerequisite"))) throw new Error("malformed implement state: completed run has blocking findings");
-    const expected = open.some((finding) => finding.kind === "human-confirmation") ? "complete-pending-human" : "complete";
-    if (candidate.status !== expected) throw new Error(`malformed implement state: status ${candidate.status} contradicts human findings (expected ${expected})`);
-    if (candidate.riskFindings.some((finding) => finding.status === "open" && finding.severity === "blocking")) throw new Error("malformed implement state: completed run has blocking risk findings");
+  if (candidate.retirement === undefined) throw new Error("malformed implement state: retirement must be null or an object");
+  if (candidate.retirement !== null) assertRecord(candidate.retirement, "retirement");
+  if (candidate.verificationReport === undefined) throw new Error("malformed implement state: verificationReport must be null or an object");
+  if (candidate.verificationReport !== null) {
+    assertRecord(candidate.verificationReport, "verificationReport");
+    if (candidate.verificationReport.schema !== "sasu.verification-report.v1") throw new Error("malformed implement state: unknown verification report schema");
+    for (const field of ["inputFingerprint", "prdSha256", "sourceFingerprint", "reportSha256"] as const) assertSha256(candidate.verificationReport[field], `verificationReport.${field}`);
+    for (const field of ["generatedAt", "jsonPath", "markdownPath"] as const) assertString(candidate.verificationReport[field], `verificationReport.${field}`);
+    assertIsoTimestamp(candidate.verificationReport.generatedAt, "verificationReport.generatedAt");
+    enumValue(candidate.verificationReport.status, ["PASS", "FAIL", "ERROR"], "verificationReport.status");
+    assertNullableString(candidate.verificationReport.baseSha, "verificationReport.baseSha");
+    assertNullableString(candidate.verificationReport.headSha, "verificationReport.headSha");
   }
   return candidate;
 }
@@ -596,13 +371,8 @@ export function parseImplementState(text: string): ImplementState {
  * stays at zero and only the quiet overwrite is removed. A refused writer
  * reloads and re-applies; a lost write cannot be reloaded.
  *
- * 2026-09-06 (prd-template run, risk findings RF1-RF3): what this check does
- * not cover is the window between a state that landed and the receipt derived
- * from it - a closer resuming after a later closer, or a derived write that
- * fails after the commit. `persistClose` narrows it by ordering alone (derived
- * files staged before the commit, renamed after it); closing it fully needs a
- * write lock, which D-45 forbids without the user's say. The residual race is
- * on the risk ledger for that decision.
+ * Derived report files are written after the state compare-and-swap so a
+ * stale writer cannot publish a report for state it failed to persist.
  *
  * Keyed by the state object so the baseline cannot be serialized into the
  * record - the check is about the file, and state.json stays the only record.
@@ -628,21 +398,15 @@ export class StateConflictError extends Error {}
 export interface StateWriteOptions { verificationToken?: string; refusalOnly?: boolean }
 
 function assertVerificationHistory(held: ImplementState, next: ImplementState): void {
-  // A later correction or amendment changes the live contract and findings,
-  // never what a reviewer actually returned. Compare with the held disk state,
-  // not the mutable caller object, including partial results before lease close.
+  // Execution history is factual and append-only. A new source gets a new
+  // attempt; it never rewrites the command results recorded for an old one.
   if (next.verificationAttempts.length < held.verificationAttempts.length) throw new Error("verification history is append-only; attempts cannot be removed");
   if (held.activeVerification !== undefined && next.verificationAttempts.length !== held.verificationAttempts.length) throw new Error("verification history cannot append an attempt while its execution lease is active");
   for (const [index, previous] of held.verificationAttempts.entries()) {
     const current = next.verificationAttempts[index]!;
     if (previous.id !== current.id) throw new Error("verification history is append-only; attempts cannot be reordered or replaced");
-    for (const field of ["id", "inputFingerprint", "contractFingerprint", "reviewPolicySha256", "sourceFingerprint", "prdSha256", "inputManifest", "intentInput", "startedAt"] as const) {
+    for (const field of ["id", "inputFingerprint", "sourceFingerprint", "prdSha256", "intentInput", "startedAt"] as const) {
       if (JSON.stringify(previous[field]) !== JSON.stringify(current[field])) throw new Error(`verification attempt ${previous.id} pinned ${field} is immutable`);
-    }
-    if (previous.reviewContext !== null && JSON.stringify(previous.reviewContext) !== JSON.stringify(current.reviewContext)) throw new Error(`verification attempt ${previous.id} pinned reviewContext is immutable`);
-    if (previous.reviewScope !== undefined && JSON.stringify(previous.reviewScope) !== JSON.stringify(current.reviewScope)) throw new Error(`verification attempt ${previous.id} recorded reviewScope is immutable`);
-    for (const [role, before, after] of [["fidelity", previous.reviews.fidelity, current.reviews?.fidelity], ["code", previous.reviews.code, current.reviews?.code], ["risk", previous.risk, current.risk]] as const) {
-      if (before !== null && JSON.stringify(before) !== JSON.stringify(after)) throw new Error(`verification attempt ${previous.id} settled ${role} record is immutable`);
     }
     if (held.activeVerification?.attemptId !== previous.id && JSON.stringify(previous) !== JSON.stringify(current)) throw new Error(`verification attempt ${previous.id} completed record is immutable; append a correction attempt`);
   }
@@ -707,27 +471,56 @@ export function persistState(statePath: string, state: ImplementState, options: 
   writeActivePointer(state.projectRoot, state);
 }
 
+function assertVerificationPublicationCurrent(statePath: string, state: ImplementState, token: string): void {
+  const baseline = stateBaseline.get(state);
+  const onDisk = stateFileDigest(statePath);
+  if (baseline === undefined || baseline.statePath !== statePath || onDisk !== baseline.digest) {
+    throw new StateConflictError(
+      "implement state changed before verification report publication. Nothing was published; retry against the current record.",
+    );
+  }
+  const held = parseImplementState(fs.readFileSync(statePath, "utf8"));
+  if (held.activeVerification?.token !== token) {
+    throw new Error("verification execution lease was replaced or cleared before report publication");
+  }
+}
+
 /**
- * Close a run record: persist the state, then put the files derived from it
- * in place.
+ * Publish files derived from state without exposing an unlocked half-close.
  *
- * State first, because `persistState` is the compare-and-swap: a receipt
- * written before it could survive a rejected state write and contradict the
- * record (risk finding RF1, prd-template run, 2026-09-06). The derived files
- * are staged as temporaries before the commit, so a write that fails leaves
- * nothing committed, and only renames follow the commit. What ordering alone
- * cannot remove - two closers interleaving after both committed - is recorded
- * on the risk ledger under D-45 (no lock file without the user's say).
+ * Ordinary callers persist state first, so a failed state comparison cannot
+ * leave an authoritative derived file behind. Verification is the one inverse
+ * case: its on-disk lease is the guard that makes a published report
+ * non-authoritative until the final state write removes that lease. The report
+ * renames therefore finish while the lease is still visible, and the tokened
+ * state write releases it last. If that write races a recorded refusal, the
+ * lease remains and the caller retries from current state.
  */
-export function persistClose(statePath: string, state: ImplementState, derived: Array<{ file: string; text: string }>): void {
+export function persistClose(
+  statePath: string,
+  state: ImplementState,
+  derived: Array<{ file: string; text: string }>,
+  options: StateWriteOptions = {},
+): void {
   const staged = derived.map((entry) => {
     fs.mkdirSync(path.dirname(entry.file), { recursive: true });
     const temporary = `${entry.file}.${process.pid}.${crypto.randomUUID()}.tmp`;
     fs.writeFileSync(temporary, entry.text);
     return { file: entry.file, temporary };
   });
+  if (options.verificationToken !== undefined) {
+    try {
+      assertVerificationPublicationCurrent(statePath, state, options.verificationToken);
+      for (const entry of staged) fs.renameSync(entry.temporary, entry.file);
+      persistState(statePath, state, options);
+    } catch (error) {
+      for (const entry of staged) fs.rmSync(entry.temporary, { force: true });
+      throw error;
+    }
+    return;
+  }
   try {
-    persistState(statePath, state);
+    persistState(statePath, state, options);
   } catch (error) {
     for (const entry of staged) fs.rmSync(entry.temporary, { force: true });
     throw error;
@@ -939,8 +732,8 @@ export function changedPathsSince(initial: SourceSnapshot, current: SourceSnapsh
  * Artifact integrity is file identity only. In the 2026-08-25 creator-studio
  * run, coupling every artifact to the whole judged tree staled 28 records at
  * once and let an unchanged 06:14 log be re-dated after 06:37 code changes.
- * Semantic freshness belongs to the judges; the attempt-level source pin still
- * blocks finalize after any later source edit.
+ * Semantic sufficiency belongs to native review; the attempt-level source pin
+ * keeps delivery from reusing a report after a later source edit.
  */
 export function artifactIntegrityProblems(projectRoot: string, state: ImplementState): string[] {
   const problems: string[] = [];

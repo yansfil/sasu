@@ -666,7 +666,7 @@ function makeGitStore() {
 
 // Mirrors the real verdict flow: the doc input exists, then the diff the judge
 // was shown is pinned, then the verdict is recorded (the gate's own gates.json
-// and artifact writes land after the pin, exactly as in runVerifyGate).
+// and artifact writes land after the pin, matching the serialized gate writer).
 function passWithJudgedDiff(store, judgedDiffSha256Override) {
   fs.writeFileSync(path.join(store.projectRoot, "prd.md"), "# PRD v1\n");
   const base = spawnSync("git", ["rev-parse", "HEAD"], { cwd: store.projectRoot, encoding: "utf8" }).stdout.trim();

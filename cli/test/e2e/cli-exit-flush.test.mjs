@@ -16,9 +16,14 @@ test("a --json document larger than the pipe buffer arrives whole through a pipe
   const root = makeProject();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   assert.equal(run(root, ["implement", "start", "--prd", PRD_PATH, "--allow-unapproved-prd"]).status, 0);
-  fs.writeFileSync(path.join(root, "evidence.txt"), "x");
-  const registered = run(root, ["implement", "artifact", "--kind", "file", "--path", "evidence.txt", "--description", "d".repeat(220_000), "--issuer", "implementor"]);
-  assert.equal(registered.status, 0, registered.stdout);
+  // Keep each argv entry below Linux's 128 KiB per-argument ceiling while the
+  // accumulated state still exceeds the pipe buffer by a wide margin.
+  for (let index = 0; index < 4; index += 1) {
+    const evidence = `evidence-${index}.txt`;
+    fs.writeFileSync(path.join(root, evidence), "x");
+    const registered = run(root, ["implement", "artifact", "--kind", "file", "--path", evidence, "--description", "d".repeat(60_000), "--issuer", "implementor"]);
+    assert.equal(registered.status, 0, registered.error?.message ?? registered.stdout);
+  }
 
   const status = run(root, ["implement", "status"]);
   assert.equal(status.status, 0);
