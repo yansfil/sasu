@@ -236,9 +236,9 @@ function installCliBinary() {
   }
   const steps = [];
   if (!fs.existsSync(path.join(cliDir, "node_modules"))) {
-    steps.push(["pnpm", ["install", "--silent"]]);
+    steps.push(["npm", ["ci", "--silent"]]);
   }
-  steps.push(["pnpm", ["run", "build"]]);
+  steps.push(["npm", ["run", "build"]]);
   for (const [command, args] of steps) {
     const result = spawnSync(command, args, { cwd: cliDir, encoding: "utf8" });
     if (result.status !== 0) {

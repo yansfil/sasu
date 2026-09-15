@@ -278,10 +278,10 @@ test("installer validates every skill target before replacing the CLI shim or an
 test("installer changes no runtime contracts when CLI preparation fails", () => {
   const home = freshHome();
   const fakeBin = path.join(home, "fake-bin");
-  const pnpm = path.join(fakeBin, "pnpm");
+  const npm = path.join(fakeBin, "npm");
   const existing = path.join(home, ".codex", "skills", "implement", "KEEP.txt");
   fs.mkdirSync(fakeBin, { recursive: true });
-  fs.writeFileSync(pnpm, "#!/bin/sh\nexit 17\n", { mode: 0o755 });
+  fs.writeFileSync(npm, "#!/bin/sh\nexit 17\n", { mode: 0o755 });
   fs.mkdirSync(path.dirname(existing), { recursive: true });
   fs.writeFileSync(existing, "unchanged\n");
   fs.writeFileSync(
