@@ -23,6 +23,8 @@ test("implement separates deterministic CLI verification from native review", ()
   assert.match(skill, /runs every sealed required suite/);
   assert.match(skill, /does not start reviewers/);
   assert.match(skill, /native subagent facility directly/);
+  assert.match(skill, /the Agent tool in Claude Code, `spawn_agent` in Codex/);
+  assert.match(skill, /Never use a Sasu judge command, a hidden background model process, or a Herdr pane/);
   assert.match(skill, /follow the CLI's `Next action:` response/);
   assert.match(review, /Fidelity and Code concurrently/);
   assert.match(review, /Sasu sets no reviewer turn limit/);

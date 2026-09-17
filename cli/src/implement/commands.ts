@@ -949,6 +949,8 @@ function verificationNextActions(state: ImplementState, verdict: VerificationSta
   }
   return [
     `Next action: spawn native ${nativeReviewNames(state)} review subagents in parallel from this runtime for this exact verified head.`,
+    // The tool is named per runtime because "native subagent" alone was read by Codex Implementors as the Herdr skill's `herdr agent start reviewer` example (2026-09-17), so reviews ran in split panes instead of subagents.
+    "Subagent tool: Claude Code uses the Agent tool; Codex uses spawn_agent. Do not split a Herdr pane or start a Herdr agent for review.",
     "Review output: Fix now, Follow-up improvements, and What was checked. Sasu sets no reviewer turn limit; if a reviewer fails, record REVIEW_UNAVAILABLE with the visible cause.",
     "Then fix valid current-scope findings. If source or material evidence changes, commit it and rerun verify and review; otherwise continue to ship.",
   ];
@@ -1017,7 +1019,7 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
       `Source: ${sourceDigest ?? "unavailable"}; ${state.requirements.length} requirements retained in the contract`,
       `Required suite: ${JSON.stringify(suiteScore(state))}`,
       `Verification report: ${state.verificationReport?.markdownPath ?? "not generated"}`,
-      `Agent Review: ${verificationVerdict === "PASS" && currentDelivery.eligible ? `spawn native ${nativeReviewNames(state)} subagents in parallel; record Fix now and Follow-up improvements in the PR` : "wait for a current deterministic PASS"}`,
+      `Agent Review: ${verificationVerdict === "PASS" && currentDelivery.eligible ? `spawn native ${nativeReviewNames(state)} subagents in parallel (Claude Code: Agent tool; Codex: spawn_agent; never a Herdr pane); record Fix now and Follow-up improvements in the PR` : "wait for a current deterministic PASS"}`,
       `escalations: ${state.escalations.length} of ${ESCALATE_LIMIT_PER_RUN} used${state.escalations.length >= ESCALATE_LIMIT_PER_RUN ? "; bound spent" : ""}`,
       ...currentDelivery.reasons.map((reason) => `Delivery: ${reason}`),
       ...(state.activeVerification ? [`Verification in progress: ${state.activeVerification.attemptId}`] : []),

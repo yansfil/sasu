@@ -10,7 +10,8 @@ The deterministic report, GitHub CI, and human review carry the enforceable fact
 
 ## Run reviewers
 
-After `sasu implement verify` reports PASS, run Fidelity and Code concurrently using the current runtime's native subagent facility.
+After `sasu implement verify` reports PASS, run Fidelity and Code concurrently using the current runtime's native subagent facility: the Agent tool in Claude Code, `spawn_agent` in Codex.
+A Herdr pane is not a subagent; do not run reviewers with `herdr pane split` or `herdr agent start` even when the Implementor itself lives in a Herdr pane.
 Add Security for a `high-risk` PRD.
 Give every reviewer the approved PRD, current base/head, current source, deterministic verification report, and registered evidence.
 Do not invoke a Sasu judge command or background model process.

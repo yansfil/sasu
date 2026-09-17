@@ -48,6 +48,7 @@ test("verify runs the sealed suite, writes a current report, and starts no revie
   }]);
   assert.equal(report.agentReview.status, "NOT_RUN");
   assert.match(verified.stdout, /Next action: spawn native Fidelity and Code review subagents in parallel/);
+  assert.match(verified.stdout, /Subagent tool: Claude Code uses the Agent tool; Codex uses spawn_agent\. Do not split a Herdr pane/);
   assert.match(verified.stdout, /Fix now, Follow-up improvements, and What was checked/);
   assert.match(verified.stdout, /Sasu sets no reviewer turn limit/);
   assert.match(verified.stdout, /REVIEW_UNAVAILABLE/);

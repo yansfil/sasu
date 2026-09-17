@@ -90,7 +90,8 @@ Any source or evidence change makes the earlier report stale.
 
 After deterministic verification, follow the CLI's `Next action:` response as the workflow continuation.
 On PASS it names the native review roles, parallel execution, response sections, failure recording, and rerun condition for the exact verified head.
-Use the runtime's native subagent facility directly, never a Sasu judge command or hidden background model process.
+Use the runtime's native subagent facility directly: the Agent tool in Claude Code, `spawn_agent` in Codex.
+Never use a Sasu judge command, a hidden background model process, or a Herdr pane; `herdr agent start` creates a peer agent, not a subagent, and its output never returns to the Implementor as a review.
 Sasu imposes no reviewer turn limit.
 Use the `reviews-and-finalization.md` reference above for reviewer scope and disposition rules.
 

@@ -28,7 +28,7 @@ For UI or native work, observe the running product and collect real visual evide
 
 ## Native Review
 
-Use the runtime's native subagent facility for a visible Code review after checks pass.
+Use the runtime's native subagent facility for a visible Code review after checks pass: the Agent tool in Claude Code, `spawn_agent` in Codex, never a Herdr pane.
 Add Fidelity when the contract has several behaviors or interpretation risk.
 Add Security for authentication, authorization, secrets, destructive data, or other high-risk boundaries.
 Do not launch review through a Sasu CLI model process.
