@@ -21,10 +21,11 @@ import { spawn, spawnSync } from "node:child_process";
 export type HerdrHole = "spawn" | "read" | "alive";
 
 /**
- * The pane this process occupies. A dispatch splits it so the implementor
- * lands beside the supervisor that asked for it, which makes it the spawn
- * hole's own precondition and nothing else's: a missing value closes `spawn`
- * alone and leaves pane diagnosis and liveness open.
+ * The pane this process occupies. A dispatch reads it to learn which agent
+ * kind the supervisor runs, so the implementor is the same kind by default;
+ * that makes it the spawn hole's own precondition and nothing else's: a
+ * missing value closes `spawn` alone and leaves pane diagnosis and liveness
+ * open.
  */
 const PANE_ID_ENV_KEY = "HERDR_PANE_ID";
 
@@ -34,7 +35,7 @@ const PANE_ID_ENV_KEY = "HERDR_PANE_ID";
  * It cannot move into the handoff text. An unmarked pane routes as a
  * supervisor and may dispatch recursively, and a marker that lives only in a
  * prompt is a request for discipline rather than a guard (AGENTS.md Review
- * Guide 7). This is what forces the split-then-start dispatch below.
+ * Guide 7). This is what forces the create-then-start dispatch below.
  */
 const ROLE_ENV_MARKER = "SASU_HERDR_ROLE=implementor";
 
@@ -57,7 +58,7 @@ const AGENT_LIST_ARGV = ["agent", "list"];
  * rejects a call, so the failure can name what moved instead of leaving a
  * reader to diff two CLIs by hand.
  */
-const ADAPTER_TARGET = { version: "0.8.2", protocol: "21" };
+const ADAPTER_TARGET = { version: "0.9.0-preview.2026-09-15", protocol: "23" };
 
 /**
  * herdr's own signal that it did not understand the call.
@@ -129,11 +130,11 @@ function herdrErrorCode(stderr: string): string | null {
 /**
  * How long a dispatch keeps retrying `agent start` on `agent_pane_busy`.
  *
- * A split pane's zsh takes a few seconds to read its profile and print a
+ * A new pane's zsh takes a few seconds to read its profile and print a
  * prompt, and herdr accepts a pane as an agent target only once it has seen
  * that interactive prompt. Measured 2026-09-10 (herdr 0.8.2): that moment
  * comes several seconds after `pane process-info` first reports a bare shell,
- * so a start issued straight after the split was refused twice in a row with
+ * so a start issued straight after the creation was refused twice in a row with
  * `agent_pane_busy: agent target pane is not an available shell`, and the
  * dispatch closed an empty pane that would have been ready moments later.
  * herdr's own acceptance is the only reliable readiness signal, so exactly
@@ -157,7 +158,7 @@ export function environmentCapabilities(environment: HerdrEnvironment): HerdrCap
     return {
       available: false,
       holes: { spawn: false, read: true, alive: true },
-      reason: `herdr is configured but ${PANE_ID_ENV_KEY} is unset, so a dispatch has no pane to split; pane diagnosis and liveness still work, and starting a replacement is the supervisor's to perform by hand`,
+      reason: `herdr is configured but ${PANE_ID_ENV_KEY} is unset, so a dispatch cannot tell which agent kind it is dispatching from; pane diagnosis and liveness still work, and starting a replacement is the supervisor's to perform by hand`,
     };
   }
   return { available: true, holes: { spawn: true, read: true, alive: true }, reason: null };
@@ -252,9 +253,24 @@ function nativeAgentArgs(kind: string, model?: string, effort?: string): string[
   return args.length === 0 ? [] : ["--", ...args];
 }
 
+/**
+ * Where the implementor's pane is created.
+ *
+ * Never a split of the supervisor's pane. Hide groups every pane under the
+ * Herdr workspace that owns it, so an implementor split beside the Observer
+ * was listed under the Observer's checkout (the root worktree) however far
+ * away its worktree was, and it sat in the operator's own layout. A run
+ * isolated into a worktree gets a workspace of its own on that path, which
+ * is the only way hide can list the agent under the checkout it edits; an
+ * in-place run gets a new tab in the workspace whose tree it edits.
+ */
+export type SpawnPlacement =
+  | { kind: "workspace"; cwd: string; label: string }
+  | { kind: "tab"; workspaceId: string; cwd: string; label: string };
+
 export interface SpawnRequest {
   name: string;
-  cwd: string;
+  placement: SpawnPlacement;
   prompt: string;
   /** Defaults to the kind of the agent occupying the dispatching pane. */
   kind?: string;
@@ -268,9 +284,9 @@ export interface SpawnRequest {
 const ROLE_ENV_KEY = ROLE_ENV_MARKER.slice(0, ROLE_ENV_MARKER.indexOf("="));
 
 /**
- * `--env` pairs for the split, beyond the role marker.
+ * `--env` pairs for the new pane, beyond the role marker.
  *
- * A split pane's shell starts from the login PATH, not the dispatcher's.
+ * A new pane's shell starts from the login PATH, not the dispatcher's.
  * Measured 2026-09-10: an Observer running a locally built sasu ahead of its
  * PATH dispatched an Implementor that could not see that build, and the
  * supervisor fell back to a hand-typed `herdr pane split --env PATH=...`. So
@@ -292,26 +308,70 @@ function paneEnvironment(processEnv: NodeJS.ProcessEnv, extra: Record<string, st
 
 export interface SpawnResult {
   paneId: string;
+  workspaceId: string;
+  tabId: string;
   name: string;
   kind: string;
 }
 
+interface CreatedPane {
+  paneId: string;
+  workspaceId: string;
+  tabId: string;
+  /** Closes exactly what the creation made, and nothing the supervisor owns. */
+  closeArgv: string[];
+}
+
 /**
- * Hole 1: start an implementor agent beside the supervisor.
+ * Create the pane the placement names: a workspace on the run's worktree, or
+ * a tab in an existing workspace. Both answer with their root pane, which is
+ * the shell the agent starts in (measured against herdr 0.9.0-preview
+ * 2026-09-18: `workspace create` returns `.result.workspace`, `.result.tab`
+ * and `.result.root_pane`; `tab create` returns the last two).
+ */
+function createPane(
+  run: NonNullable<HerdrEnvironment["run"]>,
+  placement: SpawnPlacement,
+  environmentArgv: string[],
+): { created: CreatedPane | null; problem: string | null } {
+  const argv = placement.kind === "workspace"
+    ? ["workspace", "create", "--cwd", placement.cwd, "--label", placement.label, ...environmentArgv, "--no-focus"]
+    : ["tab", "create", "--workspace", placement.workspaceId, "--cwd", placement.cwd, "--label", placement.label, ...environmentArgv, "--no-focus"];
+  const made = run(argv, placement.cwd);
+  const call = `herdr ${argv[0]} ${argv[1]}`;
+  if (made.status !== 0) {
+    return { created: null, problem: `${call} at ${placement.cwd} failed (${made.status ?? "no status"}): ${(made.stderr || made.stdout).trim()}` };
+  }
+  const parsed = parseJson(made.stdout) as { result?: {
+    workspace?: { workspace_id?: string }; tab?: { tab_id?: string }; root_pane?: { pane_id?: string };
+  } } | null;
+  const paneId = parsed?.result?.root_pane?.pane_id ?? "";
+  const tabId = parsed?.result?.tab?.tab_id ?? "";
+  const workspaceId = placement.kind === "workspace" ? (parsed?.result?.workspace?.workspace_id ?? "") : placement.workspaceId;
+  if (paneId === "" || tabId === "" || workspaceId === "") {
+    return { created: null, problem: `${call} reported no root pane, tab and workspace id; refusing to start an implementor into an unknown pane` };
+  }
+  const closeArgv = placement.kind === "workspace" ? ["workspace", "close", workspaceId] : ["tab", "close", tabId];
+  return { created: { paneId, workspaceId, tabId, closeArgv }, problem: null };
+}
+
+/**
+ * Hole 1: start an implementor agent in a pane of its own.
  *
- * Three calls, because herdr 0.8.2 splits the two things a dispatch needs
- * across two commands (measured 2026-09-07): `agent new` is atomic and can
- * record parent lineage with `--from-pane`, but defines no `--env`; only
- * `pane split` can set an environment variable on the launched shell. The
- * role marker is a correctness guard and lineage is an audit convenience, so
- * the marker wins and the implementor is created by split-then-start. The
- * cost is real and known: the dispatched agent does not appear under its
- * supervisor in herdr's agent tree.
+ * Three calls, because herdr splits the two things a dispatch needs across
+ * two commands (measured 2026-09-07, still true of 0.9.0-preview): `agent
+ * new` is atomic and can record parent lineage with `--from-pane`, but
+ * defines no `--env`; only `workspace create`, `tab create` and `pane split`
+ * can set an environment variable on the launched shell. The role marker is
+ * a correctness guard and lineage is an audit convenience, so the marker
+ * wins and the implementor is created by create-then-start. The cost is real
+ * and known: the dispatched agent does not appear under its supervisor in
+ * herdr's agent tree.
  *
  * The pane is created first and the agent started second, so a failure after
- * the split may leave either an empty shell or a blocked live agent. Only a
- * positively observed empty shell is closed automatically,
- * because the supervisor needs to look at it.
+ * the creation may leave either an empty shell or a blocked live agent. Only
+ * a positively observed empty shell is closed automatically, because the
+ * supervisor needs to look at it.
  */
 export function spawnImplementor(
   input: SpawnRequest,
@@ -337,25 +397,21 @@ export function spawnImplementor(
 
   const environmentArgv = paneEnvironment(environment.env ?? process.env, input.env ?? {});
   if (environmentArgv.problem !== null) return { ok: false, value: null, problem: environmentArgv.problem };
-  const split = run(["pane", "split", "--pane", dispatcher, "--direction", "right", "--cwd", input.cwd, ...environmentArgv.argv, "--no-focus"], input.cwd);
-  if (split.status !== 0) {
-    return { ok: false, value: null, problem: `herdr pane split from ${dispatcher} failed (${split.status ?? "no status"}): ${(split.stderr || split.stdout).trim()}` };
-  }
-  const created = (parseJson(split.stdout) as { result?: { pane?: { pane_id?: string } } } | null)?.result?.pane?.pane_id ?? "";
-  if (created === "") {
-    return { ok: false, value: null, problem: "herdr pane split reported no pane id; refusing to start an implementor into an unknown pane" };
-  }
+  const made = createPane(run, input.placement, environmentArgv.argv);
+  if (made.created === null) return { ok: false, value: null, problem: made.problem };
+  const cwd = input.placement.cwd;
+  const created = made.created.paneId;
 
   const startArgv = ["agent", "start", input.name, "--kind", kind, "--pane", created, ...nativeAgentArgs(kind, input.model, input.effort)];
   const clock = environment.clock ?? defaultClock;
   const firstStartAt = clock.now();
-  let started = run(startArgv, input.cwd);
+  let started = run(startArgv, cwd);
   let busyRetries = 0;
   while (started.status !== 0 && herdrErrorCode(started.stderr) === "agent_pane_busy"
     && clock.now() - firstStartAt < AGENT_START_BUSY_TIMEOUT_MS) {
     clock.sleep(AGENT_START_BUSY_RETRY_MS);
     busyRetries += 1;
-    started = run(startArgv, input.cwd);
+    started = run(startArgv, cwd);
   }
   if (started.status !== 0) {
     // A nonzero startup may leave a live trust dialog (2026-09-07).
@@ -380,14 +436,14 @@ export function spawnImplementor(
         && info.foreground_process_group_id === info.shell_pid
         && Array.isArray(info.foreground_processes) && info.foreground_processes.length === 1
         && info.foreground_processes[0]?.pid === info.shell_pid) {
-        const closed = run(["pane", "close", created]);
+        const closed = run(made.created.closeArgv);
         cleanup = closed.status === 0 ? "the empty pane was closed" : `the empty pane ${created} could not be closed (${closed.status ?? "no status"}) and is still open`;
       }
     }
     return { ok: false, value: null, problem: `herdr agent start ${input.name} --kind ${kind} in ${created} failed (${started.status ?? "no status"}): ${(started.stderr || started.stdout).trim()}${waited}; ${cleanup}` };
   }
 
-  const prompted = run(["agent", "prompt", input.name, input.prompt], input.cwd);
+  const prompted = run(["agent", "prompt", input.name, input.prompt], cwd);
   if (prompted.status !== 0) {
     // The prompt carries the whole handoff in one argv entry, and a failing
     // wrapper may echo argv. Never retain output for this call: it would
@@ -396,7 +452,7 @@ export function spawnImplementor(
     // hand it the packet itself.
     return { ok: false, value: null, problem: `herdr agent prompt ${input.name} <redacted prompt> failed (${prompted.status ?? "no status"}); the implementor is running in ${created} with no handoff` };
   }
-  return { ok: true, value: { paneId: created, name: input.name, kind }, problem: null };
+  return { ok: true, value: { paneId: created, workspaceId: made.created.workspaceId, tabId: made.created.tabId, name: input.name, kind }, problem: null };
 }
 
 /** Hole 2: read an agent's recent output, for diagnosis only. */

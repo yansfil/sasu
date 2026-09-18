@@ -13,7 +13,13 @@ const LIVE = { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12" };
 /** herdr 0.8.2's `agent list` shape: `agent_status`, and `name` only when named. */
 const listing = (...agents) => JSON.stringify({ result: { agents, type: "agent_list" } });
 const dispatcher = { agent: "claude", agent_status: "working", pane_id: "w4G:p12" };
-const splitOk = JSON.stringify({ result: { pane: { pane_id: "w4G:p13" }, type: "pane_info" } });
+/** herdr 0.9.0-preview's creation shape: the workspace, its first tab and the root pane the agent starts in. */
+const workspaceOk = JSON.stringify({ result: { workspace: { workspace_id: "w7Z" }, tab: { tab_id: "w7Z:t1" }, root_pane: { pane_id: "w7Z:p1" }, type: "workspace_created" } });
+const tabOk = JSON.stringify({ result: { tab: { tab_id: "w4G:t9" }, root_pane: { pane_id: "w4G:p13" }, type: "tab_created" } });
+/** A run isolated into a worktree: the implementor gets a workspace of its own on it. */
+const WS = { kind: "workspace", cwd: "/repo.worktrees/fixture", label: "fixture" };
+/** An in-place run: the implementor gets a tab in the workspace the Observer sits in. */
+const TAB = { kind: "tab", workspaceId: "w4G", cwd: "/repo", label: "fixture" };
 
 /**
  * Record every argv and answer each herdr call, so a test can assert the shape
@@ -26,7 +32,8 @@ function recorder(overrides = {}) {
     const key = args.slice(0, 2).join(" ");
     if (key in overrides) return typeof overrides[key] === "function" ? overrides[key](args) : overrides[key];
     if (key === "agent list") return { status: 0, stdout: listing(dispatcher), stderr: "" };
-    if (key === "pane split") return { status: 0, stdout: splitOk, stderr: "" };
+    if (key === "workspace create") return { status: 0, stdout: workspaceOk, stderr: "" };
+    if (key === "tab create") return { status: 0, stdout: tabOk, stderr: "" };
     return { status: 0, stdout: "{}", stderr: "" };
   };
   const matching = (key) => argv.filter((args) => args.slice(0, 2).join(" ") === key);
@@ -70,7 +77,7 @@ test("an argv herdr rejects is reported as this adapter being stale, not as herd
   assert.match(capabilities.reason, /THIS ADAPTER is out of date, not herdr/);
   assert.match(capabilities.reason, /cli\/src\/implement\/herdr\.ts/, "the message must name the file to re-measure");
   assert.match(capabilities.reason, /herdr 9\.9\.9, protocol 42/, "it must name what is installed");
-  assert.match(capabilities.reason, /measured against herdr 0\.8\.2 protocol 21/, "and what it was written against");
+  assert.match(capabilities.reason, /measured against herdr 0\.9\.0-preview\.2026-09-15 protocol 23/, "and what it was written against");
   assert.doesNotMatch(capabilities.reason, /not answering/);
   assert.deepEqual(asked, ["agent list", "--version", "api schema"]);
 });
@@ -108,7 +115,7 @@ test("a working probe never pays for the version calls", () => {
 test("AC27: each hole degrades to a named problem rather than an exception", () => {
   const env = {};
   for (const [label, call] of [
-    ["spawn", () => spawnImplementor({ name: "impl", cwd: ".", prompt: "p" }, { env, run: ok() })],
+    ["spawn", () => spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env, run: ok() })],
     ["read", () => readPane({ name: "impl" }, { env, run: ok() })],
     ["alive", () => isAgentAlive({ name: "impl" }, { env, run: ok() })],
   ]) {
@@ -121,9 +128,9 @@ test("AC27: each hole degrades to a named problem rather than an exception", () 
 
 test("all three holes work when herdr answers", () => {
   const { run } = recorder();
-  const spawned = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
+  const spawned = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run });
   assert.equal(spawned.ok, true);
-  assert.deepEqual(spawned.value, { paneId: "w4G:p13", name: "impl", kind: "claude" });
+  assert.deepEqual(spawned.value, { paneId: "w7Z:p1", workspaceId: "w7Z", tabId: "w7Z:t1", name: "impl", kind: "claude" });
   assert.equal(readPane({ name: "impl" }, { env: LIVE, run: ok("pane text") }).value, "pane text");
 });
 
@@ -158,11 +165,30 @@ test("liveness is presence in the list, over the agent_status field herdr actual
 // supervisor and may dispatch recursively.
 test("a dispatch injects the implementor marker when the pane is created", () => {
   const { run, of } = recorder();
-  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
-  const split = of("pane split");
-  assert.deepEqual(split, ["pane", "split", "--pane", "w4G:p12", "--direction", "right", "--cwd", "/repo", "--env", "SASU_HERDR_ROLE=implementor", "--no-focus"]);
-  assert.deepEqual(of("agent start").slice(0, 7), ["agent", "start", "impl", "--kind", "claude", "--pane", "w4G:p13"]);
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run });
+  assert.deepEqual(of("workspace create"), ["workspace", "create", "--cwd", "/repo.worktrees/fixture", "--label", "fixture", "--env", "SASU_HERDR_ROLE=implementor", "--no-focus"]);
+  assert.deepEqual(of("agent start").slice(0, 7), ["agent", "start", "impl", "--kind", "claude", "--pane", "w7Z:p1"]);
   assert.deepEqual(of("agent prompt"), ["agent", "prompt", "impl", "p"]);
+});
+
+// The pane is never a split of the supervisor's: hide lists a pane under the
+// Herdr workspace that owns it, so a split beside the Observer put every
+// implementor under the root checkout however far away its worktree was, and
+// in the operator's own layout (2026-09-18).
+test("a worktree run gets a workspace of its own and an in-place run gets a tab, never a split", () => {
+  const workspace = recorder();
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run: workspace.run });
+  assert.equal(workspace.count("pane split"), 0);
+  assert.equal(workspace.count("tab create"), 0);
+
+  const tab = recorder();
+  const spawned = spawnImplementor({ name: "impl", placement: TAB, prompt: "p" }, { env: LIVE, run: tab.run });
+  assert.equal(spawned.ok, true, spawned.problem);
+  assert.deepEqual(tab.of("tab create"), ["tab", "create", "--workspace", "w4G", "--cwd", "/repo", "--label", "fixture", "--env", "SASU_HERDR_ROLE=implementor", "--no-focus"]);
+  assert.deepEqual(spawned.value, { paneId: "w4G:p13", workspaceId: "w4G", tabId: "w4G:t9", name: "impl", kind: "claude" });
+  assert.equal(tab.count("pane split"), 0);
+  assert.equal(tab.count("workspace create"), 0);
+  assert.deepEqual(tab.of("agent start").slice(5, 7), ["--pane", "w4G:p13"]);
 });
 
 // A split pane starts from the login environment: a sasu build or shim that
@@ -171,22 +197,22 @@ test("a dispatch injects the implementor marker when the pane is created", () =>
 // (2026-09-10).
 test("a dispatch hands the new pane the dispatcher's PATH and the caller's extra variables", () => {
   const env = { ...LIVE, PATH: "/opt/scratch/sasu/bin:/usr/bin" };
-  const passedEnv = (split) => split.flatMap((arg, i) => (arg === "--env" ? [split[i + 1]] : []));
+  const passedEnv = (created) => created.flatMap((arg, i) => (arg === "--env" ? [created[i + 1]] : []));
 
   const forwarded = recorder();
-  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", env: { SASU_JUDGE_BACKEND: "stub" } }, { env, run: forwarded.run });
+  const outcome = spawnImplementor({ name: "impl", placement: WS, prompt: "p", env: { SASU_JUDGE_BACKEND: "stub" } }, { env, run: forwarded.run });
   assert.equal(outcome.ok, true, outcome.problem);
-  assert.deepEqual(passedEnv(forwarded.of("pane split")), ["SASU_HERDR_ROLE=implementor", "PATH=/opt/scratch/sasu/bin:/usr/bin", "SASU_JUDGE_BACKEND=stub"]);
+  assert.deepEqual(passedEnv(forwarded.of("workspace create")), ["SASU_HERDR_ROLE=implementor", "PATH=/opt/scratch/sasu/bin:/usr/bin", "SASU_JUDGE_BACKEND=stub"]);
 
   const explicit = recorder();
-  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", env: { PATH: "/only/this" } }, { env, run: explicit.run });
-  assert.deepEqual(passedEnv(explicit.of("pane split")), ["SASU_HERDR_ROLE=implementor", "PATH=/only/this"], "an explicit PATH replaces the inherited one");
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p", env: { PATH: "/only/this" } }, { env, run: explicit.run });
+  assert.deepEqual(passedEnv(explicit.of("workspace create")), ["SASU_HERDR_ROLE=implementor", "PATH=/only/this"], "an explicit PATH replaces the inherited one");
 
   const refused = recorder();
-  const smuggled = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", env: { SASU_HERDR_ROLE: "observer" } }, { env, run: refused.run });
+  const smuggled = spawnImplementor({ name: "impl", placement: WS, prompt: "p", env: { SASU_HERDR_ROLE: "observer" } }, { env, run: refused.run });
   assert.equal(smuggled.ok, false);
   assert.match(smuggled.problem, /role marker/);
-  assert.equal(refused.count("pane split"), 0, "refused before anything is created");
+  assert.equal(refused.count("workspace create"), 0, "refused before anything is created");
 
   // The CLI's `--env KEY=VALUE` shape: a shell variable name, and the first
   // `=` is the boundary so a value may itself contain one.
@@ -196,23 +222,23 @@ test("a dispatch hands the new pane the dispatcher's PATH and the caller's extra
 
 test("the dispatched kind defaults to the dispatching pane's own agent and can be overridden", () => {
   const detected = recorder({ "agent list": { status: 0, stdout: listing({ agent: "codex", pane_id: "w4G:p12" }), stderr: "" } });
-  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run: detected.run });
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run: detected.run });
   assert.equal(detected.of("agent start")[4], "codex");
 
   assert.equal(detected.count("agent list"), 1, "only kind detection needs a list");
 
   const overridden = recorder();
-  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", kind: "codex" }, { env: LIVE, run: overridden.run });
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p", kind: "codex" }, { env: LIVE, run: overridden.run });
   assert.equal(overridden.of("agent start")[4], "codex");
   assert.equal(overridden.count("agent list"), 0, "an explicit kind has no list dependency");
 });
 
 test("an undetectable kind is refused before anything is created", () => {
   const { run, of } = recorder({ "agent list": { status: 0, stdout: listing({ agent: "claude", pane_id: "somewhere-else" }), stderr: "" } });
-  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
+  const outcome = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run });
   assert.equal(outcome.ok, false);
   assert.match(outcome.problem, /cannot detect the agent kind/);
-  assert.equal(of("pane split"), undefined, "nothing may be created before the kind is known");
+  assert.equal(of("workspace create"), undefined, "nothing may be created before the kind is known");
 });
 
 // herdr passes everything after `--` to the agent executable, so the
@@ -220,32 +246,36 @@ test("an undetectable kind is refused before anything is created", () => {
 // config override (measured against both CLIs 2026-09-07).
 test("model and effort are forwarded as the started agent's own native arguments", () => {
   const claude = recorder();
-  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", model: "opus", effort: "xhigh" }, { env: LIVE, run: claude.run });
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p", model: "opus", effort: "xhigh" }, { env: LIVE, run: claude.run });
   assert.deepEqual(claude.of("agent start").slice(7), ["--", "--model", "opus", "--effort", "xhigh"]);
 
   const codex = recorder();
-  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", kind: "codex", effort: "xhigh" }, { env: LIVE, run: codex.run });
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p", kind: "codex", effort: "xhigh" }, { env: LIVE, run: codex.run });
   assert.deepEqual(codex.of("agent start").slice(7), ["--", "--config", 'model_reasoning_effort="xhigh"']);
 
   const plain = recorder();
-  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run: plain.run });
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run: plain.run });
   assert.equal(plain.of("agent start").length, 7, "no launch settings means no trailing separator");
 });
 
 // The pane is created before the agent starts, so a failure in between would
 // strand an empty pane.
 test("a failed agent start closes only the empty pane it created", () => {
-  const { run, of } = recorder({
-    "agent start": { status: 1, stdout: "", stderr: "no shell prompt" },
-    "pane process-info": { status: 0, stderr: "", stdout: JSON.stringify({ result: { process_info: {
-      pane_id: "w4G:p13", shell_pid: 42, foreground_process_group_id: 42, foreground_processes: [{ pid: 42 }],
-    } } }) },
-  });
-  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
+  const emptyShell = (paneId) => ({ status: 0, stderr: "", stdout: JSON.stringify({ result: { process_info: {
+    pane_id: paneId, shell_pid: 42, foreground_process_group_id: 42, foreground_processes: [{ pid: 42 }],
+  } } }) });
+  const workspace = recorder({ "agent start": { status: 1, stdout: "", stderr: "no shell prompt" }, "pane process-info": emptyShell("w7Z:p1") });
+  const outcome = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run: workspace.run });
   assert.equal(outcome.ok, false);
   assert.match(outcome.problem, /no shell prompt/);
-  assert.deepEqual(of("pane close"), ["pane", "close", "w4G:p13"]);
+  assert.deepEqual(workspace.of("workspace close"), ["workspace", "close", "w7Z"], "the workspace the dispatch made, not the supervisor's");
+  assert.equal(workspace.count("pane close"), 0);
   assert.match(outcome.problem, /the empty pane was closed/);
+
+  const tab = recorder({ "agent start": { status: 1, stdout: "", stderr: "no shell prompt" }, "pane process-info": emptyShell("w4G:p13") });
+  spawnImplementor({ name: "impl", placement: TAB, prompt: "p" }, { env: LIVE, run: tab.run });
+  assert.deepEqual(tab.of("tab close"), ["tab", "close", "w4G:t9"], "the tab the dispatch made, never the supervisor's workspace");
+  assert.equal(tab.count("workspace close"), 0);
 });
 
 /**
@@ -261,7 +291,7 @@ function fakeClock() {
 
 const paneBusy = { status: 1, stdout: "", stderr: JSON.stringify({ error: { code: "agent_pane_busy", message: "agent target pane is not an available shell" } }) };
 const bareShell = { status: 0, stderr: "", stdout: JSON.stringify({ result: { process_info: {
-  pane_id: "w4G:p13", shell_pid: 42, foreground_process_group_id: 42, foreground_processes: [{ pid: 42 }],
+  pane_id: "w7Z:p1", shell_pid: 42, foreground_process_group_id: 42, foreground_processes: [{ pid: 42 }],
 } } }) };
 
 // The split pane's shell is still reading its profile when the first start
@@ -272,18 +302,18 @@ test("a start refused because the new shell is still booting is retried until he
   let starts = 0;
   const clock = fakeClock();
   const { run, count } = recorder({ "agent start": () => (++starts < 3 ? paneBusy : { status: 0, stdout: "{}", stderr: "" }) });
-  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run, clock });
+  const outcome = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run, clock });
   assert.equal(outcome.ok, true, outcome.problem);
   assert.equal(count("agent start"), 3, "the third start is the one herdr accepted");
   assert.deepEqual(clock.slept, [1000, 1000], "one second between attempts, none after the acceptance");
-  assert.equal(count("pane close"), 0);
+  assert.equal(count("workspace close"), 0);
   assert.equal(count("agent prompt"), 1, "the handoff follows the accepted start");
 });
 
 test("a pane that never becomes a shell is given up after 30 seconds and closed", () => {
   const clock = fakeClock();
   const { run, count } = recorder({ "agent start": paneBusy, "pane process-info": bareShell });
-  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run, clock });
+  const outcome = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run, clock });
   assert.equal(outcome.ok, false);
   assert.equal(clock.slept.reduce((sum, ms) => sum + ms, 0), 30_000, "the wait is bounded at 30 s of wall clock");
   assert.match(outcome.problem, /agent_pane_busy/);
@@ -294,47 +324,47 @@ test("a pane that never becomes a shell is given up after 30 seconds and closed"
   // Only the busy refusal is worth waiting on; any other failure is final at once.
   const other = fakeClock();
   const immediate = recorder({ "agent start": { status: 1, stdout: "", stderr: JSON.stringify({ error: { code: "agent_not_ready" } }) } });
-  spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run: immediate.run, clock: other });
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run: immediate.run, clock: other });
   assert.equal(immediate.count("agent start"), 1);
   assert.deepEqual(other.slept, []);
 });
 
 test("a started implementor is never closed just because its handoff failed", () => {
   const { run, of } = recorder({ "agent prompt": { status: 1, stdout: "", stderr: "busy" } });
-  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
+  const outcome = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run });
   assert.equal(outcome.ok, false);
-  assert.equal(of("pane close"), undefined, "the agent is alive; the supervisor must be able to look at it");
-  assert.match(outcome.problem, /running in w4G:p13 with no handoff/);
+  assert.equal(of("workspace close"), undefined, "the agent is alive; the supervisor must be able to look at it");
+  assert.match(outcome.problem, /running in w7Z:p1 with no handoff/);
 });
 
 // The prompt carries the whole handoff in one argv entry and a failing wrapper
 // may echo argv, so this call never retains output.
 test("a failed handoff redacts the prompt from its problem line", () => {
   const { run } = recorder({ "agent prompt": { status: 1, stdout: "SECRET-OPERATIONAL-CONTEXT", stderr: "SECRET-OPERATIONAL-CONTEXT" } });
-  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "SECRET-OPERATIONAL-CONTEXT" }, { env: LIVE, run });
+  const outcome = spawnImplementor({ name: "impl", placement: WS, prompt: "SECRET-OPERATIONAL-CONTEXT" }, { env: LIVE, run });
   assert.equal(outcome.ok, false);
   assert.doesNotMatch(outcome.problem, /SECRET-OPERATIONAL-CONTEXT/);
   assert.match(outcome.problem, /<redacted prompt>/);
 });
 
-test("a split that reports no pane id never starts an agent into the unknown", () => {
-  const { run, of } = recorder({ "pane split": { status: 0, stdout: "{}", stderr: "" } });
-  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run });
+test("a creation that reports no root pane never starts an agent into the unknown", () => {
+  const { run, of } = recorder({ "workspace create": { status: 0, stdout: "{}", stderr: "" } });
+  const outcome = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run });
   assert.equal(outcome.ok, false);
-  assert.match(outcome.problem, /no pane id/);
+  assert.match(outcome.problem, /no root pane, tab and workspace id/);
   assert.equal(of("agent start"), undefined);
 });
 
-test("an unset pane id closes spawn alone and never dispatches without a pane to split", () => {
+test("an unset pane id closes spawn alone and never dispatches without a pane to detect the kind from", () => {
   const env = { HERDR_ENV: "1" };
   const capabilities = herdrCapabilities({ env, run: ok(listing()) });
   assert.deepEqual(capabilities.holes, { spawn: false, read: true, alive: true });
   assert.match(capabilities.reason, /HERDR_PANE_ID is unset/);
 
   const { run, of } = recorder();
-  const outcome = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env, run });
+  const outcome = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env, run });
   assert.equal(outcome.ok, false);
-  assert.equal(of("pane split"), undefined, "a dispatch with no supervising pane must be refused, not sent");
+  assert.equal(of("workspace create"), undefined, "a dispatch with no supervising pane must be refused, not sent");
   assert.match(outcome.problem, /^spawn unavailable:/);
 });
 
@@ -367,7 +397,10 @@ test("the argv this adapter sends matches the installed herdr's own contract", {
   assert.doesNotThrow(() => JSON.parse(listing.stdout), "`agent list` is expected to print JSON with no --json flag");
 
   for (const [args, flags] of [
-    [["pane", "split"], ["--pane", "--direction", "--cwd", "--env", "--no-focus"]],
+    [["workspace", "create"], ["--cwd", "--label", "--env", "--no-focus"]],
+    [["tab", "create"], ["--workspace", "--cwd", "--label", "--env", "--no-focus"]],
+    [["workspace", "close"], []],
+    [["tab", "close"], []],
     [["agent", "start"], ["--kind", "--pane"]],
     [["pane", "process-info"], ["--pane"]],
     [["agent", "read"], ["--source", "--lines"]],
@@ -384,7 +417,7 @@ test("the argv this adapter sends matches the installed herdr's own contract", {
 test("list failure does not disable read or explicit-kind startup", () => {
   const recorded = recorder({ "agent list": { status: 2, stdout: "", stderr: "usage: herdr agent list" } });
   assert.equal(readPane({ name: "impl" }, { env: LIVE, run: recorded.run }).ok, true);
-  assert.equal(spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p", kind: "claude" }, { env: LIVE, run: recorded.run }).ok, true);
+  assert.equal(spawnImplementor({ name: "impl", placement: WS, prompt: "p", kind: "claude" }, { env: LIVE, run: recorded.run }).ok, true);
   assert.equal(recorded.count("agent list"), 0);
   assert.equal(isAgentAlive({ name: "impl" }, { env: LIVE, run: recorded.run }).value, null);
 });
@@ -402,16 +435,16 @@ test("failed startup retains unready, live, and unobservable panes without sendi
   for (const [stderr, processInfo] of [
     [JSON.stringify({ error: { code: "agent_not_ready" } }), { status: 0, stdout: "{}", stderr: "" }],
     ["startup failed", { status: 0, stdout: JSON.stringify({ result: { process_info: {
-      pane_id: "w4G:p13", shell_pid: 42, foreground_process_group_id: 99, foreground_processes: [{ pid: 99 }],
+      pane_id: "w7Z:p1", shell_pid: 42, foreground_process_group_id: 99, foreground_processes: [{ pid: 99 }],
     } } }), stderr: "" }],
     ["startup failed", { status: 1, stdout: "", stderr: "connection refused" }],
     ["startup failed", { status: 0, stdout: "malformed", stderr: "" }],
   ]) {
     const recorded = recorder({ "agent start": { status: 1, stdout: "", stderr }, "pane process-info": processInfo });
-    const result = spawnImplementor({ name: "impl", cwd: "/repo", prompt: "p" }, { env: LIVE, run: recorded.run });
+    const result = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run: recorded.run });
     assert.equal(result.ok, false);
-    assert.match(result.problem, /pane w4G:p13 was retained/);
-    assert.equal(recorded.count("pane close"), 0);
+    assert.match(result.problem, /pane w7Z:p1 was retained/);
+    assert.equal(recorded.count("workspace close"), 0);
     assert.equal(recorded.count("agent prompt"), 0);
     assert.equal(recorded.count("agent wait"), 0);
   }

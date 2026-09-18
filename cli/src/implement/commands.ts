@@ -8,7 +8,7 @@ import { prelintPrd } from "../gates/prelint";
 import { runJudge, judgeCallRecordFrom } from "../judge/runner";
 import { JudgeError, judgeFailureCause } from "../judge/types";
 import { runDirRel } from "../runs/paths";
-import { currentSessionId } from "../runs/session";
+import { currentHerdrRole, currentSessionId } from "../runs/session";
 import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { parseImplementContract, reviewProfile, suiteCommands } from "./contract";
 import { planRunUnits, runBatch, parseCommandArgv, type RunUnit, type RunUnitResult } from "./runner";
@@ -19,12 +19,12 @@ import { AmendmentRejected, applyAmendment } from "./amend";
 import { assertNoActiveVerification, recoverVerification, cancelVerificationExecution, completeVerificationExecution, beginVerification, progressVerification, prepareVerificationExecution, recordVerificationExecution, finishVerification } from "./verification-activity";
 import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEscalation, renderDiagnosis, solverPrompt, validateDiagnosis } from "./solver";
 import { waitForEvent } from "./waiter";
-import { herdrCapabilities, readPane, spawnImplementor } from "./herdr";
-import { DispatchRejected, dispatchImplementor, parseEnvPairs } from "./dispatch";
+import { herdrCapabilities, isAgentAlive, readPane, spawnImplementor, type SpawnPlacement } from "./herdr";
+import { DispatchRejected, assertDispatchablePrd, assertNotImplementor, dispatchImplementor, parseEnvPairs, placementFor } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, parseImplementState, StateConflictError } from "./store";
-import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type SolverHandoff, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, ESCALATE_LIMIT_PER_RUN, STALL_THRESHOLD_MS } from "./types";
+import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type SolverHandoff, type DispatchRecord, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, ESCALATE_LIMIT_PER_RUN, STALL_THRESHOLD_MS } from "./types";
 
 export interface ImplementArgs {
   positional: string[];
@@ -356,7 +356,12 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     ? `implement run started: ${slug}`
     : `implement run started: ${slug} in isolated worktree ${startedWorktree.path} (branch ${startedWorktree.branch})` +
       `${occupant !== null ? ` because run '${occupant}' is active in this tree` : ""} - implement the contract there; records stay in this tree's agents/`;
-  return result("start", true, message, publicState(state));
+  // Under Herdr the unmarked session that started the run is the Observer,
+  // and the run's next step is a pane of its own for the implementor.
+  const nextSteps = process.env["HERDR_ENV"] === "1" && currentHerdrRole() === "unmarked"
+    ? [`Dispatch the implementor with \`sasu implement dispatch --name <unique-agent-name> --prd ${prd.relative} --json <<'SASU_HANDOFF' ... SASU_HANDOFF\`; it opens ${startedWorktree === null ? "a new tab in this workspace" : `a workspace on ${startedWorktree.path}`}.`]
+    : undefined;
+  return result("start", true, message, publicState(state), nextSteps);
 }
 
 /**
@@ -377,11 +382,24 @@ function assertRunOwnership(statePath: string, state: ImplementState, args: Impl
   const sessionId = currentSessionId();
   const owner = state.ownerSessionId ?? null;
   if (owner === sessionId) return;
+  const evidence = flag(args, "adopt")?.trim() ?? "";
+  const dispatched = lastDispatch(state);
   if (owner === null) {
+    // `dispatch` releases the run so the implementor it started can claim it
+    // on its first write. Until that write the run is unowned, and the
+    // 2026-08-12 incident says what an unowned run invites: a bystander's
+    // bare command claiming it. The marker the dispatch injected is what
+    // tells the implementor apart, so only a marked pane claims a dispatched
+    // run silently; anyone else needs the same approval a takeover needs.
+    if (dispatched !== null && currentHerdrRole() !== "implementor" && evidence === "") {
+      throw new Error(
+        `run '${state.topicSlug}' was dispatched to implementor ${dispatched.agent} (${dispatched.paneId}) and is its to claim; ` +
+          `if the user approved taking it over, re-run with --adopt "<the user's verbatim words>"`,
+      );
+    }
     state.ownerSessionId = sessionId;
     return;
   }
-  const evidence = flag(args, "adopt")?.trim() ?? "";
   if (evidence === "") {
     throw new Error(
       `run '${state.topicSlug}' is owned by another session (${owner}); if the user approved taking it over, re-run with --adopt "<the user's verbatim words>"`,
@@ -394,6 +412,56 @@ function assertRunOwnership(statePath: string, state: ImplementState, args: Impl
 
 function assertRunOpenForMutation(state: ImplementState): void {
   if (state.status === "retired") throw new Error("implement run is retired; start a new approved PRD under a new slug");
+}
+
+function lastDispatch(state: ImplementState): DispatchRecord | null {
+  return state.dispatches?.at(-1) ?? null;
+}
+
+/**
+ * A replacement lands beside the implementor it replaces: a tab in the
+ * workspace the dispatch opened, so hide keeps it under the same checkout.
+ * A run that was never dispatched is placed as a first dispatch would be.
+ */
+function replacementPlacement(state: ImplementState, escalationId: number): { placement: SpawnPlacement | null; problem: string | null } {
+  const previous = lastDispatch(state);
+  if (previous === null) return placementFor(state);
+  return { placement: { kind: "tab", workspaceId: previous.workspaceId, cwd: previous.cwd, label: `${state.topicSlug} r${escalationId}` }, problem: null };
+}
+
+/**
+ * Hand the run to the implementor a pane was just opened for: record the
+ * pane, release ownership so the implementor's first write claims it, and
+ * bookmark the run without a session key in the tree the implementor works
+ * in, so its bare `sasu implement ...` commands resolve this record without
+ * knowing the slug. Bookmarks are navigation, not authority (store.ts).
+ */
+function recordDispatch(
+  projectRoot: string,
+  statePath: string,
+  state: ImplementState,
+  started: { agent: string; kind: string; paneId: string; workspaceId: string; tabId: string; cwd: string },
+  actor: IssuerLabel,
+  summary: string,
+): DispatchRecord {
+  const at = nowIso();
+  const record: DispatchRecord = {
+    id: (lastDispatch(state)?.id ?? 0) + 1,
+    at,
+    agent: started.agent,
+    kind: started.kind,
+    paneId: started.paneId,
+    workspaceId: started.workspaceId,
+    tabId: started.tabId,
+    cwd: started.cwd,
+    fromSessionId: state.ownerSessionId ?? null,
+  };
+  state.dispatches = [...(state.dispatches ?? []), record];
+  state.ownerSessionId = null;
+  recordEvent(state, { kind: "dispatch", actor, subject: started.agent, summary, at });
+  persistState(statePath, state);
+  writeActivePointer(projectRoot, state, null);
+  return record;
 }
 
 function retire(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -527,29 +595,57 @@ function readHandoffPacket(): string {
 
 function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   try {
+    assertNotImplementor();
+    const { statePath, state } = loadState(projectRoot, stateOptions(args));
+    assertRunOpenForMutation(state);
+    assertRunOwnership(statePath, state, args);
+    const prd = assertDispatchablePrd(projectRoot, requiredFlag(args, "prd"));
+    if (prd.relative !== state.prdPath) {
+      throw new DispatchRejected(`${prd.relative} is not the PRD run '${state.topicSlug}' started from (${state.prdPath}); pass --slug for the run that PRD belongs to`);
+    }
+    // One implementor per run. The last one dispatched has to be positively
+    // gone before another pane is opened for the same run; "unknown" is not
+    // "gone", because an agent herdr cannot list may still be writing.
+    const previous = lastDispatch(state);
+    if (previous !== null) {
+      const alive = isAgentAlive({ name: previous.agent });
+      if (alive.value === true) {
+        throw new DispatchRejected(`implementor ${previous.agent} is still running in ${previous.paneId}; this run already has an implementor`);
+      }
+      if (alive.value !== false) {
+        throw new DispatchRejected(`cannot tell whether implementor ${previous.agent} (${previous.paneId}) is still running: ${alive.problem}; inspect it before dispatching a replacement`);
+      }
+    }
+    const placed = placementFor(state);
+    if (placed.placement === null) throw new DispatchRejected(placed.problem ?? "no placement");
     const dispatched = dispatchImplementor(projectRoot, {
       name: requiredFlag(args, "name"),
-      prdPath: requiredFlag(args, "prd"),
+      prdPath: prd.relative,
       handoff: readHandoffPacket(),
-      cwd: projectRoot,
+      placement: placed.placement,
       kind: flag(args, "kind")?.trim() || undefined,
       model: flag(args, "model")?.trim() || undefined,
       effort: flag(args, "effort")?.trim() || undefined,
       env: parseEnvPairs(args.values?.get("env") ?? []),
     });
+    const where = placed.placement.kind === "workspace"
+      ? `a new workspace on ${dispatched.cwd}`
+      : `a new tab of workspace ${dispatched.workspaceId} at ${dispatched.cwd}`;
+    const record = recordDispatch(projectRoot, statePath, state, dispatched, "observer",
+      `implementor ${dispatched.agent} (${dispatched.kind}) started in ${dispatched.paneId}, ${where}`);
     return result(
       "dispatch",
       true,
-      `implementor ${dispatched.agent} (${dispatched.kind}) started in ${dispatched.paneId} from ${dispatched.prd}`,
-      { ...dispatched },
+      `implementor ${dispatched.agent} (${dispatched.kind}) started in ${dispatched.paneId}, ${where}, from ${dispatched.prd}`,
+      { ...dispatched, dispatchId: record.id, slug: state.topicSlug },
       [
-        `Wake on its events with \`sasu implement await --agent ${dispatched.agent}\`.`,
+        `Wake on its events with \`sasu implement await --slug ${state.topicSlug} --agent ${dispatched.agent}\`.`,
         `Read its pane with \`herdr agent read ${dispatched.agent} --source recent-unwrapped --lines 120\` for diagnosis only.`,
       ],
     );
   } catch (error) {
     // A refused dispatch created nothing, so it is a message and an exit code,
-    // not a recorded run event: there is no run yet to record it against.
+    // not a recorded run event.
     if (error instanceof DispatchRejected) return { ok: false, action: "dispatch", exitCode: 1, message: `dispatch refused: ${error.message}` };
     throw error;
   }
@@ -635,9 +731,12 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
   writeTextAtomic(path.join(projectRoot, handoff.verificationPath), `${ledger}\n`);
 
   const briefing = buildHandoffBriefing(handoff);
+  const replacement = replacementPlacement(state, id);
   const reset = agent === null
     ? { ok: false, value: null, problem: "no --agent given; reset the implementor's context yourself and hand it the three artifacts below" }
-    : spawnImplementor({ name: `${agent}-r${id}`, cwd: state.worktree?.path ?? projectRoot, prompt: briefing });
+    : replacement.placement === null
+      ? { ok: false, value: null, problem: replacement.problem ?? "no placement" }
+      : spawnImplementor({ name: `${agent}-r${id}`, placement: replacement.placement, prompt: briefing });
 
   const record = recordEscalation(state, {
     at, target, reason, profile,
@@ -657,6 +756,10 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
     at,
   });
   persistState(statePath, state);
+  if (reset.ok && reset.value !== null) {
+    recordDispatch(projectRoot, statePath, state, { ...reset.value, agent: reset.value.name, cwd: replacement.placement!.cwd }, issuer,
+      `replacement implementor ${reset.value.name} started in ${reset.value.paneId} for escalation ${record.id}`);
+  }
   return result("escalate", true, `escalation ${record.id} diagnosed: ${diagnosis.summary}. ${reset.ok ? "A replacement implementor was started with the three handoff artifacts." : `Context reset not performed automatically (${reset.problem}).`}`, {
     escalation: record,
     handoff,
@@ -976,6 +1079,7 @@ function publicState(state: ImplementState, currentSourceDigest?: string, curren
     baselineAttribution: state.baselineAttribution,
     workingRoot: state.worktree?.path ?? state.projectRoot,
     worktree: state.worktree ?? null,
+    implementor: lastDispatch(state),
     reviewProfile: state.prd.reviewProfile,
     escalations: { used: state.escalations.length, limit: ESCALATE_LIMIT_PER_RUN, remaining: ESCALATE_LIMIT_PER_RUN - state.escalations.length },
     requirementCount: state.requirements.length,

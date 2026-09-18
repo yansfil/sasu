@@ -1,13 +1,14 @@
 import fs from "node:fs";
-import { spawnImplementor } from "./herdr";
+import { spawnImplementor, type SpawnPlacement } from "./herdr";
 import { normalizeProjectPath } from "./store";
+import type { ImplementState } from "./types";
 
 const { parseFrontmatterBlock } = require("../../lib/prd_parser.js") as {
   parseFrontmatterBlock(markdown: string): { entries: { key: string; value: string; line: number }[]; body: string } | null;
 };
 
 /**
- * Start exactly one Implementor beside the supervisor.
+ * Start exactly one Implementor in a pane of its own.
  *
  * This verb exists because its absence was a lie the documentation told. The
  * Observer reference described a "deterministic helper" with preconditions,
@@ -27,7 +28,7 @@ export interface DispatchInput {
   name: string;
   prdPath: string;
   handoff: string;
-  cwd: string;
+  placement: SpawnPlacement;
   kind?: string;
   model?: string;
   effort?: string;
@@ -116,13 +117,41 @@ export function assertHandoff(handoff: string): string {
   return text;
 }
 
+/** The Herdr workspace this process sits in; the in-place placement's target. */
+const WORKSPACE_ID_ENV_KEY = "HERDR_WORKSPACE_ID";
+
+/**
+ * Where a run's implementor is placed, decided by the run itself: a run
+ * isolated into a worktree gets a workspace on that worktree, so hide lists
+ * the agent under the checkout it edits; an in-place run gets a tab in the
+ * workspace the Observer is in, because that is the tree it edits. Neither
+ * is a split of the Observer's pane.
+ */
+export function placementFor(state: ImplementState, env: NodeJS.ProcessEnv = process.env): { placement: SpawnPlacement | null; problem: string | null } {
+  const worktree = state.worktree ?? null;
+  if (worktree !== null) {
+    if (!fs.existsSync(worktree.path)) {
+      return { placement: null, problem: `the run's worktree is missing: ${worktree.path}; recreate it with \`git worktree add ${worktree.path} ${worktree.branch}\` before dispatching` };
+    }
+    return { placement: { kind: "workspace", cwd: worktree.path, label: state.topicSlug }, problem: null };
+  }
+  const workspaceId = env[WORKSPACE_ID_ENV_KEY]?.trim() ?? "";
+  if (workspaceId === "") {
+    return { placement: null, problem: `${WORKSPACE_ID_ENV_KEY} is unset, so an in-place run has no workspace to open the implementor's tab in` };
+  }
+  return { placement: { kind: "tab", workspaceId, cwd: state.projectRoot, label: state.topicSlug }, problem: null };
+}
+
 export interface DispatchResult {
   paneId: string;
+  workspaceId: string;
+  tabId: string;
+  cwd: string;
   agent: string;
   kind: string;
   prd: string;
   /**
-   * herdr 0.8.2 cannot inject the role marker and record agent lineage in one
+   * herdr cannot inject the role marker and record agent lineage in one
    * call, and the marker wins. Reported rather than hidden so a supervisor
    * looking for its child in the agent tree knows why it is not there.
    */
@@ -141,10 +170,19 @@ export function dispatchImplementor(
   const prd = assertDispatchablePrd(projectRoot, input.prdPath);
 
   const spawned = spawnImplementor(
-    { name, cwd: input.cwd, prompt: handoff, kind: input.kind, model: input.model, effort: input.effort, env: input.env },
+    { name, placement: input.placement, prompt: handoff, kind: input.kind, model: input.model, effort: input.effort, env: input.env },
     { env },
   );
   if (!spawned.ok || spawned.value === null) throw new DispatchRejected(spawned.problem ?? "dispatch failed for an unreported reason");
 
-  return { paneId: spawned.value.paneId, agent: spawned.value.name, kind: spawned.value.kind, prd: prd.relative, parentLineage: "unavailable" };
+  return {
+    paneId: spawned.value.paneId,
+    workspaceId: spawned.value.workspaceId,
+    tabId: spawned.value.tabId,
+    cwd: input.placement.cwd,
+    agent: spawned.value.name,
+    kind: spawned.value.kind,
+    prd: prd.relative,
+    parentLineage: "unavailable",
+  };
 }

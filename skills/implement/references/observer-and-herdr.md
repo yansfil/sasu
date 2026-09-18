@@ -52,6 +52,18 @@ Apply this routing before any project write or mutating `sasu` command:
 
 ## Dispatch One Implementor
 
+The Observer starts the run first, from the record tree, and dispatches second:
+
+```sh
+sasu implement intake
+sasu implement start --prd <ready-prd-path> [--dirty-attribution <pre-existing|run-owned>]
+```
+
+`start` provisions the run's worktree when the configuration isolates runs, records the run in this tree, and names the dispatch verb as the next step.
+It runs here rather than in the Implementor's pane because the pane is placed by what `start` decided: a run isolated into a worktree gets a Herdr workspace of its own on that worktree, and an in-place run gets a new tab in the Observer's workspace.
+Neither is a split of the Observer's pane.
+Hide lists a pane under the Herdr workspace that owns it, so an Implementor split beside the Observer was listed under the root checkout however far away its worktree was, and it sat in the operator's own layout (2026-09-18).
+
 Choose a unique agent name that describes the mode and topic and remains within Herdr's name limit.
 Build the complete Handoff Packet below and send it on stdin to the harness's own dispatch verb:
 
@@ -71,28 +83,30 @@ SASU_HANDOFF
 
 This is the only dispatch path.
 It exists because the previous one did not: this section used to print a raw `herdr agent new ... --env ... --prompt ...` command, and herdr has never had either flag, so every dispatch was hand-typed prose checked by nobody and it drifted until a live run could not dispatch at all (2026-09-07).
-Dispatch reaches herdr only through the harness's three-hole adapter (`spawn`, `read`, `alive`); nothing else in the harness may call herdr, and the Herdr skill does not authorize substituting raw `herdr pane split`, `herdr pane run`, or `herdr agent start` here.
+Dispatch reaches herdr only through the harness's three-hole adapter (`spawn`, `read`, `alive`); nothing else in the harness may call herdr, and the Herdr skill does not authorize substituting raw `herdr workspace create`, `herdr tab create`, `herdr pane split`, `herdr pane run`, or `herdr agent start` here.
 
-The verb refuses before it creates anything, in this order: a pane already marked `SASU_HERDR_ROLE=implementor`, a missing `--name`, an empty handoff packet, and a PRD that is missing or not yet `status: ready`.
+The verb refuses before it creates anything, in this order: a pane already marked `SASU_HERDR_ROLE=implementor`, no started run for this session (pass `--slug` for a run another session started), a PRD that is not the one the run started from or is missing or not yet `status: ready`, an implementor herdr still lists for this run, a missing worktree, an in-place run with no `HERDR_WORKSPACE_ID` to open a tab in, a missing `--name`, and an empty handoff packet.
 The marker refusal is the recursion guard and it is structural - it reads the environment of the dispatching process, so an Implementor cannot dispatch by declaring a different `--issuer`.
-When `HERDR_PANE_ID` is unset there is no pane to split, so `spawn` reports itself closed and `sasu implement status` says so while pane diagnosis and liveness stay open.
+When `HERDR_PANE_ID` is unset the dispatch cannot tell which agent kind it is dispatching from, so `spawn` reports itself closed and `sasu implement status` says so while pane diagnosis and liveness stay open.
 
-On success it prints the new pane id, agent name, kind, and PRD as JSON.
+On success it prints the new pane, workspace and tab ids, the agent name, kind, cwd, slug, and PRD as JSON, and records the dispatch in `state.json` (`dispatches`, and a `dispatch` event).
+The run is then the Implementor's: dispatch releases the Observer's ownership so the Implementor's first write claims it, and only a pane carrying the marker may make that claim - any other session needs `--adopt "<the user's verbatim words>"`, exactly as a takeover does.
+The Implementor does not run `sasu implement start`; a session-less bookmark in the tree it works in makes its bare `sasu implement ...` commands resolve the run, and `sasu implement status` shows the current implementor under `implementor`.
 The kind defaults to the agent occupying the dispatching pane, so a Claude supervisor dispatches Claude unless `--kind` says otherwise.
 `--model` and `--effort` are forwarded as the started agent's own native arguments: `--model`/`--effort` for Claude, `--model` and `-c model_reasoning_effort="<level>"` for Codex.
-The new pane's shell starts from the login environment, not the Observer's, so the dispatch always passes the Observer's own `PATH` to the split pane (a locally built `sasu` or a shim ahead of the login PATH stays visible to the Implementor) and forwards each `--env KEY=VALUE` on top of it; an explicit `--env PATH=...` replaces the inherited one, and `SASU_HERDR_ROLE` is refused because the marker is the dispatch's own to set.
+The new pane's shell starts from the login environment, not the Observer's, so the dispatch always passes the Observer's own `PATH` to the new pane (a locally built `sasu` or a shim ahead of the login PATH stays visible to the Implementor) and forwards each `--env KEY=VALUE` on top of it; an explicit `--env PATH=...` replaces the inherited one, and `SASU_HERDR_ROLE` is refused because the marker is the dispatch's own to set.
 The new pane's shell takes a few seconds to print its first prompt, and herdr refuses `agent start` with `agent_pane_busy` until it has seen one; the adapter retries exactly that refusal once a second for up to 30 seconds and reports any other failure at once, so the wait is the harness's, never this skill's.
 
 Two costs are real and are not bugs to re-report:
 
 - The dispatched Implementor does not appear under its supervisor in Herdr's agent tree.
-  herdr 0.8.2 can inject the role marker (`pane split --env`) or record parent lineage (`agent new --from-pane`) but not both in one call, and the marker wins because it is a correctness guard while lineage is an audit convenience.
-- Dirty-tree attribution travels in the handoff packet, not in a flag.
-  For `$please`, the Spec Owner runs `sasu implement intake` before the first gate; when it reports dirty judged paths it asks its returned question once, resolves `commit-first` by committing before dispatch, and otherwise writes the selected `pre-existing|run-owned` value into the packet's DIRTY ATTRIBUTION line.
-  The Implementor passes that value to `sasu implement start` and never asks again.
+  herdr can inject the role marker (`workspace create --env`, `tab create --env`) or record parent lineage (`agent new --from-pane`) but not both in one call, and the marker wins because it is a correctness guard while lineage is an audit convenience.
+- Dirty-tree attribution is settled before dispatch, by the Observer.
+  For `$please`, the Spec Owner runs `sasu implement intake` before the first gate; when it reports dirty judged paths it asks its returned question once, resolves `commit-first` by committing before `start`, and otherwise passes the selected `pre-existing|run-owned` value to `sasu implement start --dirty-attribution`.
+  The packet's DIRTY ATTRIBUTION line records what was chosen so the Implementor never asks again.
 
-Call the verb once per dispatch; rerunning it would allocate a second pane.
-If the agent fails to start, the empty pane it created is closed and the exact failure is reported.
+Call the verb once per dispatch; a second call is refused while herdr still lists the first Implementor, and opens a replacement pane only once it is gone.
+If the agent fails to start, the empty workspace or tab the dispatch created is closed and the exact failure is reported.
 A pane whose agent did start is never closed automatically - leave it visible for inspection - and a handoff that fails to submit leaves the Implementor running with no packet, which the failure line says in those words.
 If dispatch fails in a Herdr-managed session, keep the sealed PRD, remain the user-facing session, and surface the failure.
 Never fall back to mutating implementation state or implementing inline from an unmarked Herdr pane.
@@ -124,8 +138,8 @@ The Observer then arms exactly one background waiter and lets go of the turn:
 sasu implement await --since <last-event-id> [--pid <implementor-pid>]
 ```
 
-The run's record is `agents/runs/<slug>/state.json` in the tree where `sasu implement start` ran, even when the run is isolated into a worktree (`start --json` reports the judged tree as `worktree.path`); `await` and `status` take `--slug <slug>` from any worktree of the same repository and resolve that record, and they refuse by name when two trees carry it.
-The bare form without `--slug` follows the session that started the run, so an Observer in another pane passes `--slug`.
+The run's record is `agents/runs/<slug>/state.json` in the tree where `sasu implement start` ran, which is the Observer's tree, even when the run is isolated into a worktree (`start --json` reports the judged tree as `worktree.path`); `await` and `status` take `--slug <slug>` from any worktree of the same repository and resolve that record, and they refuse by name when two trees carry it.
+The bare form without `--slug` follows the session that started the run, so an Observer that did not start it passes `--slug`; the dispatch output prints the exact `await` command.
 
 Arm it as a background task, never in the foreground.
 Under Claude Code that is the Bash tool's `run_in_background`; under Codex it is that runtime's own detached-command form.
@@ -186,8 +200,8 @@ Inspect the lifecycle state, recent output, and Sasu status first.
 - On a soft `blocked` state, resolve it under the policy above and resume the same Implementor.
 - On idle or done without a current deterministic report, ask the Implementor for its exact stage and next action, then continue if no hard stop exists.
 - On `unknown`, inspect the pane process and Sasu state before deciding that the agent died.
-- If the Implementor died, start one replacement in a fresh marked pane and hand off the original invocation, current diff, ready PRD, and Sasu status.
-  The original user's `$please` or `$implement` invocation is the only takeover evidence available for the same task; never compose adoption evidence.
+- If the Implementor died, dispatch one replacement with the same verb: it refuses while herdr still lists the first Implementor, and otherwise opens the replacement in a new pane, and hand off the original invocation, current diff, ready PRD, and Sasu status.
+  The run is owned by the dead Implementor's session, so the Observer passes `--adopt` with the original user's `$please` or `$implement` invocation, the only takeover evidence available for the same task; never compose adoption evidence.
 - Allow one autonomous resolution for the same blocker signature.
   If that blocker repeats, stop the automatic loop and surface the failed approach and recommended replan to the user.
 

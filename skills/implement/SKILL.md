@@ -56,7 +56,8 @@ Do not touch unrelated user or sibling changes.
 sasu implement start --prd <approved-prd-path>
 ```
 
-Work in the returned worktree when one is created.
+Under Herdr the Observer runs `start` before it dispatches, and the Implementor's pane opens in the tree the run edits: the Implementor never runs `start` itself, and its bare `sasu implement ...` commands already resolve the run.
+Outside Herdr the session that will implement runs `start` and works in the returned worktree when one is created.
 Read the complete approved PRD and its decisions before editing.
 Implement every required behavior and perform actual browser, native, API, database, CLI, or document observation appropriate to the product.
 Register material evidence with `sasu implement artifact`.
@@ -133,8 +134,8 @@ High-risk changes require the repository's independent specialist review and exp
 | Command | Required | Authority |
 | --- | --- | --- |
 | `intake` | none | any role, read-only |
-| `start` | `--prd` | specification owner or delegated implementor |
-| `dispatch` | `--name`, `--prd` | Observer only by structural Herdr rule |
+| `start` | `--prd` | Observer under Herdr; the implementing session outside Herdr |
+| `dispatch` | `--name`, `--prd` | Observer only by structural Herdr rule; after `start` |
 | `status` | optional `--state` or `--slug` | any role, read-only |
 | `await` | optional cursor and target | any role, read-only |
 | `artifact` | kind, path, description | implementor, human |

@@ -112,7 +112,7 @@ export interface VerificationReportIdentity {
   reportSha256: string;
 }
 export type IssuerLabel = "implementor" | "observer" | "human";
-export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify";
+export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify" | "dispatch";
 export interface ImplementEvent {
   id: number; at: string; kind: ImplementEventKind; actor: IssuerLabel;
   subject: string | null; summary: string;
@@ -217,6 +217,26 @@ export interface EscalationRecord {
   handoff: SolverHandoff | null;
 }
 
+/**
+ * One implementor started for this run by `dispatch` or by an escalation's
+ * reset. The pane is recorded so a replacement can be placed in the same
+ * workspace and a second dispatch can ask herdr whether the last one is
+ * still alive before it opens another pane.
+ */
+export interface DispatchRecord {
+  id: number;
+  at: string;
+  agent: string;
+  kind: string;
+  paneId: string;
+  workspaceId: string;
+  tabId: string;
+  /** The tree the implementor's shell starts in: the run's worktree, else the record tree. */
+  cwd: string;
+  /** Who handed the run over; null when the run was unowned at dispatch. */
+  fromSessionId: string | null;
+}
+
 export type PrdJudgeRecord =
   | { required: true; skippedReason: null; gapAudit: string; spec: string }
   | { required: false; skippedReason: string; gapAudit: null; spec: null };
@@ -255,6 +275,8 @@ export interface ImplementState {
   baselineAttribution: BaselineAttribution;
   ownerSessionId?: string | null;
   adoptions?: { at: string; fromSessionId: string; evidence: string }[];
+  /** Absent on records written before dispatch recorded itself; read as none. */
+  dispatches?: DispatchRecord[];
   requirements: BehaviorRequirement[];
   activeVerification?: ActiveVerification;
   artifacts: RegisteredArtifact[];

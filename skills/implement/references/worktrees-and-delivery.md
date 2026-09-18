@@ -6,6 +6,7 @@ Read this reference when a run uses a worktree or the approved delivery mode is 
 
 `sasu implement start` may return an isolated worktree.
 Make product changes and run verification there.
+Under Herdr the Implementor's pane is opened by `dispatch` as a workspace on that worktree, so the shell already starts in it and hide lists the agent under that checkout.
 The record tree retains `state.json`, the approved PRD snapshot, registered evidence metadata, verification reports, and delivery logs under `agents/**`.
 Use the explicit `--state` path when crossing between them.
 
