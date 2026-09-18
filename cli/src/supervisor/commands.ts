@@ -71,6 +71,7 @@ export function supervisorStatusView(env: NodeJS.ProcessEnv, herdr: HerdrEnviron
     slug: slugOf(entry.statePath),
     statePath: entry.statePath,
     runInstanceId: entry.runInstanceId,
+    recoveryOwner: entry.recoveryOwner,
     addedAt: entry.addedAt,
     missingTicks: entry.missingTicks,
     lastWake: entry.lastWake,
@@ -85,7 +86,7 @@ export function supervisorStatusView(env: NodeJS.ProcessEnv, herdr: HerdrEnviron
     `Guarded prompt: ${guarded.supported === true ? "supported by the installed herdr" : guarded.supported === false ? "not offered by the installed herdr (session-match path in use)" : `unknown: ${guarded.detail}`}`,
     ...(indexProblem === null ? [] : [`Index: ${indexProblem}`]),
     `Runs: ${runs.length}`,
-    ...runs.map((run) => `  ${run.slug} ${run.runInstanceId}${run.stale ? " [stale]" : ""}: observer ${run.lastObservation?.observer ?? "unobserved"}; implementor ${run.lastObservation?.implementor ?? "unobserved"}; last wake ${run.lastWake === null ? "none" : `${run.lastWake.reasons.join("+")} at ${run.lastWake.at} ${run.lastWake.outcome} via ${run.lastWake.path}`}; last failure ${run.lastFailure === null ? "none" : `${run.lastFailure.at} ${run.lastFailure.detail}`}`),
+    ...runs.map((run) => `  ${run.slug} ${run.runInstanceId}${run.stale ? " [stale]" : ""}: recovery owner ${run.recoveryOwner}; observer ${run.lastObservation?.observer ?? "unobserved"}; implementor ${run.lastObservation?.implementor ?? "unobserved"}; last wake ${run.lastWake === null ? "none" : `${run.lastWake.reasons.join("+")} at ${run.lastWake.at} ${run.lastWake.outcome} via ${run.lastWake.path}`}; last failure ${run.lastFailure === null ? "none" : `${run.lastFailure.at} ${run.lastFailure.detail}`}`),
     ...(index?.removed.slice(-5).map((removal) => `  removed ${slugOf(removal.statePath)} at ${removal.at}: ${removal.cause}`) ?? []),
   ];
   const ok = indexProblem === null && (runs.length === 0 || (agent.installed && agent.loaded === true));
@@ -138,7 +139,7 @@ function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.Process
   supervision.observer = observer.identity;
   recordEvent(state, { kind: "handover", actor: "human", subject: null, summary: `Observer handed over to session ${observer.identity.sessionId} in ${observer.identity.paneId}`, at });
   persistState(statePath, state);
-  enrollRun(indexPath(env), { statePath, runInstanceId: supervision.runInstanceId, at });
+  enrollRun(indexPath(env), { statePath, runInstanceId: supervision.runInstanceId, recoveryOwner: supervision.recoveryOwner, at });
   return result("handover", true, `run ${state.topicSlug} is now observed by session ${observer.identity.sessionId} in pane ${observer.identity.paneId}; wakes resume on the next tick`, { observer: observer.identity, handovers: supervision.handovers.length });
 }
 

@@ -16,6 +16,8 @@ import { runFacts } from "./facts";
 export interface RunDigest {
   slug: string;
   runInstanceId: string;
+  /** Which loop replaces a vanished Observer (D-15); the supervisor only wakes the recorded one. */
+  recoveryOwner: "supervisor" | "task-factory";
   generatedAt: string;
   dispatchedAt: string;
   dispatchHead: string | null;
@@ -151,6 +153,7 @@ export function buildDigest(state: ImplementState, supervision: SupervisionRecor
   return {
     slug: state.topicSlug,
     runInstanceId: supervision.runInstanceId,
+    recoveryOwner: supervision.recoveryOwner,
     generatedAt: new Date(now()).toISOString(),
     dispatchedAt: supervision.dispatchedAt,
     dispatchHead: supervision.dispatchHead,
@@ -174,7 +177,7 @@ function ago(from: string | null, now: number): string {
 export function renderDigest(digest: RunDigest): string[] {
   const now = Date.parse(digest.generatedAt);
   const lines = [
-    `${digest.slug} instance ${digest.runInstanceId}: dispatched ${ago(digest.dispatchedAt, now)} (${digest.dispatchedAt}), head at dispatch ${digest.dispatchHead ?? "unavailable"}`,
+    `${digest.slug} instance ${digest.runInstanceId}: dispatched ${ago(digest.dispatchedAt, now)} (${digest.dispatchedAt}), head at dispatch ${digest.dispatchHead ?? "unavailable"}; recovery owner ${digest.recoveryOwner}`,
     `Implementor ${digest.implementor.agent} in ${digest.implementor.paneId}: ${digest.implementor.status}; last herdr activity ${ago(digest.implementor.activityAt, now)}`,
   ];
   if (!digest.git.available) lines.push(`Git: ${digest.git.problem}`);

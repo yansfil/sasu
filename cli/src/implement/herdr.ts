@@ -640,6 +640,11 @@ const REJECTED_BEFORE_INPUT = new Set([
  * (measured 2026-09-18), which is reported as `guarded_prompt_unsupported`
  * so the mismatch between "guard offered" and "guard refused" is visible
  * instead of silently downgraded (D-07).
+ *
+ * The text is one argv element passed to spawnSync without a shell, so
+ * whatever state.json, git or herdr put into a wake line reaches the pane as
+ * literal keystrokes and never as a command. A refactor to a shell string
+ * would reintroduce that injection path.
  */
 export function promptAgent(
   input: { target: string; text: string; expectedInputGuard: string | null },

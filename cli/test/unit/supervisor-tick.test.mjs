@@ -23,7 +23,7 @@ function tick(index, herdr, now) {
 test("B8/B10: a settled implementor wakes exactly the recorded Observer once, with an identity note, and the index records the wake", () => {
   const index = indexFile();
   const run = makeSupervisedRun();
-  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", at: "2026-09-18T10:00:00.000Z" });
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
   const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "idle", activityAt: T0 }) } });
 
   const first = tick(index, herdr, T0 + 2 * MIN);
@@ -52,7 +52,7 @@ test("B8/B10: a settled implementor wakes exactly the recorded Observer once, wi
 test("B9: a replacement session in the Observer's pane receives nothing and status shows observer-gone", () => {
   const index = indexFile();
   const run = makeSupervisedRun();
-  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", at: "2026-09-18T10:00:00.000Z" });
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
   const herdr = fakeTickHerdr({ agents: { obs: observer({ sessionId: "a-new-session" }), impl: implementor({ status: "blocked" }) } });
   const outcome = tick(index, herdr, T0 + MIN);
   assert.deepEqual(outcome.runs.map((entry) => entry.action), ["deferred"]);
@@ -69,7 +69,7 @@ test("B4: several runs - two repositories with one slug, and one Observer watchi
   const a = makeSupervisedRun({ runInstanceId: "a" });
   const b = makeSupervisedRun({ runInstanceId: "b", observer: observerIdentity({ sessionId: "other-observer", paneId: "w9:p1", terminalId: "term_other" }), implementor: { paneId: "w9:p2", agent: "impl" } });
   const c = makeSupervisedRun({ runInstanceId: "c", implementor: { paneId: "w3:p1", agent: "impl-c" } });
-  for (const [run, id] of [[a, "a"], [b, "b"], [c, "c"]]) enrollRun(index, { statePath: run.statePath, runInstanceId: id, at: "2026-09-18T10:00:00.000Z" });
+  for (const [run, id] of [[a, "a"], [b, "b"], [c, "c"]]) enrollRun(index, { statePath: run.statePath, runInstanceId: id, recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
   const herdr = fakeTickHerdr({ agents: {
     obs: observer(),
     other: agent("w9:p1", { sessionId: "other-observer", terminalId: "term_other", status: "idle" }),
@@ -95,7 +95,7 @@ test("B12: one run's broken state.json, missing file or instance mismatch is its
   const mismatched = makeSupervisedRun({ runInstanceId: "recorded" });
   const vanished = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-gone-")), "agents", "runs", "gone", "state.json");
   fs.writeFileSync(broken.statePath, "{ not json");
-  for (const [statePath, id] of [[good.statePath, "good"], [broken.statePath, "broken"], [mismatched.statePath, "indexed-differently"], [vanished, "vanished"]]) enrollRun(index, { statePath, runInstanceId: id, at: "2026-09-18T10:00:00.000Z" });
+  for (const [statePath, id] of [[good.statePath, "good"], [broken.statePath, "broken"], [mismatched.statePath, "indexed-differently"], [vanished, "vanished"]]) enrollRun(index, { statePath, runInstanceId: id, recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
   const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
 
   const outcome = tick(index, herdr, T0 + MIN);
@@ -116,7 +116,7 @@ test("B12: one run's broken state.json, missing file or instance mismatch is its
 test("B15: a state.json that stays missing is removed after N consecutive ticks with its cause, and a file that comes back resets the count", () => {
   const index = indexFile();
   const run = makeSupervisedRun();
-  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", at: "2026-09-18T10:00:00.000Z" });
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
   const bytes = fs.readFileSync(run.statePath);
   const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor() } });
   fs.rmSync(run.statePath);
@@ -137,7 +137,7 @@ test("B15: a state.json that stays missing is removed after N consecutive ticks 
 test("B15: a retired run is woken once with reason terminal and then leaves the index", () => {
   const index = indexFile();
   const run = makeSupervisedRun();
-  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", at: "2026-09-18T10:00:00.000Z" });
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
   patchState(run.statePath, (state) => { state.status = "retired"; state.retirement = { retiredAt: "2026-09-18T10:05:00.000Z", retiredBySessionId: null }; });
   const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor() } });
   const outcome = tick(index, herdr, T0 + 6 * MIN);
@@ -153,7 +153,7 @@ test("B15: a retired run is woken once with reason terminal and then leaves the 
 test("B8: a working Observer is not interrupted; the same condition is delivered on the next tick it is idle", () => {
   const index = indexFile();
   const run = makeSupervisedRun();
-  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", at: "2026-09-18T10:00:00.000Z" });
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
   const herdr = fakeTickHerdr({ agents: { obs: observer({ status: "working" }), impl: implementor({ status: "blocked" }) } });
   const deferred = tick(index, herdr, T0 + MIN);
   assert.equal(deferred.runs[0].action, "deferred");
@@ -167,7 +167,7 @@ test("B8: a working Observer is not interrupted; the same condition is delivered
 test("B11: when herdr returns an input_guard for the Observer the wake goes guarded, and a guard the server then refuses is a routing failure, never a plain resend", () => {
   const index = indexFile();
   const run = makeSupervisedRun();
-  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", at: "2026-09-18T10:00:00.000Z" });
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
   const guardedHerdr = fakeTickHerdr({ guardSupport: true, agents: { obs: observer({ inputGuard: "guard-1" }), impl: implementor({ status: "blocked" }) } });
   const sent = tick(index, guardedHerdr, T0 + MIN);
   assert.equal(sent.runs[0].action, "sent");
@@ -176,7 +176,7 @@ test("B11: when herdr returns an input_guard for the Observer the wake goes guar
   assert.equal(readIndex(index).entries[0].lastObservation.guardedPrompt, true);
 
   const index2 = indexFile();
-  enrollRun(index2, { statePath: run.statePath, runInstanceId: "instance-1", at: "2026-09-18T10:00:00.000Z" });
+  enrollRun(index2, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
   const refusingHerdr = fakeTickHerdr({ guardSupport: false, agents: { obs: observer({ inputGuard: "guard-1" }), impl: implementor({ status: "blocked" }) } });
   const failed = tick(index2, refusingHerdr, T0 + MIN);
   assert.equal(failed.runs[0].action, "failed");
@@ -189,7 +189,7 @@ test("B11: when herdr returns an input_guard for the Observer the wake goes guar
 test("B12: when herdr is not answering, the tick judges from state.json, sends nothing, and says observation was impossible", () => {
   const index = indexFile();
   const run = makeSupervisedRun({ dispatchedAt: "2026-09-18T09:00:00.000Z" });
-  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", at: "2026-09-18T09:00:00.000Z" });
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T09:00:00.000Z" });
   const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor() } });
   herdr.state.down = true;
   const outcome = tick(index, herdr, Date.parse("2026-09-18T10:30:00.000Z"));
@@ -204,7 +204,7 @@ test("B12: when herdr is not answering, the tick judges from state.json, sends n
 test("D-09: a wake herdr rejected before input is retried next tick; one it may have delivered is not", () => {
   const index = indexFile();
   const run = makeSupervisedRun();
-  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", at: "2026-09-18T10:00:00.000Z" });
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
   const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
   herdr.herdr.promptAgent = () => ({ outcome: "rejected", path: "session-match", code: "agent_not_ready", detail: "not ready" });
   assert.equal(tick(index, herdr, T0 + MIN).runs[0].action, "failed");

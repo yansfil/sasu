@@ -177,6 +177,10 @@ export function runTick(options: TickOptions): TickResult {
   for (const [observerSessionId, items] of bundles) {
     const first = items[0]!;
     const observer = first.decision.observer;
+    // Unreachable under decide.ts, which defers every non-match before the
+    // item can be bundled; kept because sending to a non-match is the one
+    // failure this whole module exists to prevent, so the last line before
+    // the prompt re-states the invariant instead of trusting the caller.
     if (observer.kind !== "match") continue;
     const lines: WakeLine[] = items.map((item) => ({ slug: item.run.facts.slug, runInstanceId: item.run.supervision.runInstanceId, reasons: item.decision.due }));
     const outcome = options.herdr.promptAgent({ target: first.run.supervision.observer.paneId, text: renderWake(observerSessionId, lines), expectedInputGuard: observer.inputGuard });

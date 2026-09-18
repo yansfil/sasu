@@ -87,6 +87,25 @@ test("B1/B5/B8/B17: a dispatched run is indexed at once, a working implementor w
   assert.match(status.json.summary.join("\n"), /LaunchAgent: NOT installed/);
 });
 
+test("D-15/B18: status and the digest name the loop that owns Observer recovery, and the tick still wakes only the recorded Observer for a factory run", () => {
+  const run = dispatchedRun(["--recovery-owner", "task-factory"]);
+  assert.equal(state(run.root).supervision.recoveryOwner, "task-factory");
+  const status = sasu(run.home, ["supervisor", "status"], { env: run.base });
+  assert.equal(status.status, 0, status.text);
+  assert.equal(status.json.detail.runs[0].recoveryOwner, "task-factory");
+  assert.match(status.json.summary.join("\n"), /fixture .*: recovery owner task-factory;/);
+  run.herdr.setAgents({ [OBSERVER_PANE]: observerAgent(), [IMPL_PANE]: implAgent() });
+  const digest = sasu(run.root, ["implement", "status", "--slug", "fixture", "--digest"], { env: run.observerEnv });
+  assert.equal(digest.status, 0, digest.text);
+  assert.equal(digest.json.detail.digest.recoveryOwner, "task-factory");
+  assert.match(digest.json.summary.join("\n"), /; recovery owner task-factory$/m);
+  // The owner changes who replaces a vanished Observer, never who is woken.
+  run.herdr.setAgents({ [OBSERVER_PANE]: observerAgent({ agent_session: { value: "replacement-session" } }), [IMPL_PANE]: implAgent({ agent_status: "blocked" }) });
+  const tick = run.tick();
+  assert.equal(tick.json.detail.runs[0].action, "deferred");
+  assert.equal(run.wakes().length, 0, "a factory-owned run still sends nothing to a replacement session");
+});
+
 test("B9/B18: after the Observer's session is replaced no input reaches the pane, status says observer-gone, and an explicit handover resumes wakes to the new session", () => {
   const run = dispatchedRun();
   run.herdr.setAgents({ [OBSERVER_PANE]: observerAgent({ agent_session: { value: "replacement-session" } }), [IMPL_PANE]: implAgent({ agent_status: "blocked" }) });

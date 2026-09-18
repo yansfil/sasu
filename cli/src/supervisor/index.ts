@@ -24,10 +24,18 @@ export interface WakeRecord {
   code: string;
 }
 
+export type RecoveryOwner = "supervisor" | "task-factory";
+
 export interface IndexEntry {
   /** Absolute path of the run's state.json in its record tree. */
   statePath: string;
   runInstanceId: string;
+  /**
+   * Which control loop may replace a vanished Observer (D-15). The supervisor
+   * never replaces one either way; the field is here so status shows which
+   * loop a human should look at, not to change the tick's behavior.
+   */
+  recoveryOwner: RecoveryOwner;
   addedAt: string;
   /** Consecutive ticks the file was missing; reset to 0 when it is read. */
   missingTicks: number;
@@ -69,6 +77,7 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
     if (typeof record["statePath"] !== "string" || !path.isAbsolute(record["statePath"])) throw new Error(`supervisor index entry has no absolute statePath: ${file}`);
     if (typeof record["runInstanceId"] !== "string" || record["runInstanceId"] === "") throw new Error(`supervisor index entry ${record["statePath"]} has no runInstanceId: ${file}`);
     if (!Number.isInteger(record["missingTicks"]) || (record["missingTicks"] as number) < 0) throw new Error(`supervisor index entry ${record["statePath"]} has an invalid missingTicks: ${file}`);
+    if (record["recoveryOwner"] !== "supervisor" && record["recoveryOwner"] !== "task-factory") throw new Error(`supervisor index entry ${record["statePath"]} has no recoveryOwner: ${file}`);
   }
   return {
     schema: INDEX_SCHEMA,
@@ -121,9 +130,9 @@ export function updateIndex(file: string, mutate: (index: SupervisorIndex) => vo
 }
 
 /** Add or replace the entry for a state path; a re-dispatch of the same run gets its new instance id and a fresh slate. */
-export function enrollRun(file: string, entry: { statePath: string; runInstanceId: string; at: string }): SupervisorIndex {
+export function enrollRun(file: string, entry: { statePath: string; runInstanceId: string; recoveryOwner: RecoveryOwner; at: string }): SupervisorIndex {
   return updateIndex(file, (index) => {
     index.entries = index.entries.filter((existing) => existing.statePath !== entry.statePath);
-    index.entries.push({ statePath: entry.statePath, runInstanceId: entry.runInstanceId, addedAt: entry.at, missingTicks: 0, lastWake: null, lastFailure: null, lastObservation: null });
+    index.entries.push({ statePath: entry.statePath, runInstanceId: entry.runInstanceId, recoveryOwner: entry.recoveryOwner, addedAt: entry.at, missingTicks: 0, lastWake: null, lastFailure: null, lastObservation: null });
   });
 }

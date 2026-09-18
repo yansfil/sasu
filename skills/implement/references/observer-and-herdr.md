@@ -162,6 +162,8 @@ Each condition is answered once per episode; a working Observer is not interrupt
 Before every wake the tick compares `agent get` on the recorded Observer pane with the recorded session UUID and terminal.
 A different session in the same pane, with the same name and cwd, receives nothing: the run shows `observer-gone` in `sasu supervisor status` until a person hands it over with `sasu supervisor handover --slug <slug> --approval "<verbatim user words>"` from the new Observer's pane.
 A herdr server restart rotates terminal ids and reads the same way; the handover is the recovery there too.
+`sasu supervisor status` and `status --digest` name each run's recovery owner (`supervisor` or `task-factory`, set by `dispatch --recovery-owner`).
+The owner says which loop may replace a vanished Observer; the supervisor never replaces one and wakes only the recorded Observer either way.
 When herdr returns an `input_guard` for the Observer the wake is sent with `--expected-input-guard`, and a guard the server then refuses is a routing failure, never a plain resend.
 
 ## Handling A Wake

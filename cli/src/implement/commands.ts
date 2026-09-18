@@ -606,7 +606,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     }
     let enrolled: string | null = null;
     try {
-      enrollRun(indexPath(), { statePath, runInstanceId, at: supervision.dispatchedAt });
+      enrollRun(indexPath(), { statePath, runInstanceId, recoveryOwner, at: supervision.dispatchedAt });
     } catch (error) {
       enrolled = error instanceof Error ? error.message : String(error);
     }
@@ -753,7 +753,7 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
     recordDispatch(projectRoot, statePath, state, { ...reset.value, agent: reset.value.name, cwd: replacement.placement!.cwd }, issuer,
       `replacement implementor ${reset.value.name} started in ${reset.value.paneId} for escalation ${record.id}`, refreshed);
     if (refreshed !== null) {
-      try { enrollRun(indexPath(), { statePath, runInstanceId: refreshed.runInstanceId, at: refreshed.dispatchedAt }); }
+      try { enrollRun(indexPath(), { statePath, runInstanceId: refreshed.runInstanceId, recoveryOwner: refreshed.recoveryOwner, at: refreshed.dispatchedAt }); }
       catch (error) { enrollProblem = error instanceof Error ? error.message : String(error); }
     }
   }
