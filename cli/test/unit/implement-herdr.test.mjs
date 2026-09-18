@@ -77,7 +77,7 @@ test("an argv herdr rejects is reported as this adapter being stale, not as herd
   assert.match(capabilities.reason, /THIS ADAPTER is out of date, not herdr/);
   assert.match(capabilities.reason, /cli\/src\/implement\/herdr\.ts/, "the message must name the file to re-measure");
   assert.match(capabilities.reason, /herdr 9\.9\.9, protocol 42/, "it must name what is installed");
-  assert.match(capabilities.reason, /measured against herdr 0\.9\.0-preview\.2026-09-15 protocol 23/, "and what it was written against");
+  assert.match(capabilities.reason, /measured against herdr 0\.9\.1 protocol 22/, "and what it was written against");
   assert.doesNotMatch(capabilities.reason, /not answering/);
   assert.deepEqual(asked, ["agent list", "--version", "api schema"]);
 });
@@ -130,7 +130,7 @@ test("all three holes work when herdr answers", () => {
   const { run } = recorder();
   const spawned = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run });
   assert.equal(spawned.ok, true);
-  assert.deepEqual(spawned.value, { paneId: "w7Z:p1", workspaceId: "w7Z", tabId: "w7Z:t1", name: "impl", kind: "claude" });
+  assert.deepEqual(spawned.value, { paneId: "w7Z:p1", workspaceId: "w7Z", tabId: "w7Z:t1", name: "impl", kind: "claude", lineage: { parentPaneId: "w4G:p12", problem: null } });
   assert.equal(readPane({ name: "impl" }, { env: LIVE, run: ok("pane text") }).value, "pane text");
 });
 
@@ -185,10 +185,31 @@ test("a worktree run gets a workspace of its own and an in-place run gets a tab,
   const spawned = spawnImplementor({ name: "impl", placement: TAB, prompt: "p" }, { env: LIVE, run: tab.run });
   assert.equal(spawned.ok, true, spawned.problem);
   assert.deepEqual(tab.of("tab create"), ["tab", "create", "--workspace", "w4G", "--cwd", "/repo", "--label", "fixture", "--env", "SASU_HERDR_ROLE=implementor", "--no-focus"]);
-  assert.deepEqual(spawned.value, { paneId: "w4G:p13", workspaceId: "w4G", tabId: "w4G:t9", name: "impl", kind: "claude" });
+  assert.deepEqual(spawned.value, { paneId: "w4G:p13", workspaceId: "w4G", tabId: "w4G:t9", name: "impl", kind: "claude", lineage: { parentPaneId: "w4G:p12", problem: null } });
   assert.equal(tab.count("pane split"), 0);
   assert.equal(tab.count("workspace create"), 0);
   assert.deepEqual(tab.of("agent start").slice(5, 7), ["--pane", "w4G:p13"]);
+});
+
+// herdr's stable release has no lineage, and the fork's `agent new
+// --from-pane` cannot carry the marker. The parent is declared as a pane
+// token instead, which hide reads to draw the child beneath the Observer.
+test("a dispatch declares the dispatching pane as the new pane's parent, before the handoff", () => {
+  const { argv, run, of } = recorder();
+  const spawned = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run });
+  assert.deepEqual(of("pane report-metadata"), ["pane", "report-metadata", "w7Z:p1", "--source", "sasu", "--token", "parent_pane=w4G:p12"]);
+  const order = argv.map((args) => args.slice(0, 2).join(" "));
+  assert.ok(order.indexOf("agent start") < order.indexOf("pane report-metadata") && order.indexOf("pane report-metadata") < order.indexOf("agent prompt"));
+  assert.deepEqual(spawned.value.lineage, { parentPaneId: "w4G:p12", problem: null });
+
+  // A refused declaration is display-only: the agent is live and gets its
+  // handoff, and the result says the row will be a root.
+  const refused = recorder({ "pane report-metadata": { status: 1, stdout: "", stderr: "token rejected" } });
+  const outcome = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run: refused.run });
+  assert.equal(outcome.ok, true, outcome.problem);
+  assert.equal(refused.count("agent prompt"), 1);
+  assert.match(outcome.value.lineage.problem, /token rejected/);
+  assert.match(outcome.value.lineage.problem, /show as a root/);
 });
 
 // A split pane starts from the login environment: a sasu build or shim that
@@ -403,6 +424,7 @@ test("the argv this adapter sends matches the installed herdr's own contract", {
     [["tab", "close"], []],
     [["agent", "start"], ["--kind", "--pane"]],
     [["pane", "process-info"], ["--pane"]],
+    [["pane", "report-metadata"], ["--source", "--token"]],
     [["agent", "read"], ["--source", "--lines"]],
   ]) {
     const help = herdrHelp(args);

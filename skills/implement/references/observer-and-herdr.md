@@ -97,10 +97,12 @@ The kind defaults to the agent occupying the dispatching pane, so a Claude super
 The new pane's shell starts from the login environment, not the Observer's, so the dispatch always passes the Observer's own `PATH` to the new pane (a locally built `sasu` or a shim ahead of the login PATH stays visible to the Implementor) and forwards each `--env KEY=VALUE` on top of it; an explicit `--env PATH=...` replaces the inherited one, and `SASU_HERDR_ROLE` is refused because the marker is the dispatch's own to set.
 The new pane's shell takes a few seconds to print its first prompt, and herdr refuses `agent start` with `agent_pane_busy` until it has seen one; the adapter retries exactly that refusal once a second for up to 30 seconds and reports any other failure at once, so the wait is the harness's, never this skill's.
 
-Two costs are real and are not bugs to re-report:
+Lineage is declared, not recorded by herdr: after the agent starts, the dispatch writes the pane token `parent_pane=<dispatching pane id>` on the new pane (`herdr pane report-metadata --source sasu`), which hide reads to draw the Implementor beneath the Observer.
+herdr's stable release has no lineage of its own, and the fork's `agent new --from-pane` cannot carry the role marker, so the token is the one mechanism that works on both.
+The dispatch result says `parentLineage: reported`, or names the refusal, in which case the row shows as a root and nothing else is affected.
 
-- The dispatched Implementor does not appear under its supervisor in Herdr's agent tree.
-  herdr can inject the role marker (`workspace create --env`, `tab create --env`) or record parent lineage (`agent new --from-pane`) but not both in one call, and the marker wins because it is a correctness guard while lineage is an audit convenience.
+One cost is real and is not a bug to re-report:
+
 - Dirty-tree attribution is settled before dispatch, by the Observer.
   For `$please`, the Spec Owner runs `sasu implement intake` before the first gate; when it reports dirty judged paths it asks its returned question once, resolves `commit-first` by committing before `start`, and otherwise passes the selected `pre-existing|run-owned` value to `sasu implement start --dirty-attribution`.
   The packet's DIRTY ATTRIBUTION line records what was chosen so the Implementor never asks again.

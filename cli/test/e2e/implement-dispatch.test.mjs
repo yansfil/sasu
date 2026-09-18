@@ -88,6 +88,8 @@ test("a worktree run's implementor is opened in a workspace on that worktree, ne
   assert.equal(asked.some((argv) => argv[0] === "pane" && argv[1] === "split"), false, "the Observer's pane is never split");
   assert.deepEqual(asked.find((argv) => argv[1] === "start").slice(0, 7), ["agent", "start", "impl", "--kind", "claude", "--pane", "w7Z:p1"]);
   assert.deepEqual(asked.find((argv) => argv[1] === "prompt"), ["agent", "prompt", "impl", PACKET]);
+  assert.deepEqual(asked.find((argv) => argv[1] === "report-metadata"), ["pane", "report-metadata", "w7Z:p1", "--source", "sasu", "--token", "parent_pane=w4G:p12"], "the Observer's pane is declared as the parent, for hide's tree");
+  assert.equal(dispatched.json.detail.parentLineage, "reported");
 
   // The run is recorded as handed over: the pane, the release of ownership,
   // and a bookmark in the worktree so the implementor's bare commands resolve.
