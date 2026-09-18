@@ -1,0 +1,33 @@
+== M1-no-terminal-check | predicted: decide B9/D-06 terminal case
+ℹ pass 34 ℹ fail 1 
+   ✖ B9/D-06: a different session UUID or terminal in the Observer's pane is observer-gone and defers every wake (0.408458ms)
+   ✖ failing tests:
+   ✖ B9/D-06: a different session UUID or terminal in the Observer's pane is observer-gone and defers every wake (0.408458ms)
+== M2-rejected-answered | predicted: decide B8 rejected retry, tick D-09
+ℹ pass 33 ℹ fail 2 
+   ✖ B8: a rejected wake does not count as answered, so the next tick tries again (0.510167ms)
+   ✖ D-09: a wake herdr rejected before input is retried next tick; one it may have delivered is not (602.282875ms)
+   ✖ failing tests:
+   ✖ B8: a rejected wake does not count as answered, so the next tick tries again (0.510167ms)
+   ✖ D-09: a wake herdr rejected before input is retried next tick; one it may have delivered is not (602.282875ms)
+== M3-settled-immediate | predicted: decide B8 momentary idle, B5
+ℹ pass 34 ℹ fail 1 
+   ✖ B8: settled needs the idle state to be older than one tick interval, so a momentary idle between two ticks does not wake (0.492583ms)
+   ✖ failing tests:
+   ✖ B8: settled needs the idle state to be older than one tick interval, so a momentary idle between two ticks does not wake (0.492583ms)
+== M4-stall-with-settled | predicted: decide B6 or B8 assertions on reason list
+ℹ pass 35 ℹ fail 0 
+== M5-bundle-per-run | predicted: tick B4 bundling
+ℹ pass 31 ℹ fail 4 
+   ✖ B1/B5/B8/B17: a dispatched run is indexed at once, a working implementor wakes nobody, a settled one wakes the Observer exactly once, and status shows it (2171.796583ms)
+   ✖ B9/B18: after the Observer's session is replaced no input reaches the pane, status says observer-gone, and an explicit handover resumes wakes to the new session (2648.816709ms)
+   ✖ B8/B10: a settled implementor wakes exactly the recorded Observer once, with an identity note, and the index records the wake (902.451584ms)
+   ✖ B4: several runs - two repositories with one slug, and one Observer watching two runs - each wake reaches only its own Observer, bundled per Observer (2053.316541ms)
+   ✖ failing tests:
+   ✖ B1/B5/B8/B17: a dispatched run is indexed at once, a working implementor wakes nobody, a settled one wakes the Observer exactly once, and status shows it (2171.796583ms)
+   ✖ B9/B18: after the Observer's session is replaced no input reaches the pane, status says observer-gone, and an explicit handover resumes wakes to the new session (2648.816709ms)
+   ✖ B8/B10: a settled implementor wakes exactly the recorded Observer once, with an identity note, and the index records the wake (902.451584ms)
+   ✖ B4: several runs - two repositories with one slug, and one Observer watching two runs - each wake reaches only its own Observer, bundled per Observer (2053.316541ms)
+?? cli/src/supervisor/
+REBUILT_CLEAN
+== M4 follow-up: added B6/B8 suppression test; red under M4 (18 pass 1 fail), green on real code (19 pass)

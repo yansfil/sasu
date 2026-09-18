@@ -1,0 +1,10 @@
+Checked 2026-09-18T05:31:27Z after the full check order and the mutation pass.
+$ launchctl print gui/501/com.sasu.supervisor
+Bad request.
+Could not find service "com.sasu.supervisor" in domain for user gui: 501
+$ ls ~/Library/LaunchAgents | grep -i sasu
+(no match, exit 1)
+$ ls ~/.sasu/supervisor 2>&1
+ls: /Users/hoyeonlee/.sasu/supervisor: No such file or directory
+$ grep -c supervisor_stop ~/.claude/settings.json
+0
