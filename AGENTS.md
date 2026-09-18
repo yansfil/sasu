@@ -115,11 +115,15 @@ Ship validates the current deterministic PASS report, exact committed Git head, 
 The pull request carries review notes and reviewer-visible evidence.
 GitHub Actions and human review are the final delivery authority.
 
-### Hooks
+### Hooks And The Supervisor
 
-The installer registers the `challenge_trigger.mjs` routing hook and the advisory `commit_reminder.mjs` hook.
-Neither hook changes verification or completion state.
-Any hook the installer has owned stays listed in `HARNESS_HOOK_MARKERS` so later installs can retire it without touching foreign hooks.
+The installer registers the `challenge_trigger.mjs` routing hook, the advisory `commit_reminder.mjs` hook, and the `supervisor_stop.mjs` Stop hook.
+No hook changes verification or completion state; the Stop hook only confirms an Observer handover and always exits 0.
+Any hook the installer has owned stays listed in `HARNESS_HOOK_MARKERS` in `cli/lib/hooks.js` so later installs can retire it without touching foreign hooks.
+
+The installer also loads one user LaunchAgent (`com.sasu.supervisor`) that runs `sasu supervisor tick` every 30 seconds.
+The tick reads the index under `~/.sasu/supervisor/`, each watched `state.json`, and herdr, and wakes a run's recorded Observer; it never writes run state.
+Tests exercise it only under an isolated `HOME` with a fake `herdr` and `launchctl` on `PATH`; never bootstrap a label into the real launchd domain or address a live pane from a test.
 
 ### Concurrent Sessions
 
