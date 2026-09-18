@@ -1,0 +1,18 @@
+### Fix now
+None found.
+
+### Follow-up improvements
+- cli/src/supervisor/tick.ts:180 `if (observer.kind !== "match") continue;` inside the bundle-send loop is unreachable given decide.ts:150-154 (deferral is set whenever due.length>0 and observer isn't a match, and only non-deferred items are bundled). Harmless as a defensive guard, but if kept, a one-line comment noting it's belt-and-suspenders (not reachable in current decide.ts) would save a future reviewer the trace-through.
+- cli/src/supervisor/tick.ts:64-67 log rotation renames to `.log.1` and swallows any rename error silently (comment says "loses nothing but the rotation" — true, but a repeated failure would silently let the primary log grow past LOG_CAP_BYTES indefinitely since the existsSync/size check keeps re-firing the same failing rename). Low risk (rename basically never fails on a live filesystem) but worth a one-line note if it's ever observed to recur.
+- cli/src/supervisor/decide.ts:141 patrol `bucket` calculation assumes tick cadence is regular; if a tick is skipped for a long time (machine asleep), multiple buckets could elapse and only the current one is recorded, meaning a resumed run gets exactly one patrol wake despite having "missed" several bucket boundaries. That matches the level-triggered design intent (current state, not history) so this is a non-issue, just noting for the record in case someone expects catch-up wakes.
+
+### What was checked
+Full diff `git diff 46c9f85..00fd068` (51 files, ~3884/-794). Built cli (`npm --prefix cli run build`, clean) and ran the full supervisor test surface: `node --test cli/test/unit/supervisor-*.test.mjs cli/test/e2e/supervisor.test.mjs` — 50/50 pass, all assert caller-observable outcomes (wakes sent/deferred, index state, status digest, Stop hook exit/output).
+
+Read in full: cli/src/supervisor/tick.ts (core tick loop, bundling, CAS update, log rotation), decide.ts (pure decision function, all wake reasons: settled/blocked/escalate/stall/implementor-gone/terminal/patrol, episode/dedup logic), index.ts (CAS index read-modify-write, schema validation, removed-history cap), wake.ts (identity-only wake text, no judgment), facts.ts (single reader shared by tick and status --digest), stop-hook.ts + scripts/supervisor_stop.mjs (confirms Stop hook exits 0 on every path, never writes stdout, catches all errors, implementor-marker/non-Herdr/unknown-session all no-op), launchd.ts (plist rendering with XML escaping, install/uninstall convergence, kickstart), cli/lib/hooks.js (HARNESS_HOOK_MARKERS includes supervisor_stop.mjs, ensureHooks/removeHooks preserve foreign entries).
+
+Traced cli/src/implement/commands.ts dispatch() (lines ~536-635): SupervisionRecord construction, recordDispatch failure path (explicit "unsupervised and unowned" message, no silent swallow), enrollRun failure path (reports enrolled=null distinctly in both the human message and the JSON payload, gives the recovery command). Confirmed cli/src/implement/waiter.ts and its tests are fully deleted with no dangling references outside prose docs (skills/implement/SKILL.md, references/observer-and-herdr.md correctly describe it as retired).
+
+Not independently re-derived: the herdr.ts getAgent/promptAgent parsing internals (cli/test/unit/supervisor-herdr.test.mjs covers it and passed) and the live/real herdr integration test ("the installed herdr answers agent get..." — ran and passed, but I didn't inspect a live pane myself, consistent with my read-only/no-herdr-mutation scope).
+
+REVIEW_UNAVAILABLE: not applicable — review completed.
