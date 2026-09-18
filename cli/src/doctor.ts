@@ -9,6 +9,7 @@ import { RUNTIME_IGNORE_ROOTS, ignoreState } from "./support/ensure-setup";
 import { loadState } from "./implement/store";
 import { IMPLEMENT_SCHEMA, retiredImplementSupportCommit } from "./implement/types";
 import { currentSessionId } from "./runs/session";
+import { supervisorStatusView } from "./supervisor/commands";
 
 const skillContract: {
   SKILL_NAMES: readonly string[];
@@ -18,7 +19,7 @@ const skillContract: {
 } = require("../lib/skill-contract.js");
 
 export interface DoctorSection {
-  section: "judge" | "verify" | "namespace" | "runs" | "skills" | "contract";
+  section: "judge" | "verify" | "namespace" | "runs" | "supervisor" | "skills" | "contract";
   ok: boolean;
   lines: string[];
 }
@@ -231,6 +232,13 @@ export function runDoctor(projectRoot: string, options: DoctorOptions = {}): { o
   sections.push(runIntegritySection(projectRoot));
 
   const home = options.home ?? os.homedir();
+  // The same view `sasu supervisor status` prints: LaunchAgent presence,
+  // last tick, per-run last wake and failure, guarded prompt support (B17).
+  // Under an isolated HOME the launchctl answer is the real launchd's for
+  // that label, which is the honest reading: the plist in that HOME is not
+  // what launchd loaded.
+  const supervisor = supervisorStatusView({ ...process.env, HOME: home });
+  sections.push({ section: "supervisor", ok: supervisor.ok, lines: supervisor.lines });
   const harnessRoot = options.harnessRoot ?? path.resolve(__dirname, "../..");
   sections.push(skillFreshnessSection(home, harnessRoot));
 

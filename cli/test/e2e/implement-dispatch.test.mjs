@@ -6,39 +6,12 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { CLI, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
+import { CLI, git, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
+import { installFakeHerdr } from "../helpers/fake-herdr.mjs";
 
 const OBSERVER = "observer-session";
 const IMPLEMENTOR = "implementor-session";
 const PACKET = "ROLE: Implementor.\nPIPELINE: implement\nSOURCE: fixture\nRETURN CONTRACT: status";
-
-/**
- * A herdr that answers the calls the dispatch makes with the shapes herdr
- * 0.9.0-preview answers them (measured 2026-09-18), and writes each argv to a
- * log so the test can assert what was asked. `HERDR_FAKE_AGENTS` names the
- * agents `agent list` reports beyond the dispatching pane.
- */
-function installFakeHerdr(root) {
-  const bin = path.join(root, "fake-bin");
-  fs.mkdirSync(bin, { recursive: true });
-  const log = path.join(root, "herdr-argv.log");
-  fs.writeFileSync(path.join(bin, "herdr"), `#!/usr/bin/env node
-const fs = require("node:fs");
-const argv = process.argv.slice(2);
-fs.appendFileSync(process.env.HERDR_FAKE_LOG, JSON.stringify(argv) + "\\n");
-const key = argv.slice(0, 2).join(" ");
-const answer = (value) => { process.stdout.write(JSON.stringify(value)); process.exit(0); };
-if (argv[0] === "--version") { process.stdout.write("herdr fake\\n"); process.exit(0); }
-if (key === "agent list") {
-  const extra = (process.env.HERDR_FAKE_AGENTS ?? "").split(",").filter(Boolean).map((name) => ({ name, agent: "claude", agent_status: "working", pane_id: "w7Z:p1" }));
-  answer({ result: { type: "agent_list", agents: [{ agent: "claude", agent_status: "working", pane_id: "w4G:p12" }, ...extra] } });
-}
-if (key === "workspace create") answer({ result: { type: "workspace_created", workspace: { workspace_id: "w7Z" }, tab: { tab_id: "w7Z:t1" }, root_pane: { pane_id: "w7Z:p1" } } });
-if (key === "tab create") answer({ result: { type: "tab_created", tab: { tab_id: "w4G:t9" }, root_pane: { pane_id: "w4G:p13" } } });
-answer({ result: {} });
-`, { mode: 0o755 });
-  return { PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`, HERDR_FAKE_LOG: log, log };
-}
 
 function sasu(root, args, { env = {}, input } = {}) {
   const result = spawnSync(process.execPath, [CLI, ...args, "--json"], { cwd: root, encoding: "utf8", env: isolatedEnv(env), input, timeout: 30_000, maxBuffer: 8 * 1024 * 1024 });
@@ -54,7 +27,10 @@ const POINTER = path.join("agents", "runs", ".prd-implement-active.json");
 
 function herdrEnv(root, extra = {}) {
   const fake = installFakeHerdr(root);
-  return { env: { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12", HERDR_WORKSPACE_ID: "w4G", CLAUDE_SESSION_ID: OBSERVER, PATH: fake.PATH, HERDR_FAKE_LOG: fake.HERDR_FAKE_LOG, ...extra }, log: fake.log };
+  // The supervisor index lives under HOME; every test gets its own.
+  const home = path.join(root, "home");
+  fs.mkdirSync(home, { recursive: true });
+  return { env: { HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12", HERDR_WORKSPACE_ID: "w4G", CLAUDE_SESSION_ID: OBSERVER, HOME: home, ...fake.env, ...extra }, log: fake.log, fake, home };
 }
 
 const dispatch = (root, env, extra = []) => sasu(root, ["implement", "dispatch", "--name", "impl", "--prd", PRD_PATH, ...extra], { env, input: PACKET });
@@ -65,7 +41,7 @@ const dispatch = (root, env, extra = []) => sasu(root, ["implement", "dispatch",
 test("a worktree run's implementor is opened in a workspace on that worktree, never a split of the Observer's pane", (t) => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: true } }));
-  const { env, log } = herdrEnv(root);
+  const { env, log, fake, home } = herdrEnv(root);
 
   const started = sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env });
   assert.equal(started.status, 0, started.text);
@@ -84,7 +60,9 @@ test("a worktree run's implementor is opened in a workspace on that worktree, ne
 
   const asked = argvLog(log);
   const created = asked.find((argv) => argv[0] === "workspace" && argv[1] === "create");
-  assert.deepEqual(created, ["workspace", "create", "--cwd", worktree, "--label", "fixture", "--env", "SASU_HERDR_ROLE=implementor", "--env", `PATH=${env.PATH}`, "--no-focus"]);
+  const runInstanceId = dispatched.json.detail.runInstanceId;
+  assert.match(runInstanceId, /^[0-9a-f-]{36}$/, "dispatch mints a random run instance id");
+  assert.deepEqual(created, ["workspace", "create", "--cwd", worktree, "--label", "fixture", "--env", "SASU_HERDR_ROLE=implementor", "--env", `PATH=${env.PATH}`, "--env", `SASU_RUN_INSTANCE_ID=${runInstanceId}`, "--no-focus"], "the pane carries the marker and the run instance it was opened for");
   assert.equal(asked.some((argv) => argv[0] === "pane" && argv[1] === "split"), false, "the Observer's pane is never split");
   assert.deepEqual(asked.find((argv) => argv[1] === "start").slice(0, 7), ["agent", "start", "impl", "--kind", "claude", "--pane", "w7Z:p1"]);
   assert.deepEqual(asked.find((argv) => argv[1] === "prompt"), ["agent", "prompt", "impl", PACKET]);
@@ -101,12 +79,22 @@ test("a worktree run's implementor is opened in a workspace on that worktree, ne
   );
   assert.equal(recorded.ownerSessionId, null, "released so the implementor's first write claims it");
   assert.equal(recorded.events.at(-1).kind, "dispatch");
+  // B1: the Observer's identity, the run instance and the implementor pane
+  // are in state.json, and the path is in the supervisor index before the
+  // Observer's first Stop.
+  assert.deepEqual(
+    { runInstanceId: recorded.supervision.runInstanceId, observer: { sessionId: recorded.supervision.observer.sessionId, terminalId: recorded.supervision.observer.terminalId, paneId: recorded.supervision.observer.paneId, runtime: recorded.supervision.observer.runtime }, implementor: recorded.supervision.implementor, patrolIntervalMs: recorded.supervision.patrolIntervalMs, recoveryOwner: recorded.supervision.recoveryOwner },
+    { runInstanceId, observer: { sessionId: OBSERVER, terminalId: "term_observer", paneId: "w4G:p12", runtime: "claude" }, implementor: { paneId: "w7Z:p1", agent: "impl" }, patrolIntervalMs: 15 * 60 * 1000, recoveryOwner: "supervisor" },
+  );
+  assert.equal(recorded.supervision.dispatchHead, git(root, ["rev-parse", "HEAD"]), "the digest measures from the head at dispatch");
+  const index = JSON.parse(fs.readFileSync(path.join(home, ".sasu", "supervisor", "index.json"), "utf8"));
+  assert.deepEqual(index.entries.map((entry) => [entry.statePath, entry.runInstanceId]), [[path.join(root, STATE_PATH), runInstanceId]]);
   const bookmark = JSON.parse(fs.readFileSync(path.join(worktree, POINTER), "utf8"));
   assert.equal(bookmark.projectRoot, root, "the bookmark names the record tree");
 
   // From the worktree, with no slug and a different session, the marked
   // implementor resolves the run and claims it on its first write.
-  const implementorEnv = { CLAUDE_SESSION_ID: IMPLEMENTOR, SASU_HERDR_ROLE: "implementor", HERDR_ENV: "1", HERDR_PANE_ID: "w7Z:p1" };
+  const implementorEnv = { CLAUDE_SESSION_ID: IMPLEMENTOR, SASU_HERDR_ROLE: "implementor", HERDR_ENV: "1", HERDR_PANE_ID: "w7Z:p1", SASU_RUN_INSTANCE_ID: runInstanceId, HOME: home };
   // Evidence is registered against the record tree, as every artifact is.
   fs.mkdirSync(path.join(root, "agents", "observations"), { recursive: true });
   fs.writeFileSync(path.join(root, "agents", "observations", "runtime.log"), "observed\n");
@@ -117,6 +105,12 @@ test("a worktree run's implementor is opened in a workspace on that worktree, ne
   assert.match(bystander.text, /was dispatched to implementor impl \(w7Z:p1\) and is its to claim/);
   assert.equal(state(root).ownerSessionId, null, "a bystander's refused write claims nothing");
 
+  // D-04: a marked pane opened for another dispatch cannot claim this run.
+  const wrongInstance = sasu(worktree, artifactArgs, { env: { ...implementorEnv, SASU_RUN_INSTANCE_ID: "00000000-0000-4000-8000-000000000000" } });
+  assert.notEqual(wrongInstance.status, 0);
+  assert.match(wrongInstance.text, /is not this pane's run/);
+  assert.equal(state(root).ownerSessionId, null);
+
   const claimed = sasu(worktree, artifactArgs, { env: implementorEnv });
   assert.equal(claimed.status, 0, claimed.text);
   assert.equal(state(root).ownerSessionId, IMPLEMENTOR);
@@ -124,16 +118,45 @@ test("a worktree run's implementor is opened in a workspace on that worktree, ne
 
   // One implementor per run: a second dispatch is refused while the first is
   // listed, and allowed once herdr no longer lists it.
-  const stillAlive = dispatch(root, { ...env, HERDR_FAKE_AGENTS: "impl" }, ["--adopt", "user said: take it back"]);
+  fake.setAgents({ "w7Z:p1": { name: "impl", agent: "claude", agent_status: "working", pane_id: "w7Z:p1", terminal_id: "term_impl", agent_session: { value: IMPLEMENTOR }, tokens: { activity: "1000" }, state_change_seq: 1 } });
+  const stillAlive = dispatch(root, env, ["--adopt", "user said: take it back"]);
   assert.notEqual(stillAlive.status, 0);
   assert.match(stillAlive.text, /impl is still running in w7Z:p1/);
   assert.equal(argvLog(log).filter((argv) => argv[1] === "create").length, 1, "nothing was created for the refused dispatch");
 
+  fake.setAgents({});
   const replaced = sasu(root, ["implement", "dispatch", "--name", "impl-2", "--prd", PRD_PATH, "--adopt", "user said: take it back"], { env, input: PACKET });
   assert.equal(replaced.status, 0, replaced.text);
   assert.equal(state(root).dispatches.length, 2);
   assert.equal(state(root).dispatches.at(-1).agent, "impl-2");
   assert.equal(state(root).ownerSessionId, null);
+  const reindexed = JSON.parse(fs.readFileSync(path.join(home, ".sasu", "supervisor", "index.json"), "utf8"));
+  assert.equal(reindexed.entries.length, 1, "a re-dispatch replaces the entry rather than adding one");
+  assert.equal(reindexed.entries[0].runInstanceId, state(root).supervision.runInstanceId);
+  assert.notEqual(reindexed.entries[0].runInstanceId, runInstanceId, "the replacement is a new instance");
+});
+
+test("dispatch refuses when the Observer's identity cannot be read, before any pane exists (B2)", () => {
+  const root = fs.realpathSync(makeProject());
+  const { env, log, fake } = herdrEnv(root);
+  const started = sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env });
+  assert.equal(started.status, 0, started.text);
+  // The dispatching pane holds an agent herdr cannot name a session for.
+  fake.setAgents({ "w4G:p12": { agent: "claude", agent_status: "working", pane_id: "w4G:p12", tokens: { activity: "1000" } } });
+  const refused = dispatch(root, env);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.text, /the Observer cannot be recorded/);
+  assert.match(refused.text, /no session UUID or terminal id/);
+  assert.equal(argvLog(log).some((argv) => argv[1] === "create"), false, "no pane was created for an unrecordable Observer");
+  assert.equal(state(root).supervision ?? null, null);
+
+  const badPatrol = dispatch(root, env, ["--patrol", "0"]);
+  assert.notEqual(badPatrol.status, 0);
+  assert.match(badPatrol.text, /--patrol must be a whole number of minutes/);
+  const badOwner = dispatch(root, env, ["--recovery-owner", "someone"]);
+  assert.match(badOwner.text, /--recovery-owner must be supervisor or task-factory/);
+  const smuggled = dispatch(root, env, ["--env", "SASU_RUN_INSTANCE_ID=x"]);
+  assert.match(smuggled.text, /minted by the dispatch/);
 });
 
 test("an in-place run's implementor is opened as a tab in the Observer's workspace", () => {

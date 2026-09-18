@@ -166,26 +166,6 @@ test("AC35: the implementor may not summon its own replacement", () => {
   assert.match(refused.json.message, /implementor may not issue .*escalate/);
 });
 
-// --- the liveness probe reaches the adapter ---------------------------------
-
-test("await names which liveness probe it used, and refuses two answers to one question", () => {
-  const root = makeProject();
-  const both = run(root, ["implement", "await", "--pid", String(process.pid), "--agent", "impl-1"]);
-  assert.notEqual(both.status, 0);
-  assert.match(both.json.message, /two answers to the same question/);
-
-  // Give the waiter an event to return on, or it would sit until the stall
-  // bound - correct behaviour, but not what this test is about.
-  registerEvidence(root);
-
-  // Without herdr the adapter's alive hole is shut, so the waiter says the
-  // probe was unavailable rather than assuming a live implementor.
-  const woke = run(root, ["implement", "await", "--agent", "impl-1", "--since", "0"]);
-  assert.equal(woke.status, 0, woke.stderr + woke.stdout);
-  assert.match(woke.json.detail.livenessProbe, /^unavailable: /);
-  assert.match(woke.json.detail.livenessProbe, /not running under herdr/);
-});
-
 // --- AC41/AC43: what the record says after the solver path is spent ---------
 
 test("AC41: once the bound is spent, status names the run's state and the move that is left", () => {

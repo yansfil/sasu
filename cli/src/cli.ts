@@ -31,6 +31,7 @@ import { runPrinciplesCommand } from "./principles/commands";
 import { runRulesCommand, runSetupCommand } from "./support/commands";
 import { ensureSetup } from "./support/ensure-setup";
 import { currentHerdrRole, HERDR_ROLE_ENV_KEY } from "./runs/session";
+import { runSupervisorCommand } from "./supervisor/commands";
 
 const USAGE = `sasu - harness CLI: document gates, implementation verification, doctor
 
@@ -47,13 +48,14 @@ Usage:
   sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--dirty-attribution <pre-existing|run-owned|JSON-path-map>] [--json]
   sasu implement amend    --issuer human --reason "<why>" --approval "<verbatim human approval>" [--exclude-suite "<S1,...>"] [--json]
     (archives and re-seals the edited PRD, refreshes metadata, and invalidates the current verification report.)
-  sasu implement dispatch --name <unique-agent-name> --prd <path> [--kind <agent>] [--model <model>] [--effort <level>] [--env KEY=VALUE ...] [--json]
-    (starts exactly one marked implementor beside this pane with the handoff packet on stdin; recursive dispatch is refused.)
+  sasu implement dispatch --name <unique-agent-name> --prd <path> [--kind <agent>] [--model <model>] [--effort <level>] [--env KEY=VALUE ...] [--patrol <minutes>] [--recovery-owner <supervisor|task-factory>] [--json]
+    (starts exactly one marked implementor in its own pane with the handoff packet on stdin, records this pane as the run's Observer,
+     and enrolls the run with the supervisor tick; recursive dispatch is refused.)
   sasu implement escalate --reason "<what the implementor is stuck on>" [--target <finding-or-issue-ref>] [--agent <herdr-agent>] [--json]
     (bounded read-only diagnosis and context recovery; unavailable while a verify execution lease is live.)
-  sasu implement await    [--since <event-id>] [--pid <implementor-pid> | --agent <herdr-agent>] [--notify-after <epoch-ms>] [--json]
   sasu implement artifact (--kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<observation>" | --manifest <json-file>) [--source "<collector and method>"] [--collected-at <ISO-time>] [--target "<observed target>"] [--environment "<environment>"] [--refs "<B1,B2,...>"] [--json]
-  sasu implement status   [--slug <topic> | --state <path>] [--json]
+  sasu implement status   [--slug <topic> | --state <path>] [--digest] [--json]
+    (--digest prints deterministic facts since dispatch for the run's recorded Observer session; other sessions are refused.)
   sasu implement verify   [--slug <topic> | --state <path>] [--json]
     (executes the sealed required suite, validates current source and evidence, and writes a fresh verification-report.json and verification-report.md.
      Native Fidelity, Code, and optional Security subagents run visibly through the workflow skill and never change this deterministic result.)
@@ -72,6 +74,11 @@ Usage:
   sasu interview checkpoint --slug <topic> --normalized <pending|"Q1,Q2"> [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
   sasu interview coherence  --slug <topic> [--min-decisions <n>] [--json]
   sasu interview status     --slug <topic> [--json]
+  sasu supervisor tick      [--json]   (one level-triggered pass over every indexed run; launchd runs it every 30 s)
+  sasu supervisor status    [--json]   (LaunchAgent, last tick, per-run last wake and failure, guarded prompt support)
+  sasu supervisor install   [--json]   (write and load the user LaunchAgent for this build; converges on repeat)
+  sasu supervisor uninstall [--json]   (unload and remove the LaunchAgent and the Sasu Stop hook entries only)
+  sasu supervisor handover  --slug <topic> --approval "<verbatim user approval>" [--json]   (record this pane's session as the run's Observer)
   sasu doctor [--json]
 
 Interview commands own the qa-log's mechanical bookkeeping (transcript source
@@ -390,6 +397,21 @@ async function main(): Promise<void> {
       }
     }
     exit(report.ok ? 0 : 1);
+  }
+
+  // The supervisor runs under launchd in the user's home, outside any
+  // project: no setup provisioning, no project root beyond what --slug or
+  // --state resolve from the current directory.
+  if (command === "supervisor") {
+    const supervisorResult = await runSupervisorCommand(projectRoot, args);
+    if (asJson) {
+      process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...supervisorResult }, null, 2)}\n`);
+    } else {
+      process.stdout.write(`[${supervisorResult.action}] ${supervisorResult.ok ? "ok" : "FAIL"} - ${supervisorResult.message}\n`);
+      if (supervisorResult.summary !== undefined) process.stdout.write(`${supervisorResult.summary.join("\n")}\n`);
+      else if (supervisorResult.detail !== undefined && !supervisorResult.ok) process.stdout.write(`${JSON.stringify(supervisorResult.detail, null, 2)}\n`);
+    }
+    exit(supervisorResult.exitCode);
   }
 
   if (command === "principles") {

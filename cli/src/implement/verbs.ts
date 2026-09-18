@@ -76,8 +76,8 @@ export const ISSUED_COMMANDS = Object.keys(COMMAND_AUTHORITY) as IssuedCommand[]
  * Subcommands that are deliberately ungated, and why.
  *
  * The gate is fail-open on a command it does not know, which is right for
- * these - anyone may look at a run, and `start`/`await` are not
- * state changes an issuer label means anything about. It is wrong for a
+ * these - anyone may look at a run, and `start` is not a
+ * state change an issuer label means anything about. It is wrong for a
  * command someone forgets to add to the table, so the two lists are compared
  * against the dispatcher by test (implement-authority) rather than trusted to
  * stay in step. Fail-closed instead would mean listing every read-only
@@ -88,7 +88,7 @@ export const ISSUED_COMMANDS = Object.keys(COMMAND_AUTHORITY) as IssuedCommand[]
 // Its guard is not a declaration anyway - dispatchImplementor refuses a pane
 // already marked SASU_HERDR_ROLE=implementor, which is structural and cannot
 // be typed around the way `--issuer` can.
-export const UNGATED_COMMANDS = ["intake", "start", "status", "await", "dispatch"] as const;
+export const UNGATED_COMMANDS = ["intake", "start", "status", "dispatch"] as const;
 
 export function isIssuedCommand(value: string): value is IssuedCommand {
   return (ISSUED_COMMANDS as string[]).includes(value);
