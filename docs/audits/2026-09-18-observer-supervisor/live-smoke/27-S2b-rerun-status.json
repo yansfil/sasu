@@ -1,0 +1,67 @@
+{
+  "contractVersion": "0.11.0",
+  "ok": true,
+  "action": "supervisor:status",
+  "exitCode": 0,
+  "message": "supervisor needs attention",
+  "detail": {
+    "launchAgent": {
+      "plistPath": "/private/tmp/claude-501/-Users-hoyeonlee-projects-sasu-worktrees-sasu-observer-supervisor/e7dc66b2-b5c2-44e8-b2d5-199ff3a0bd78/scratchpad/live-smoke/home/Library/LaunchAgents/com.sasu.supervisor.plist",
+      "installed": false,
+      "loaded": false,
+      "detail": "Bad request.\nCould not find service \"com.sasu.supervisor\" in domain for user gui: 501"
+    },
+    "lastTickAt": "2026-09-18T06:35:53.544Z",
+    "lastHerdr": {
+      "available": true,
+      "detail": null
+    },
+    "guardedPrompt": {
+      "supported": false,
+      "detail": null
+    },
+    "indexPath": "/private/tmp/claude-501/-Users-hoyeonlee-projects-sasu-worktrees-sasu-observer-supervisor/e7dc66b2-b5c2-44e8-b2d5-199ff3a0bd78/scratchpad/live-smoke/home/.sasu/supervisor/index.json",
+    "indexProblem": null,
+    "runs": [
+      {
+        "slug": "smoke",
+        "statePath": "/private/tmp/claude-501/-Users-hoyeonlee-projects-sasu-worktrees-sasu-observer-supervisor/e7dc66b2-b5c2-44e8-b2d5-199ff3a0bd78/scratchpad/live-smoke/proj/agents/runs/smoke/state.json",
+        "runInstanceId": "8460154b-0417-4461-9fa8-32fbc4c54cb2",
+        "recoveryOwner": "supervisor",
+        "addedAt": "2026-09-18T06:28:11.675Z",
+        "missingTicks": 0,
+        "lastWake": {
+          "at": "2026-09-18T06:30:44.643Z",
+          "reasons": [
+            "settled"
+          ],
+          "episode": "settled:139",
+          "outcome": "accepted",
+          "path": "session-match",
+          "code": "submitted"
+        },
+        "lastFailure": {
+          "at": "2026-09-18T06:35:53.544Z",
+          "detail": "pane w8J:p1 now holds session 9ad8d598-b5b4-4eb8-a067-69f1e2e6dba5, not the recorded Observer 47b6846e-7ad3-4139-9e3b-58a5378c0647; no input is sent to the replacement; wakes stay withheld until a person runs `sasu supervisor handover --slug <slug> --approval \"<words>\"` from the pane that should observe"
+        },
+        "lastObservation": {
+          "at": "2026-09-18T06:35:53.544Z",
+          "observer": "observer-gone: pane w8J:p1 now holds session 9ad8d598-b5b4-4eb8-a067-69f1e2e6dba5, not the recorded Observer 47b6846e-7ad3-4139-9e3b-58a5378c0647; no input is sent to the replacement; wakes stay withheld until a person runs `sasu supervisor handover --slug <slug> --approval \"<words>\"` from the pane that should observe",
+          "implementor": "present (done)",
+          "guardedPrompt": false
+        },
+        "wakePath": "session-match",
+        "stale": true
+      }
+    ],
+    "removed": [],
+    "tickLog": "/private/tmp/claude-501/-Users-hoyeonlee-projects-sasu-worktrees-sasu-observer-supervisor/e7dc66b2-b5c2-44e8-b2d5-199ff3a0bd78/scratchpad/live-smoke/home/.sasu/supervisor/tick.log"
+  },
+  "summary": [
+    "LaunchAgent: NOT installed at /private/tmp/claude-501/-Users-hoyeonlee-projects-sasu-worktrees-sasu-observer-supervisor/e7dc66b2-b5c2-44e8-b2d5-199ff3a0bd78/scratchpad/live-smoke/home/Library/LaunchAgents/com.sasu.supervisor.plist; NOT loaded (Bad request.\nCould not find service \"com.sasu.supervisor\" in domain for user gui: 501)",
+    "Last tick: 2026-09-18T06:35:53.544Z; herdr available",
+    "Guarded prompt: not offered by the installed herdr (session-match path in use)",
+    "Runs: 1",
+    "  smoke 8460154b-0417-4461-9fa8-32fbc4c54cb2 [stale]: recovery owner supervisor; observer observer-gone: pane w8J:p1 now holds session 9ad8d598-b5b4-4eb8-a067-69f1e2e6dba5, not the recorded Observer 47b6846e-7ad3-4139-9e3b-58a5378c0647; no input is sent to the replacement; wakes stay withheld until a person runs `sasu supervisor handover --slug <slug> --approval \"<words>\"` from the pane that should observe; implementor present (done); last wake settled at 2026-09-18T06:30:44.643Z accepted via session-match; last failure 2026-09-18T06:35:53.544Z pane w8J:p1 now holds session 9ad8d598-b5b4-4eb8-a067-69f1e2e6dba5, not the recorded Observer 47b6846e-7ad3-4139-9e3b-58a5378c0647; no input is sent to the replacement; wakes stay withheld until a person runs `sasu supervisor handover --slug <slug> --approval \"<words>\"` from the pane that should observe"
+  ]
+}

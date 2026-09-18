@@ -1,0 +1,36 @@
+{
+  "contractVersion": "0.11.0",
+  "ok": true,
+  "action": "dispatch",
+  "exitCode": 0,
+  "message": "implementor smoke-impl (claude) started in w8J:p2, a new tab of workspace w8J at /private/tmp/claude-501/-Users-hoyeonlee-projects-sasu-worktrees-sasu-observer-supervisor/e7dc66b2-b5c2-44e8-b2d5-199ff3a0bd78/scratchpad/live-smoke/proj, from agents/prd/smoke/prd.md; supervised as instance 8460154b-0417-4461-9fa8-32fbc4c54cb2 (patrol every 15 min, recovery owner supervisor)",
+  "detail": {
+    "paneId": "w8J:p2",
+    "workspaceId": "w8J",
+    "tabId": "w8J:t2",
+    "cwd": "/private/tmp/claude-501/-Users-hoyeonlee-projects-sasu-worktrees-sasu-observer-supervisor/e7dc66b2-b5c2-44e8-b2d5-199ff3a0bd78/scratchpad/live-smoke/proj",
+    "agent": "smoke-impl",
+    "kind": "claude",
+    "prd": "agents/prd/smoke/prd.md",
+    "parentLineage": "reported",
+    "dispatchId": 1,
+    "slug": "smoke",
+    "runInstanceId": "8460154b-0417-4461-9fa8-32fbc4c54cb2",
+    "observer": {
+      "runtime": "claude",
+      "sessionId": "47b6846e-7ad3-4139-9e3b-58a5378c0647",
+      "terminalId": "term_65bbbf7daa6782a",
+      "paneId": "w8J:p1",
+      "hostScope": "/Users/hoyeonlee/.config/herdr/herdr.sock",
+      "recordedAt": "2026-09-18T06:28:05.999Z"
+    },
+    "patrolIntervalMs": 900000,
+    "recoveryOwner": "supervisor",
+    "enrolled": true,
+    "enrollProblem": null
+  },
+  "summary": [
+    "The supervisor tick wakes this session when the implementor settles, blocks, escalates, stalls, disappears or finishes, and on patrol; nothing else needs arming.",
+    "On a wake, read `sasu implement status --slug smoke --digest` and `herdr agent read smoke-impl --source recent-unwrapped --lines 120` for diagnosis only."
+  ]
+}
