@@ -411,12 +411,17 @@ const herdrHelp = (args) => {
 
 const binaryProbe = spawnSync("herdr", ["--version"], { encoding: "utf8", timeout: 15_000 });
 const noHerdr = binaryProbe.error?.code === "ENOENT";
+// The `--help` contract needs only the binary. The probes below it need a
+// reachable server: under `sasu implement verify` the suite runs with a
+// scrubbed HOME and no HERDR_SOCKET_PATH, so herdr derives a socket path
+// under the deep suite-runtime HOME and fails on sun_path before it can
+// answer (measured 2026-09-18, run sasu-observer-supervisor). That is the
+// "no live desktop" case, not a contract change, so those probes skip with
+// the reason instead of failing the sealed suite.
+const serverProbe = noHerdr ? null : spawnSync("herdr", ["agent", "list"], { encoding: "utf8", timeout: 15_000 });
+const noServer = noHerdr ? "herdr is not installed" : serverProbe.status !== 0 ? `herdr server not reachable: ${(serverProbe.stderr || serverProbe.stdout).trim().slice(0, 160)}` : false;
 
 test("the argv this adapter sends matches the installed herdr's own contract", { skip: noHerdr ? "herdr is not installed" : false }, () => {
-  const listing = spawnSync("herdr", ["agent", "list"], { encoding: "utf8", timeout: 15_000 });
-  assert.equal(listing.status, 0, "the capability probe's argv must succeed against the installed herdr");
-  assert.doesNotThrow(() => JSON.parse(listing.stdout), "`agent list` is expected to print JSON with no --json flag");
-
   for (const [args, flags] of [
     [["workspace", "create"], ["--cwd", "--label", "--env", "--no-focus"]],
     [["tab", "create"], ["--workspace", "--cwd", "--label", "--env", "--no-focus"]],
@@ -433,6 +438,11 @@ test("the argv this adapter sends matches the installed herdr's own contract", {
       assert.ok(help.includes(flag), `herdr ${args.join(" ")} no longer accepts ${flag}; this adapter still sends it`);
     }
   }
+});
+
+test("the installed herdr answers `agent list` with JSON and no --json flag", { skip: noServer }, () => {
+  assert.equal(serverProbe.status, 0, "the capability probe's argv must succeed against the installed herdr");
+  assert.doesNotThrow(() => JSON.parse(serverProbe.stdout), "`agent list` is expected to print JSON with no --json flag");
 });
 
 
@@ -472,7 +482,7 @@ test("failed startup retains unready, live, and unobservable panes without sendi
   }
 });
 
-test("installed CLI errors use stderr and retain unknown liveness on connection failure", { skip: noHerdr ? "herdr is not installed" : false }, () => {
+test("installed CLI errors use stderr and retain unknown liveness on connection failure", { skip: noServer }, () => {
   const missing = `missing-${process.pid}-${Date.now()}`;
   const read = spawnSync("herdr", ["agent", "read", missing, "--source", "recent-unwrapped", "--lines", "1"], { encoding: "utf8", timeout: 15_000 });
   assert.equal(read.status, 1);
