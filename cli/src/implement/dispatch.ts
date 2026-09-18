@@ -151,11 +151,11 @@ export interface DispatchResult {
   kind: string;
   prd: string;
   /**
-   * herdr cannot inject the role marker and record agent lineage in one
-   * call, and the marker wins. Reported rather than hidden so a supervisor
-   * looking for its child in the agent tree knows why it is not there.
+   * The `parent_pane` token on the new pane, naming the dispatching pane.
+   * `reported` when herdr accepted it; otherwise the reason the row will
+   * show as a root, so a supervisor looking for its child knows why.
    */
-  parentLineage: "unavailable";
+  parentLineage: "reported" | { unreported: string };
 }
 
 export function dispatchImplementor(
@@ -183,6 +183,6 @@ export function dispatchImplementor(
     agent: spawned.value.name,
     kind: spawned.value.kind,
     prd: prd.relative,
-    parentLineage: "unavailable",
+    parentLineage: spawned.value.lineage.problem === null ? "reported" : { unreported: spawned.value.lineage.problem },
   };
 }

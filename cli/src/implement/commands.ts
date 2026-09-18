@@ -639,6 +639,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       `implementor ${dispatched.agent} (${dispatched.kind}) started in ${dispatched.paneId}, ${where}, from ${dispatched.prd}`,
       { ...dispatched, dispatchId: record.id, slug: state.topicSlug },
       [
+        ...(dispatched.parentLineage === "reported" ? [] : [`Lineage was not recorded: ${dispatched.parentLineage.unreported}`]),
         `Wake on its events with \`sasu implement await --slug ${state.topicSlug} --agent ${dispatched.agent}\`.`,
         `Read its pane with \`herdr agent read ${dispatched.agent} --source recent-unwrapped --lines 120\` for diagnosis only.`,
       ],

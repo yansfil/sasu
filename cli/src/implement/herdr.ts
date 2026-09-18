@@ -58,7 +58,7 @@ const AGENT_LIST_ARGV = ["agent", "list"];
  * rejects a call, so the failure can name what moved instead of leaving a
  * reader to diff two CLIs by hand.
  */
-const ADAPTER_TARGET = { version: "0.9.0-preview.2026-09-15", protocol: "23" };
+const ADAPTER_TARGET = { version: "0.9.1", protocol: "22" };
 
 /**
  * herdr's own signal that it did not understand the call.
@@ -306,12 +306,34 @@ function paneEnvironment(processEnv: NodeJS.ProcessEnv, extra: Record<string, st
   return { argv, problem: null };
 }
 
+/**
+ * The pane metadata token that names an agent's parent pane.
+ *
+ * herdr has no lineage of its own in its stable release, and its `agent new
+ * --from-pane` (a fork-only method) cannot carry the role marker. So lineage
+ * is declared the way every other app-level fact about a pane is declared:
+ * as a display-only pane token, written by whoever created the pane. hide
+ * reads `parent_pane` as the parent of the row and draws the child beneath
+ * it; the token dies with the pane, so a closed implementor leaves no stale
+ * edge behind. Any orchestrator can write the same token by hand:
+ * `herdr pane report-metadata <child> --source <you> --token parent_pane=<parent>`.
+ */
+export const PARENT_PANE_TOKEN = "parent_pane";
+const METADATA_SOURCE = "sasu";
+
+export interface SpawnLineage {
+  parentPaneId: string;
+  /** Null when the token was written; otherwise why the row will show as a root. */
+  problem: string | null;
+}
+
 export interface SpawnResult {
   paneId: string;
   workspaceId: string;
   tabId: string;
   name: string;
   kind: string;
+  lineage: SpawnLineage;
 }
 
 interface CreatedPane {
@@ -443,6 +465,16 @@ export function spawnImplementor(
     return { ok: false, value: null, problem: `herdr agent start ${input.name} --kind ${kind} in ${created} failed (${started.status ?? "no status"}): ${(started.stderr || started.stdout).trim()}${waited}; ${cleanup}` };
   }
 
+  // Declared before the handoff so the row is already a child when the
+  // agent's first output lands. A failed declaration is reported, never
+  // fatal: the agent is live and the supervisor needs it prompted.
+  const declared = run(["pane", "report-metadata", created, "--source", METADATA_SOURCE, "--token", `${PARENT_PANE_TOKEN}=${dispatcher}`], cwd);
+  const lineage: SpawnLineage = {
+    parentPaneId: dispatcher,
+    problem: declared.status === 0 ? null
+      : `herdr pane report-metadata ${created} failed (${declared.status ?? "no status"}): ${(declared.stderr || declared.stdout).trim()}; the row will show as a root, not under ${dispatcher}`,
+  };
+
   const prompted = run(["agent", "prompt", input.name, input.prompt], cwd);
   if (prompted.status !== 0) {
     // The prompt carries the whole handoff in one argv entry, and a failing
@@ -452,7 +484,7 @@ export function spawnImplementor(
     // hand it the packet itself.
     return { ok: false, value: null, problem: `herdr agent prompt ${input.name} <redacted prompt> failed (${prompted.status ?? "no status"}); the implementor is running in ${created} with no handoff` };
   }
-  return { ok: true, value: { paneId: created, workspaceId: made.created.workspaceId, tabId: made.created.tabId, name: input.name, kind }, problem: null };
+  return { ok: true, value: { paneId: created, workspaceId: made.created.workspaceId, tabId: made.created.tabId, name: input.name, kind, lineage }, problem: null };
 }
 
 /** Hole 2: read an agent's recent output, for diagnosis only. */
