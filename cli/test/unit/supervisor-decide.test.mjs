@@ -141,11 +141,15 @@ test("B9/D-06: a different session UUID or terminal in the Observer's pane is ob
   assert.equal(otherSession.observer.kind, "observer-gone");
   assert.match(otherSession.deferral, /observer-gone/);
   assert.match(otherSession.observer.detail, /no input is sent to the replacement/);
+  // The 2026-09-18 live smoke read this detail in `supervisor status` and
+  // found no way out named; B18 says the way out is an explicit handover.
+  assert.match(otherSession.observer.detail, /sasu supervisor handover --slug <slug> --approval/);
   const otherTerminal = decide({}, found({ status: "blocked" }), T0 + MIN, { observer: observerFound({ terminalId: "term_new" }) });
   assert.equal(otherTerminal.observer.kind, "observer-gone");
   assert.match(otherTerminal.observer.detail, /sasu supervisor handover/);
   const emptyPane = judgeObserver(OBSERVER, { kind: "absent", detail: "nobody" });
   assert.equal(emptyPane.kind, "observer-gone");
+  assert.match(emptyPane.detail, /sasu supervisor handover/);
   assert.equal(judgeObserver(OBSERVER, { kind: "unavailable", detail: "down" }).kind, "unobservable", "an unanswered lookup proves nothing");
 });
 

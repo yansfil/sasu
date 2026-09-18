@@ -64,15 +64,20 @@ export interface Decision {
  * "absent" is a positive answer (herdr looked and found nobody) while
  * "unavailable" proves nothing and sends nothing.
  */
+// Every observer-gone verdict ends with the way out: the live smoke of
+// 2026-09-18 showed status naming the replacement session without saying what
+// a person does next (B18: wakes stay withheld until an explicit handover).
+const HANDOVER_HINT = "wakes stay withheld until a person runs \`sasu supervisor handover --slug <slug> --approval \"<words>\"\` from the pane that should observe";
+
 export function judgeObserver(recorded: ObserverIdentity, lookup: AgentLookup): ObserverVerdict {
   if (lookup.kind === "unavailable") return { kind: "unobservable", detail: lookup.detail };
-  if (lookup.kind === "absent") return { kind: "observer-gone", detail: `no agent in the Observer's recorded pane ${recorded.paneId}` };
+  if (lookup.kind === "absent") return { kind: "observer-gone", detail: `no agent in the Observer's recorded pane ${recorded.paneId}; ${HANDOVER_HINT}` };
   const agent = lookup.agent;
   if (agent.sessionId !== recorded.sessionId) {
-    return { kind: "observer-gone", detail: `pane ${recorded.paneId} now holds session ${agent.sessionId ?? "(unreported)"}, not the recorded Observer ${recorded.sessionId}; no input is sent to the replacement` };
+    return { kind: "observer-gone", detail: `pane ${recorded.paneId} now holds session ${agent.sessionId ?? "(unreported)"}, not the recorded Observer ${recorded.sessionId}; no input is sent to the replacement; ${HANDOVER_HINT}` };
   }
   if (agent.terminalId !== recorded.terminalId) {
-    return { kind: "observer-gone", detail: `pane ${recorded.paneId} reports terminal ${agent.terminalId ?? "(unreported)"}, not the recorded ${recorded.terminalId}; a herdr server restart rotates terminal ids, so re-record the Observer with \`sasu supervisor handover\` before wakes resume` };
+    return { kind: "observer-gone", detail: `pane ${recorded.paneId} reports terminal ${agent.terminalId ?? "(unreported)"}, not the recorded ${recorded.terminalId}; a herdr server restart rotates terminal ids; ${HANDOVER_HINT}` };
   }
   return { kind: "match", status: agent.status, inputGuard: agent.inputGuard };
 }
