@@ -18,7 +18,12 @@
 //
 // The installer also retires legacy harness hooks idempotently while
 // preserving foreign hooks, and removes pre-rename install directories it
-// owns (intake, prd, prd-implement, ...).
+// owns (intake, prd, prd-implement, ...). Hook reconciliation lives in
+// cli/lib/hooks.js, shared with `sasu supervisor uninstall`.
+//
+// It also installs the supervisor LaunchAgent (`sasu supervisor install`)
+// and the Observer Stop hook on both runtimes, so a Herdr-dispatched run is
+// watched from its first tick (D-03, D-12).
 
 import fs from "node:fs";
 import path from "node:path";
@@ -33,6 +38,7 @@ const {
   runtimeIncludesEntry,
   transformContractFile,
 } = require("../cli/lib/skill-contract.js");
+const { ensureHooks, runtimeHookFiles } = require("../cli/lib/hooks.js");
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const skillsRoot = path.join(repoRoot, "skills");
@@ -175,57 +181,6 @@ function cleanupLegacyDirs(targetKey) {
   return removed;
 }
 
-// Script basenames that mark a hook entry as ours. Every hook this installer
-// has ever registered must stay listed here: the marker is the only way a
-// later run can retract an entry it no longer wants without touching a hook
-// somebody else installed.
-const HARNESS_HOOK_MARKERS = ["prd_state_harness.js", "challenge_trigger.mjs", "commit_reminder.mjs"];
-
-function isHarnessOwnedHook(matcher) {
-  if (!Array.isArray(matcher?.hooks)) return false;
-  return matcher.hooks.some(hook =>
-    typeof hook?.command === "string" && HARNESS_HOOK_MARKERS.some(marker => hook.command.includes(marker)));
-}
-
-// Idempotently reconcile harness hook entries in a Claude/Codex-style hooks
-// config. An empty desired set retires every legacy harness hook while
-// preserving foreign entries and unrelated settings.
-function ensureHooks(file, entriesByEvent) {
-  let config = {};
-  if (fs.existsSync(file)) {
-    config = JSON.parse(fs.readFileSync(file, "utf8"));
-  }
-  if (!config.hooks || typeof config.hooks !== "object") config.hooks = {};
-  let changed = false;
-  // Retract harness-owned entries from events we no longer register (e.g. the
-  // retired SubagentStop hook); foreign matchers on those events are preserved.
-  for (const event of Object.keys(config.hooks)) {
-    if (Object.prototype.hasOwnProperty.call(entriesByEvent, event)) continue;
-    const existing = Array.isArray(config.hooks[event]) ? config.hooks[event] : [];
-    const kept = existing.filter(matcher => !isHarnessOwnedHook(matcher));
-    if (kept.length !== existing.length) {
-      if (kept.length) config.hooks[event] = kept;
-      else delete config.hooks[event];
-      changed = true;
-    }
-  }
-  for (const [event, command] of Object.entries(entriesByEvent)) {
-    const existing = Array.isArray(config.hooks[event]) ? config.hooks[event] : [];
-    const kept = existing.filter(matcher => !isHarnessOwnedHook(matcher));
-    const desired = { hooks: [{ type: "command", command, timeout: 10 }] };
-    const next = [...kept, desired];
-    if (JSON.stringify(next) !== JSON.stringify(existing)) {
-      config.hooks[event] = next;
-      changed = true;
-    }
-  }
-  if (changed) {
-    ensureDir(path.dirname(file));
-    fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
-  }
-  return { file, changed };
-}
-
 // Build the sasu CLI and expose its binary. The shim execs the built
 // entry in this repository, so `sasu` always matches the installed
 // skills (same-repo versioning is the skew defense from PRD D-06).
@@ -256,6 +211,22 @@ function installCliBinary() {
   }
   fs.writeFileSync(shimPath, `#!/bin/sh\nexec node "${entry}" "$@"\n`, { mode: 0o755 });
   return { ok: true, shimPath, contractVersion: (version.stdout || "").trim() };
+}
+
+// The LaunchAgent that runs `sasu supervisor tick` every interval. The CLI
+// owns the plist and the launchctl calls so they converge on repeat; the
+// installer only invokes it with the binary it just built, under this HOME.
+// Tests pass a fake launchctl on PATH and an isolated HOME; nothing here
+// knows the difference (B14, B20).
+function installSupervisor() {
+  const entry = path.join(repoRoot, "cli", "dist", "cli.js");
+  const result = spawnSync(process.execPath, [entry, "supervisor", "install", "--json"], { encoding: "utf8", env: process.env });
+  let report = null;
+  try { report = JSON.parse(result.stdout); } catch { report = null; }
+  if (result.status !== 0 || report === null) {
+    return { ok: false, error: `sasu supervisor install failed (${result.status ?? "no status"}): ${(report?.message ?? result.stderr ?? result.stdout ?? "").trim().slice(0, 500)}` };
+  }
+  return { ok: true, ...report.detail, message: report.message };
 }
 
 function runInstaller() {
@@ -294,18 +265,24 @@ function runInstaller() {
   // advisory context only; the reminder cannot commit or change run state.
   const challengeTriggerCommand = `node ${path.join(repoRoot, "scripts", "challenge_trigger.mjs")}`;
   const commitReminderCommand = `node ${path.join(repoRoot, "scripts", "commit_reminder.mjs")}`;
-  const lifecycleHooks = { UserPromptSubmit: challengeTriggerCommand, PostToolUse: commitReminderCommand };
+  // The Stop hook confirms an Observer handover to the supervisor tick and
+  // never blocks a stop; it is the same entry on both runtimes.
+  const supervisorStopCommand = `node ${path.join(repoRoot, "scripts", "supervisor_stop.mjs")}`;
+  const lifecycleHooks = { UserPromptSubmit: challengeTriggerCommand, PostToolUse: commitReminderCommand, Stop: supervisorStopCommand };
+  const files = runtimeHookFiles(home);
   const hooks = {
-    codex: ensureHooks(path.join(home, ".codex", "hooks.json"), lifecycleHooks),
-    claude: ensureHooks(path.join(home, ".claude", "settings.json"), lifecycleHooks),
+    codex: ensureHooks(files.codex, lifecycleHooks),
+    claude: ensureHooks(files.claude, lifecycleHooks),
   };
+  const supervisor = installSupervisor();
   return {
-    ok: true,
+    ok: supervisor.ok,
     repoRoot,
     cliBinary,
     installed,
     removedLegacy,
     hooks,
+    supervisor,
     note: "SKILL.md files are real copies (Claude copies are path/invocation substituted); auxiliary entries are symlinks.",
   };
 }
