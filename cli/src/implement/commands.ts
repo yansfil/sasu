@@ -819,7 +819,16 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     catch (error) {
       state.pendingDispatch = null;
       persistState(statePath, state);
-      throw new DispatchRejected(`supervision enrollment failed before child start: ${error instanceof Error ? error.message : String(error)}`);
+      // An immutable revision is committed before old-revision pruning. The
+      // round-two review injected an EIO after that commit and found the new
+      // enrollment orphaning the previous supervised run even though no child
+      // started. Reconcile from durable state on every error outcome so an
+      // uncertain external write converges instead of repeating its effect.
+      let reconciliationProblem: string | null = null;
+      try { reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "failed pre-start enrollment reconciled to current dispatch authority"); }
+      catch (reconcileError) { reconciliationProblem = reconcileError instanceof Error ? reconcileError.message : String(reconcileError); }
+      const failure = error instanceof Error ? error.message : String(error);
+      throw new DispatchRejected(`supervision enrollment failed before child start: ${failure}${reconciliationProblem === null ? "" : `; current authority reconciliation also failed: ${reconciliationProblem}; retry dispatch to reconcile it`}`);
     }
     let recordId: number | null = null;
     let dispatched;

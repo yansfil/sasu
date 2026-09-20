@@ -10,8 +10,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { CLI, git, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
 import { installFakeHerdr } from "../helpers/fake-herdr.mjs";
 import { attemptFixture } from "../helpers/implement-state.mjs";
-import { reconcileCurrentDispatchPrerequisites, repairPendingDispatchPrerequisites } from "../../dist/implement/commands.js";
-import { enrollRun, readIndex, unenrollRun } from "../../dist/supervisor/index.js";
+import { reconcileCurrentDispatchPrerequisites, repairPendingDispatchPrerequisites, runImplementCommand } from "../../dist/implement/commands.js";
+import { enrollRun, readIndex, unenrollRun, updateIndex } from "../../dist/supervisor/index.js";
 
 const OBSERVER = "observer-session";
 const IMPLEMENTOR = "implementor-session";
@@ -194,6 +194,67 @@ test("dispatch refuses when the Observer's identity cannot be read, before any p
   assert.match(badOwner.text, /--recovery-owner must be supervisor or task-factory/);
   const smuggled = dispatch(root, env, ["--env", "SASU_RUN_INSTANCE_ID=x"]);
   assert.match(smuggled.text, /minted by the dispatch/);
+});
+
+test("D-04: an enrollment write that commits before cleanup failure restores the prior supervised run", async () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake, home } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  const first = dispatch(root, env);
+  assert.equal(first.status, 0, first.text);
+  const priorRunInstanceId = state(root).supervision.runInstanceId;
+  const index = path.join(home, ".sasu", "supervisor", "index.json");
+  fake.setAgents({});
+
+  // Hold four immutable revisions so the replacement enrollment commits its
+  // new head and then reaches pruning. The round-two review reproduced an EIO
+  // at that exact boundary: the external write existed even though its caller
+  // received an exception.
+  for (let revision = 0; revision < 5; revision += 1) {
+    updateIndex(index, (current) => { current.lastHerdr = { available: true, detail: `seed-${revision}` }; });
+  }
+
+  const originalUnlink = fs.unlinkSync;
+  const inherited = new Map();
+  const cleared = ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID", "SASU_HERDR_ROLE", "HERDR_SOCKET_PATH"];
+  for (const key of new Set([...Object.keys(env), ...cleared])) {
+    inherited.set(key, process.env[key]);
+    if (key in env) process.env[key] = env[key];
+    else delete process.env[key];
+  }
+  let injected = false;
+  fs.unlinkSync = (target) => {
+    if (!injected && String(target).includes(".revision-")) {
+      injected = true;
+      const error = new Error("scripted revision pruning failure");
+      error.code = "EIO";
+      throw error;
+    }
+    return originalUnlink(target);
+  };
+  let refused;
+  try {
+    refused = await runImplementCommand(root, {
+      positional: ["implement", "dispatch"],
+      flags: new Map([["name", "impl-2"], ["prd", PRD_PATH], ["adopt", "user approved replacement"]]),
+      values: new Map(),
+    });
+  } finally {
+    fs.unlinkSync = originalUnlink;
+    for (const [key, value] of inherited) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+
+  assert.equal(injected, true, `the regression reaches cleanup after the replacement revision is committed: ${refused?.message ?? "no result"}`);
+  assert.equal(refused.ok, false);
+  assert.match(refused.message, /supervision enrollment failed before child start/);
+  const after = state(root);
+  assert.equal(after.pendingDispatch, null, "no child exists, so the failed replacement intent is cleared");
+  assert.equal(after.supervision.runInstanceId, priorRunInstanceId, "state keeps the previously supervised run");
+  assert.equal(readIndex(index).entries[0].runInstanceId, priorRunInstanceId, "the index is reconciled to the state authority before returning the failure");
 });
 
 test("D-04: identity and enrollment persist before handoff, and a failed handoff has an explicit recovery path", () => {
