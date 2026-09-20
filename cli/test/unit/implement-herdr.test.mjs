@@ -214,6 +214,26 @@ test("D-04/D-06: initial handoff rechecks exact identity after durable persisten
   }
 });
 
+test("D-04: final authority validation runs after the last identity lookup and before handoff submission", () => {
+  let lookups = 0;
+  const recorded = recorder({
+    "agent get": (args) => {
+      lookups += 1;
+      return { status: 0, stdout: implementorInfo(args[2]), stderr: "" };
+    },
+  });
+  const outcome = spawnImplementor({
+    name: "impl", placement: WS, prompt: "executable handoff",
+    beforeSubmit: () => {
+      assert.equal(lookups, 2, "authority is checked only after the post-persistence identity lookup");
+      throw new Error("run was retired");
+    },
+  }, { env: LIVE, run: recorded.run });
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.problem, /final handoff authority validation failed.*run was retired/);
+  assert.equal(recorded.count("agent prompt"), 0);
+});
+
 test("D-04: the exact created pane is persisted before agent start", () => {
   const { argv, run } = recorder();
   let atCallback = [];

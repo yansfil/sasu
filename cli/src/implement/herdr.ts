@@ -290,6 +290,8 @@ export interface SpawnRequest {
   afterCreate?: (prepared: PreparedSpawn) => void;
   /** Persists the exact started identity before any handoff bytes are submitted. */
   beforePrompt?: (started: SpawnResult) => void;
+  /** Revalidates run authority after the final blocking identity lookup. */
+  beforeSubmit?: (started: SpawnResult) => void;
 }
 
 /** The variable name of the role marker, so a caller cannot smuggle a second value for it. */
@@ -548,6 +550,10 @@ export function spawnImplementor(
       ? `found ${current.agent.name ?? "unnamed"} in ${current.agent.paneId}, session ${current.agent.sessionId ?? "missing"}, terminal ${current.agent.terminalId ?? "missing"}`
       : current.detail;
     return { ok: false, value: null, problem: `implementor identity changed after pre-handoff persistence: expected ${identity.name} in ${identity.paneId}, session ${identity.sessionId}, terminal ${identity.terminalId}; ${detail}; no handoff was sent` };
+  }
+  try { input.beforeSubmit?.(identity); }
+  catch (error) {
+    return { ok: false, value: null, problem: `implementor ${input.name} is running in ${created}, but final handoff authority validation failed: ${error instanceof Error ? error.message : String(error)}; no handoff was sent` };
   }
 
   const prompted = promptAgent({ target: created, text: input.prompt, expectedInputGuard: current.agent.inputGuard }, { ...environment, run });

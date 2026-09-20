@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { isDeepStrictEqual } from "node:util";
 import { loadConfig } from "../config";
 import { readGateStatus } from "../gates/commands";
 import { prelintPrd } from "../gates/prelint";
@@ -543,6 +544,24 @@ function readHandoffPacket(): string {
   }
 }
 
+function revalidatePendingHandoff(
+  projectRoot: string,
+  statePath: string,
+  expected: PendingDispatch,
+  changedMessage: string,
+): { state: ImplementState; pending: PendingDispatch } {
+  const loaded = loadState(projectRoot, { state: statePath });
+  assertRunOpenForMutation(loaded.state);
+  if (loaded.state.activeVerification !== undefined) {
+    throw new DispatchRejected(`verification still active: ${loaded.state.activeVerification.attemptId}; no handoff input was sent`);
+  }
+  const pending = loaded.state.pendingDispatch ?? null;
+  if (loaded.statePath !== statePath || pending === null || !isDeepStrictEqual(pending, expected)) {
+    throw new DispatchRejected(`${changedMessage}; no handoff input was sent`);
+  }
+  return { state: loaded.state, pending };
+}
+
 function restoreSupervisionAfterPartialDispatch(statePath: string, state: ImplementState, pending: PendingDispatch, at: string, cause: string): void {
   const previous = state.supervision ?? null;
   if (previous === null) {
@@ -592,22 +611,10 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       // a handover or replacement during that wait cannot inherit this input.
       const packet = readHandoffPacket().trim();
       if (packet === "") throw new DispatchRejected("resume-handoff requires the handoff packet on stdin");
-      const refreshed = loadState(projectRoot, stateOptions(args));
-      assertRunOpenForMutation(refreshed.state);
-      if (refreshed.state.activeVerification !== undefined) {
-        throw new DispatchRejected(`verification still active: ${refreshed.state.activeVerification.attemptId}; no handoff input was sent`);
-      }
-      const freshPending = refreshed.state.pendingDispatch ?? null;
-      if (refreshed.statePath !== statePath || freshPending === null || freshPending.phase !== "started"
-        || freshPending.runInstanceId !== pending.runInstanceId || freshPending.implementor === null) {
-        throw new DispatchRejected("the partial dispatch changed while the handoff packet was read; no input was sent");
-      }
-      if (currentSessionId() !== freshPending.observer.sessionId) {
-        throw new DispatchRejected(`partial-handoff recovery authority moved to Observer ${freshPending.observer.sessionId} while the packet was read; no input was sent`);
-      }
+      const refreshed = revalidatePendingHandoff(projectRoot, statePath, pending, "the partial dispatch changed while the handoff packet was read");
       state = refreshed.state;
-      pending = freshPending;
-      const implementor = freshPending.implementor;
+      pending = refreshed.pending;
+      const implementor = pending.implementor!;
       resumeHerdr = herdrEnvironmentForHostScope(implementor.hostScope);
       const looked = getAgent(implementor.paneId, resumeHerdr);
       if (looked.kind !== "found" || looked.agent.paneId !== implementor.paneId || looked.agent.name !== implementor.agent
@@ -620,26 +627,9 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       // The exact agent lookup can also block. Re-read every authority fact
       // once more after it returns so retirement, verification, handover or
       // redispatch cannot race ahead of the external prompt.
-      const ready = loadState(projectRoot, stateOptions(args));
-      assertRunOpenForMutation(ready.state);
-      if (ready.state.activeVerification !== undefined) {
-        throw new DispatchRejected(`verification still active: ${ready.state.activeVerification.attemptId}; no handoff input was sent`);
-      }
-      const readyPending = ready.state.pendingDispatch ?? null;
-      const readyImplementor = readyPending?.implementor ?? null;
-      if (ready.statePath !== statePath || readyPending === null || readyPending.phase !== "started"
-        || readyPending.runInstanceId !== pending.runInstanceId || readyImplementor === null
-        || readyPending.observer.sessionId !== pending.observer.sessionId
-        || readyPending.observer.terminalId !== pending.observer.terminalId
-        || readyPending.observer.paneId !== pending.observer.paneId
-        || readyPending.observer.hostScope !== pending.observer.hostScope
-        || readyImplementor.paneId !== implementor.paneId || readyImplementor.agent !== implementor.agent
-        || readyImplementor.sessionId !== implementor.sessionId || readyImplementor.terminalId !== implementor.terminalId
-        || readyImplementor.hostScope !== implementor.hostScope) {
-        throw new DispatchRejected("run, recovery authority or implementor identity changed during the final target lookup; no handoff input was sent");
-      }
+      const ready = revalidatePendingHandoff(projectRoot, statePath, pending, "run, recovery authority or implementor identity changed during the final target lookup");
       state = ready.state;
-      pending = readyPending;
+      pending = ready.pending;
       const sent = promptAgent({ target: implementor.paneId, text: packet, expectedInputGuard: looked.agent.inputGuard }, resumeHerdr);
       if (sent.outcome !== "accepted") return result("dispatch", false, `handoff was not confirmed (${sent.outcome}, ${sent.code}): ${sent.detail}; pending dispatch remains for an explicit retry`, { pendingDispatch: pending, prompt: sent });
       state.pendingDispatch = null;
@@ -682,7 +672,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     const runInstanceId = newRunInstanceId();
     const name = requiredFlag(args, "name");
     const dispatchedAt = nowIso();
-    const pending: PendingDispatch = {
+    let pending: PendingDispatch = {
       runInstanceId, observer: observer.identity, plannedAgent: name, phase: "planned", prepared: null, implementor: null,
       canonicalRepository: canonicalRepository(placed.placement.cwd), prdPath: state.prdPath,
       dispatchHead: repositoryHead(placed.placement.cwd), dispatchedAt, patrolIntervalMs, recoveryOwner,
@@ -733,6 +723,11 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         recordId = recordDispatch(projectRoot, statePath, state, { ...started, agent: started.name, cwd: placed.placement!.cwd }, "observer",
           `implementor ${started.name} (${started.kind}) started in ${started.paneId}; exact identity recorded before handoff`, supervision).id;
         enrollRun(indexPath(), { statePath, runInstanceId, recoveryOwner, at: dispatchedAt });
+      },
+      beforeSubmit: () => {
+        const ready = revalidatePendingHandoff(projectRoot, statePath, pending, "run or dispatch authority changed during the final target lookup");
+        state = ready.state;
+        pending = ready.pending;
       },
       });
     } catch (error) {
@@ -875,7 +870,7 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
   } else if (agent !== null && replacement.placement !== null && previous !== null) {
     const replacementName = `${agent}-r${id}`;
     const dispatchedAt = nowIso();
-    const pending: PendingDispatch = {
+    let pending: PendingDispatch = {
       runInstanceId: replacementInstanceId,
       observer: previous.observer,
       plannedAgent: replacementName,
@@ -925,6 +920,11 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
           recordDispatch(projectRoot, statePath, state, { ...started, agent: started.name, cwd: replacement.placement!.cwd }, issuer,
             `replacement implementor ${started.name} started in ${started.paneId} for escalation ${record.id}; exact identity recorded before handoff`, refreshed);
           enrollRun(indexPath(), { statePath, runInstanceId: replacementInstanceId, recoveryOwner: refreshed.recoveryOwner, at: dispatchedAt });
+        },
+        beforeSubmit: () => {
+          const ready = revalidatePendingHandoff(projectRoot, statePath, pending, "run or replacement authority changed during the final target lookup");
+          state = ready.state;
+          pending = ready.pending;
         },
       });
       if (reset.ok) {

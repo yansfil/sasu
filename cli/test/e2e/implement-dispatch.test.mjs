@@ -241,6 +241,89 @@ test("B2/B18: an approved Observer handover transfers partial-handoff recovery a
   assert.deepEqual(fake.prompts().map((entry) => [entry.target, entry.text]), [["w4G:p13", PACKET]]);
 });
 
+async function initialDispatchAtFinalLookup(root, env, stem) {
+  const ready = path.join(root, `${stem}.ready`);
+  const release = path.join(root, `${stem}.release`);
+  const count = path.join(root, `${stem}.count`);
+  const running = sasuAsync(root, ["implement", "dispatch", "--name", "impl", "--prd", PRD_PATH], {
+    env: {
+      ...env,
+      HERDR_FAKE_GET_BARRIER_TARGET: "w4G:p13",
+      HERDR_FAKE_GET_BARRIER_OCCURRENCE: "2",
+      HERDR_FAKE_GET_BARRIER_COUNT: count,
+      HERDR_FAKE_GET_BARRIER_READY: ready,
+      HERDR_FAKE_GET_BARRIER_RELEASE: release,
+    },
+    input: PACKET,
+  });
+  await waitForFile(ready);
+  return { running, release };
+}
+
+test("D-04: initial handoff rechecks lifecycle after its final target lookup", async () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  const { running, release } = await initialDispatchAtFinalLookup(root, env, "initial-retire-get");
+  try {
+    const retired = sasu(root, ["implement", "retire", "--slug", "fixture", "--issuer", "human", "--adopt", "user: retire during dispatch"], { env });
+    assert.equal(retired.status, 0, retired.text);
+  } finally {
+    fs.writeFileSync(release, "release\n");
+  }
+  const dispatched = await running.completion;
+  assert.notEqual(dispatched.status, 0, dispatched.text);
+  assert.equal(fake.prompts().length, 0, "retirement at the final lookup barrier prevents executable handoff input");
+  assert.equal(state(root).pendingDispatch.phase, "started");
+});
+
+test("D-04: initial handoff rechecks Observer authority after its final target lookup", async () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  const { running, release } = await initialDispatchAtFinalLookup(root, env, "initial-handover-get");
+  try {
+    fake.patchAgent("w9:p1", { name: "observer-replacement", agent: "claude", agent_status: "working", pane_id: "w9:p1", terminal_id: "term_replacement", agent_session: { value: OBSERVER }, tokens: { activity: "2000" }, state_change_seq: 2 });
+    const handed = sasu(root, ["supervisor", "handover", "--slug", "fixture", "--approval", "user: move Observer authority during dispatch"], {
+      env: { ...env, HERDR_PANE_ID: "w9:p1" },
+    });
+    assert.equal(handed.status, 0, handed.text);
+  } finally {
+    fs.writeFileSync(release, "release\n");
+  }
+  const dispatched = await running.completion;
+  assert.notEqual(dispatched.status, 0, dispatched.text);
+  assert.equal(fake.prompts().length, 0, "approved same-session handover at the final lookup barrier prevents old authority from sending");
+  assert.equal(state(root).pendingDispatch.observer.paneId, "w9:p1");
+});
+
+test("D-04: initial handoff sends nothing when verification acquires the run during final lookup", async () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  const { running, release } = await initialDispatchAtFinalLookup(root, env, "initial-verification-get");
+  try {
+    const leased = state(root);
+    const attempt = attemptFixture({ id: "dispatch-verification" });
+    leased.verificationAttempts.push(attempt);
+    leased.activeVerification = {
+      token: "verification-token", attemptId: "dispatch-verification", pid: process.pid, hostname: "test-host",
+      startedAt: attempt.startedAt, inputFingerprint: attempt.inputFingerprint, prdSha256: attempt.prdSha256,
+      executionPids: [], pendingSpawns: 0,
+    };
+    fs.writeFileSync(path.join(root, STATE_PATH), `${JSON.stringify(leased, null, 2)}\n`);
+  } finally {
+    fs.writeFileSync(release, "release\n");
+  }
+  const dispatched = await running.completion;
+  assert.notEqual(dispatched.status, 0, dispatched.text);
+  assert.equal(fake.prompts().length, 0, "a verification lease at the final lookup barrier prevents executable handoff input");
+  assert.equal(state(root).pendingDispatch.phase, "started");
+});
+
 test("B2: resumed handoff rechecks lifecycle after the final target lookup", async () => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));

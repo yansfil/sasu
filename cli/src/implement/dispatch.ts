@@ -36,6 +36,7 @@ export interface DispatchInput {
   env?: Record<string, string>;
   afterCreate?: (prepared: PreparedSpawn) => void;
   beforeHandoff?: (started: SpawnResult) => void;
+  beforeSubmit?: (started: SpawnResult) => void;
 }
 
 /**
@@ -176,7 +177,7 @@ export function dispatchImplementor(
   const prd = assertDispatchablePrd(projectRoot, input.prdPath);
 
   const spawned = spawnImplementor(
-    { name, placement: input.placement, prompt: handoff, kind: input.kind, model: input.model, effort: input.effort, env: input.env, afterCreate: input.afterCreate, beforePrompt: input.beforeHandoff },
+    { name, placement: input.placement, prompt: handoff, kind: input.kind, model: input.model, effort: input.effort, env: input.env, afterCreate: input.afterCreate, beforePrompt: input.beforeHandoff, beforeSubmit: input.beforeSubmit },
     { env },
   );
   if (!spawned.ok || spawned.value === null) throw new DispatchRejected(spawned.problem ?? "dispatch failed for an unreported reason");

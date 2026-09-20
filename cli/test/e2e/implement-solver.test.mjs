@@ -67,6 +67,57 @@ test("D-04: escalation persists replacement identity and enrollment before submi
   assert.equal(state(root).pendingDispatch, null);
 });
 
+test("D-04: escalation rechecks run authority after its final target lookup", async () => {
+  const root = fs.realpathSync(createProject({ count: 1 }));
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const outside = fs.mkdtempSync(`${root}-herdr-`);
+  const fake = installFakeHerdr(outside);
+  const home = path.join(outside, "home");
+  fs.mkdirSync(home, { recursive: true });
+  const observerEnv = { ...fake.env, HOME: home, HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12", HERDR_WORKSPACE_ID: "w4G", CLAUDE_SESSION_ID: "observer-session" };
+  assert.equal(runCli(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env: observerEnv }).status, 0);
+  const dispatched = spawnSync(process.execPath, [CLI, "implement", "dispatch", "--name", "impl", "--prd", PRD_PATH, "--json"], {
+    cwd: root, encoding: "utf8", env: isolatedEnv(observerEnv), input: "ROLE: Implementor\nSOURCE: fixture\nRETURN CONTRACT: status", timeout: 30_000,
+  });
+  assert.equal(dispatched.status, 0, dispatched.stderr + dispatched.stdout);
+  const promptsBefore = fake.prompts().length;
+
+  const judge = stubEnv(root);
+  const ready = path.join(outside, "replacement-get.ready");
+  const release = path.join(outside, "replacement-get.release");
+  const count = path.join(outside, "replacement-get.count");
+  const env = isolatedEnv({
+    ...observerEnv,
+    ...judge,
+    HERDR_FAKE_GET_BARRIER_TARGET: "w4G:p13",
+    HERDR_FAKE_GET_BARRIER_OCCURRENCE: "2",
+    HERDR_FAKE_GET_BARRIER_COUNT: count,
+    HERDR_FAKE_GET_BARRIER_READY: ready,
+    HERDR_FAKE_GET_BARRIER_RELEASE: release,
+  });
+  const child = spawn(process.execPath, [CLI, "implement", "escalate", "--issuer", "observer", "--reason", "stuck", "--agent", "impl", "--adopt", "user requested replacement", "--json"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const deadline = Date.now() + 15_000;
+  while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(fs.existsSync(ready), true, stderr || stdout);
+  try {
+    const retired = runCli(root, ["implement", "retire", "--issuer", "human", "--adopt", "user: retire during replacement"], { env: observerEnv });
+    assert.equal(retired.status, 0, retired.stderr + retired.stdout);
+  } finally {
+    fs.writeFileSync(release, "release\n");
+  }
+  const exitCode = await new Promise((resolve) => child.on("close", resolve));
+  assert.equal(exitCode, 0, stderr + stdout);
+  const outcome = JSON.parse(stdout);
+  assert.equal(outcome.detail.contextReset, false);
+  assert.match(outcome.detail.contextResetProblem, /final handoff authority validation failed.*retired/);
+  assert.equal(fake.prompts().length, promptsBefore, "retirement at the replacement's final lookup prevents new handoff input");
+  assert.equal(state(root).pendingDispatch.phase, "started");
+});
+
 // --- AC33: no state write during the solver's execution ---------------------
 
 test("AC33: the solver runs read-only and the run's only write happens after it returns", () => {
