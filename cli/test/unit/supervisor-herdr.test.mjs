@@ -39,6 +39,21 @@ test("agent get does not need HERDR_ENV: the tick runs under launchd with no her
   assert.equal(looked.kind, "found");
 });
 
+test("engineering 15: lookup and prompt pass the caller's remaining deadline to the process adapter", () => {
+  const timeouts = [];
+  const run = (args, _cwd, timeoutMs) => {
+    timeouts.push({ command: args.slice(0, 2).join(" "), timeoutMs });
+    if (args[1] === "get") return { status: 0, stdout: INFO, stderr: "" };
+    return { status: 0, stdout: "{}", stderr: "" };
+  };
+  assert.equal(getAgent("w8D:p1", { run }, 321).kind, "found");
+  assert.equal(promptAgent({ target: "w8D:p1", text: "x", expectedInputGuard: null }, { run }, 123).outcome, "accepted");
+  assert.deepEqual(timeouts, [
+    { command: "agent get", timeoutMs: 321 },
+    { command: "agent prompt", timeoutMs: 123 },
+  ]);
+});
+
 test("a plain wake is accepted on exit 0 and reported rejected on herdr's pre-input refusals", () => {
   const asked = [];
   const sent = promptAgent({ target: "w8D:p1", text: "SASU_WAKE", expectedInputGuard: null }, { run: (args) => { asked.push(args); return { status: 0, stdout: "{}", stderr: "" }; } });

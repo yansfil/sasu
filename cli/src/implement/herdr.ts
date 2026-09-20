@@ -102,7 +102,7 @@ export interface HerdrCapabilities {
 
 export interface HerdrEnvironment {
   env?: NodeJS.ProcessEnv;
-  run?: (args: string[], cwd?: string) => { status: number | null; stdout: string; stderr: string; errorCode?: string };
+  run?: (args: string[], cwd?: string, timeoutMs?: number) => { status: number | null; stdout: string; stderr: string; errorCode?: string };
   /** Wall clock and blocking sleep; injected by tests, so a 30 s wait costs a test nothing. */
   clock?: HerdrClock;
 }
@@ -112,14 +112,14 @@ export interface HerdrClock {
   sleep(ms: number): void;
 }
 
-function defaultRun(args: string[], cwd?: string, env: NodeJS.ProcessEnv = process.env): { status: number | null; stdout: string; stderr: string; errorCode?: string } {
-  const executed = spawnSync("herdr", args, { cwd, env, encoding: "utf8", shell: false, timeout: 15_000 });
+function defaultRun(args: string[], cwd?: string, env: NodeJS.ProcessEnv = process.env, timeoutMs = 15_000): { status: number | null; stdout: string; stderr: string; errorCode?: string } {
+  const executed = spawnSync("herdr", args, { cwd, env, encoding: "utf8", shell: false, timeout: Math.max(1, Math.min(15_000, Math.floor(timeoutMs))) });
   if (executed.error !== undefined) return { status: null, stdout: "", stderr: String(executed.error), errorCode: (executed.error as NodeJS.ErrnoException).code };
   return { status: executed.status, stdout: executed.stdout ?? "", stderr: executed.stderr ?? "" };
 }
 
 const environmentRun = (environment: HerdrEnvironment): NonNullable<HerdrEnvironment["run"]> =>
-  environment.run ?? ((args, cwd) => defaultRun(args, cwd, environment.env));
+  environment.run ?? ((args, cwd, timeoutMs) => defaultRun(args, cwd, environment.env, timeoutMs));
 
 const defaultClock: HerdrClock = {
   now: () => Date.now(),
@@ -680,9 +680,9 @@ const AGENT_STATUSES = new Set(["idle", "working", "blocked", "done", "unknown"]
  * `agent_not_found`, measured 2026-09-18); any other failure is
  * `unavailable`, which the caller must not read as absence (D-06).
  */
-export function getAgent(target: string, environment: HerdrEnvironment = {}): AgentLookup {
+export function getAgent(target: string, environment: HerdrEnvironment = {}, timeoutMs?: number): AgentLookup {
   const run = environmentRun(environment);
-  const executed = run(["agent", "get", target]);
+  const executed = run(["agent", "get", target], undefined, timeoutMs);
   if (executed.status !== 0) {
     const code = herdrErrorCode(executed.stderr) ?? herdrErrorCode(executed.stdout);
     if (executed.status === 1 && code === "agent_not_found") return { kind: "absent", detail: `herdr lists no agent at ${target}` };
@@ -760,11 +760,12 @@ const PROCESS_DID_NOT_START = new Set(["ENOENT", "EACCES", "ENOEXEC"]);
 export function promptAgent(
   input: { target: string; text: string; expectedInputGuard: string | null },
   environment: HerdrEnvironment = {},
+  timeoutMs?: number,
 ): PromptOutcome {
   const run = environmentRun(environment);
   const guarded = input.expectedInputGuard !== null;
   const argv = ["agent", "prompt", input.target, input.text, ...(guarded ? ["--expected-input-guard", input.expectedInputGuard!] : [])];
-  const executed = run(argv);
+  const executed = run(argv, undefined, timeoutMs);
   const path: PromptOutcome["path"] = guarded ? "guarded" : "session-match";
   if (executed.status === 0) {
     if (guarded) {

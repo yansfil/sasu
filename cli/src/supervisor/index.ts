@@ -46,8 +46,8 @@ export interface SupervisorIndex {
   removed: Array<{ at: string; statePath: string; cause: string }>;
   /** Terminal notifications abandoned only after bounded definite failures. */
   undeliveredTerminal: Array<{ at: string; statePath: string; runInstanceId: string; enrollmentId: string; failures: number; detail: string }>;
-  /** One durable executor lease serializes scheduled and manually requested ticks. */
-  tickExecutor: { operationId: string; pid: number; processIncarnation: string | null; startedAt: string; expiresAt: string } | null;
+  /** One durable executor owner serializes scheduled and manually requested ticks. */
+  tickExecutor: { operationId: string; pid: number; processIncarnation: string | null; startedAt: string } | null;
   /** Bounded operation ids make a linked write recognizable under a newer head. */
   appliedWrites: string[];
 }
@@ -127,7 +127,11 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
   if (tickExecutor !== null) {
     if (typeof tickExecutor !== "object" || Array.isArray(tickExecutor)) throw new Error(`supervisor index has invalid tickExecutor: ${file}`);
     const lease = tickExecutor as Record<string, unknown>;
-    if (typeof lease["operationId"] !== "string" || !Number.isInteger(lease["pid"]) || Number(lease["pid"]) < 1 || optionalTimestamp(lease["startedAt"], "tickExecutor.startedAt", file) === null || optionalTimestamp(lease["expiresAt"], "tickExecutor.expiresAt", file) === null) throw new Error(`supervisor index has invalid tickExecutor: ${file}`);
+    if (typeof lease["operationId"] !== "string" || !Number.isInteger(lease["pid"]) || Number(lease["pid"]) < 1 || optionalTimestamp(lease["startedAt"], "tickExecutor.startedAt", file) === null) throw new Error(`supervisor index has invalid tickExecutor: ${file}`);
+    // Older records carried expiresAt even though recovery deliberately never
+    // stole a live owner at that time. Accept the transition field, but do not
+    // retain a promise that has no authority effect (round-three review).
+    if (lease["expiresAt"] !== undefined) optionalTimestamp(lease["expiresAt"], "tickExecutor.expiresAt", file);
     const processIncarnation = lease["processIncarnation"] === undefined || lease["processIncarnation"] === null ? null : lease["processIncarnation"];
     if (processIncarnation !== null && (typeof processIncarnation !== "string" || processIncarnation === "" || processIncarnation.length > 512)) throw new Error(`supervisor index has invalid tickExecutor processIncarnation: ${file}`);
     parsedTickExecutor = {
@@ -135,7 +139,6 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
       pid: Number(lease["pid"]),
       processIncarnation,
       startedAt: String(lease["startedAt"]),
-      expiresAt: String(lease["expiresAt"]),
     };
   }
   const undeliveredTerminal = candidate["undeliveredTerminal"] === undefined ? [] : candidate["undeliveredTerminal"];
@@ -307,6 +310,73 @@ export function enrollRun(file: string, entry: { statePath: string; runInstanceI
       lastProcessedAt: null, lastFailure: null, lastObservation: null,
     });
   });
+}
+
+export interface EnrollmentAuthority {
+  runInstanceId: string;
+  recoveryOwner: RecoveryOwner;
+}
+
+export function captureEnrollmentGeneration(file: string, statePath: string): string | null {
+  return readIndex(file).entries.find((entry) => entry.statePath === statePath)?.enrollmentId ?? null;
+}
+
+function sameEnrollmentAuthority(left: EnrollmentAuthority | null, right: EnrollmentAuthority | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.runInstanceId === right.runInstanceId && left.recoveryOwner === right.recoveryOwner;
+}
+
+function enrollmentMatchesAuthority(index: SupervisorIndex, statePath: string, desired: EnrollmentAuthority | null): boolean {
+  const current = index.entries.find((entry) => entry.statePath === statePath);
+  return desired === null
+    ? current === undefined
+    : current?.runInstanceId === desired.runInstanceId && current.recoveryOwner === desired.recoveryOwner;
+}
+
+/**
+ * The sole production boundary for changing one run's enrollment authority.
+ *
+ * The round-three handover race persisted old authority, paused, then replaced
+ * a newer dispatch enrollment with its captured instance. Every caller now
+ * captures the enrollment generation before reading authority, reconciles the
+ * immutable index, and proves the fresh committed authority still matches.
+ * This fixes the failure class instead of adding another path-specific guard
+ * (repository principle 3 and engineering principle 13).
+ */
+export function reconcileEnrollmentAuthority(file: string, input: {
+  statePath: string;
+  readAuthority: () => EnrollmentAuthority | null;
+  expectedEnrollmentId?: string | null;
+  at: string;
+  cause: string;
+  afterAuthoritySnapshot?: () => void;
+  attempts?: number;
+}): { index: SupervisorIndex; authority: EnrollmentAuthority | null } {
+  let expectedEnrollmentId = input.expectedEnrollmentId === undefined
+    ? captureEnrollmentGeneration(file, input.statePath)
+    : input.expectedEnrollmentId;
+  const attempts = input.attempts ?? 4;
+  let boundaryCalled = false;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const before = input.readAuthority();
+    if (!boundaryCalled) {
+      boundaryCalled = true;
+      input.afterAuthoritySnapshot?.();
+    }
+    const reconciled = reconcileRunEnrollment(file, {
+      statePath: input.statePath,
+      desired: before,
+      expectedEnrollmentId,
+      at: input.at,
+      cause: input.cause,
+    });
+    const after = input.readAuthority();
+    if (sameEnrollmentAuthority(before, after) && enrollmentMatchesAuthority(reconciled, input.statePath, after)) {
+      return { index: reconciled, authority: after };
+    }
+    expectedEnrollmentId = captureEnrollmentGeneration(file, input.statePath);
+  }
+  throw new Error(`supervisor enrollment authority kept changing for ${input.statePath}; retry against the current run`);
 }
 
 export function unenrollRun(file: string, entry: { statePath: string; runInstanceId: string; at: string; cause: string }): SupervisorIndex {

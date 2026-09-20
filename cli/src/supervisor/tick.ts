@@ -9,9 +9,9 @@ import { MISSING_TICKS_BEFORE_CLEANUP, readIndex, updateIndex, type IndexEntry, 
 import { renderWake, type WakeLine } from "./wake";
 
 export interface TickHerdr {
-  probe(hostScope?: string): { available: boolean; detail: string | null };
-  getAgent(target: string, hostScope?: string): AgentLookup;
-  promptAgent(input: { target: string; text: string; expectedInputGuard: string | null }, hostScope?: string): PromptOutcome;
+  probe(hostScope?: string, timeoutMs?: number): { available: boolean; detail: string | null };
+  getAgent(target: string, hostScope?: string, timeoutMs?: number): AgentLookup;
+  promptAgent(input: { target: string; text: string; expectedInputGuard: string | null }, hostScope?: string, timeoutMs?: number): PromptOutcome;
 }
 
 function scopedEnvironment(environment: HerdrEnvironment, hostScope?: string): HerdrEnvironment {
@@ -24,12 +24,12 @@ function scopedEnvironment(environment: HerdrEnvironment, hostScope?: string): H
 
 export function herdrForTick(environment: HerdrEnvironment = {}): TickHerdr {
   return {
-    probe: (hostScope) => {
-      const listing = getAgent("__sasu_probe__", scopedEnvironment(environment, hostScope));
+    probe: (hostScope, timeoutMs) => {
+      const listing = getAgent("__sasu_probe__", scopedEnvironment(environment, hostScope), timeoutMs);
       return listing.kind === "unavailable" ? { available: false, detail: listing.detail } : { available: true, detail: null };
     },
-    getAgent: (target, hostScope) => getAgent(target, scopedEnvironment(environment, hostScope)),
-    promptAgent: (input, hostScope) => promptAgent(input, scopedEnvironment(environment, hostScope)),
+    getAgent: (target, hostScope, timeoutMs) => getAgent(target, scopedEnvironment(environment, hostScope), timeoutMs),
+    promptAgent: (input, hostScope, timeoutMs) => promptAgent(input, scopedEnvironment(environment, hostScope), timeoutMs),
   };
 }
 
@@ -37,6 +37,8 @@ export interface TickOptions {
   indexFile: string;
   herdr: TickHerdr;
   now?: () => number;
+  /** Monotonic elapsed clock; tests inject it with their external-call delays. */
+  monotonicNow?: () => number;
   log?: (event: Record<string, unknown>) => void;
   /** Test barrier at the exact boundary where a stale tick would persist. */
   beforePersist?: () => void;
@@ -63,11 +65,11 @@ export const MAX_WAKE_RUNS_PER_PROMPT = 50;
 export const MAX_WAKE_BYTES = 128 * 1024;
 export const MAX_UNKNOWN_WAKE_ATTEMPTS = 2;
 export const TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP = 3;
-export const TICK_EXECUTOR_LEASE_MS = 5 * 60_000;
 export const MAX_HERDR_CALLS_PER_TICK = 128;
 export const MAX_RUNS_PER_TICK = 20;
 export const TICK_DEADLINE_MS = 25_000;
 export const TICK_DECISION_BUDGET_MS = 10_000;
+export const TICK_COMPLETION_RESERVE_MS = 1_000;
 
 class TickLimitReached extends Error {}
 
@@ -174,18 +176,18 @@ function sameObserver(a: ReadRun["supervision"]["observer"], b: ReadRun["supervi
   return a.sessionId === b.sessionId && a.terminalId === b.terminalId && a.paneId === b.paneId && a.hostScope === b.hostScope;
 }
 
-function executeTick(options: TickOptions, executorOperationId: string): TickResult {
-  const now = options.now ?? (() => Date.now());
-  const tickNow = now();
+function executeTick(options: TickOptions, executorOperationId: string, tickNow: number, tickStartedMonotonic: number): TickResult {
+  const monotonicNow = options.monotonicNow ?? options.now ?? (() => performance.now());
   const at = new Date(tickNow).toISOString();
   const log = options.log ?? ((event) => appendLog(path.join(path.dirname(options.indexFile), "tick.log"), event));
   const index = readIndex(options.indexFile);
   let herdrCalls = 0;
-  const checkedCall = <T>(call: () => T): T => {
+  const checkedCall = <T>(label: string, call: (remainingMs: number) => T): T => {
     if (herdrCalls >= MAX_HERDR_CALLS_PER_TICK) throw new TickLimitReached(`tick herdr call budget ${MAX_HERDR_CALLS_PER_TICK} exhausted; remaining runs are deferred to the next tick`);
-    if (now() - tickNow >= TICK_DEADLINE_MS) throw new TickLimitReached(`tick deadline ${TICK_DEADLINE_MS}ms exhausted; remaining runs are deferred to the next tick`);
+    const remainingMs = Math.floor(TICK_DEADLINE_MS - TICK_COMPLETION_RESERVE_MS - (monotonicNow() - tickStartedMonotonic));
+    if (remainingMs <= 0) throw new TickLimitReached(`tick deadline ${TICK_DEADLINE_MS}ms exhausted before ${label}; the run records this bounded failure for operator inspection`);
     herdrCalls += 1;
-    return call();
+    return call(remainingMs);
   };
   // The round-two 64-run reproduction spent the whole external-call budget
   // scanning, then repeated the same prefix forever without one delivery.
@@ -249,7 +251,7 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
 
   if (scheduledEntries.length === 0) {
     try {
-      herdr = checkedCall(() => options.herdr.probe());
+      herdr = checkedCall("herdr availability probe", (remainingMs) => options.herdr.probe(undefined, remainingMs));
     } catch (error) {
       if (!(error instanceof TickLimitReached)) throw error;
       limitDetail = error.message;
@@ -262,7 +264,7 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
     const key = `${hostScope}\0${target}`;
     const cached = lookups.get(key);
     if (cached !== undefined) return cached;
-    const answer = checkedCall(() => options.herdr.getAgent(target, hostScope));
+    const answer = checkedCall(`agent lookup ${target}`, (remainingMs) => options.herdr.getAgent(target, hostScope, remainingMs));
     if (answer.kind === "unavailable") herdrUnavailableDetails.add(answer.detail);
     herdr = herdrUnavailableDetails.size === 0
       ? { available: true, detail: null }
@@ -288,7 +290,7 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
     // The 20-run reproduction spent its full 25 seconds scanning and reached
     // zero submissions on every retry. Stop discovery after 10 seconds so
     // the already judged intents retain time for identity checks and input.
-    if (scheduledIndex > 0 && now() - tickNow >= TICK_DECISION_BUDGET_MS) {
+    if (scheduledIndex > 0 && monotonicNow() - tickStartedMonotonic >= TICK_DECISION_BUDGET_MS) {
       recordLimit(scheduledEntries.slice(scheduledIndex), `tick decision budget ${TICK_DECISION_BUDGET_MS}ms reached; remaining runs are deferred to the next tick`);
       break;
     }
@@ -403,35 +405,10 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
     }
     if (currentItems.length === 0) continue;
     const currentObserver = currentItems[0]!.run.supervision.observer;
-    let freshVerdict: ReturnType<typeof judgeObserver>;
-    try {
-      freshVerdict = judgeObserver(currentObserver, checkedCall(() => options.herdr.getAgent(currentObserver.paneId, currentObserver.hostScope)));
-    } catch (error) {
-      if (!(error instanceof TickLimitReached)) throw error;
-      limitDetail = error.message;
-      break;
-    }
-    if (freshVerdict.kind !== "match" || freshVerdict.status === "working" || freshVerdict.status === "blocked") {
-      const detail = freshVerdict.kind !== "match" ? `${freshVerdict.kind}: ${freshVerdict.detail}` : `observer is ${freshVerdict.status}; delivery deferred`;
-      for (const { item } of currentItems) {
-        addUpdate(item.loaded.entry, (held) => {
-          held.lastObservation = {
-            at,
-            observer: freshVerdict.kind === "match" ? `match (${freshVerdict.status})` : `${freshVerdict.kind}: ${freshVerdict.detail}`,
-            implementor: held.lastObservation?.implementor ?? "unobserved",
-            guardedPrompt: freshVerdict.kind === "match" && freshVerdict.inputGuard !== null,
-          };
-          if (freshVerdict.kind !== "match") held.lastFailure = { at, detail: freshVerdict.detail };
-        });
-        const removed = item.decision.terminal && freshVerdict.kind === "observer-gone"
-          ? recordTerminalFailure(item, detail, item.loaded.entry.terminalFailureTicks)
-          : false;
-        results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: removed ? "undelivered-terminal" : "deferred", detail });
-      }
-      continue;
-    }
-    // Agent lookup can block. Recheck enrollment and state after it returns,
-    // so a handover or re-dispatch during that wait cannot inherit this wake.
+    // The decision already admitted only a deliverable Observer. Re-reading
+    // state here, then performing one final uncached identity lookup after the
+    // durable reservation, preserves the safety boundary without spending a
+    // redundant external call (round-three 30-second single-run incident).
     const finalIndex = readIndex(options.indexFile);
     const sendItems = currentItems.filter(({ item, run }) => {
       const entry = finalIndex.entries.find((candidate) => candidate.statePath === item.loaded.entry.statePath && candidate.enrollmentId === item.loaded.entry.enrollmentId);
@@ -522,7 +499,7 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
     const executableObserver = executableItems[0]!.run.supervision.observer;
     let executableVerdict: ReturnType<typeof judgeObserver>;
     try {
-      executableVerdict = judgeObserver(executableObserver, checkedCall(() => options.herdr.getAgent(executableObserver.paneId, executableObserver.hostScope)));
+      executableVerdict = judgeObserver(executableObserver, checkedCall(`final Observer lookup ${executableObserver.paneId}`, (remainingMs) => options.herdr.getAgent(executableObserver.paneId, executableObserver.hostScope, remainingMs)));
     } catch (error) {
       releaseReservations(executableItems);
       if (!(error instanceof TickLimitReached)) throw error;
@@ -533,6 +510,15 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
       releaseReservations(executableItems);
       const detail = executableVerdict.kind !== "match" ? `${executableVerdict.kind}: ${executableVerdict.detail}` : `observer is ${executableVerdict.status}; delivery deferred`;
       for (const { item } of executableItems) {
+        addUpdate(item.loaded.entry, (held) => {
+          held.lastObservation = {
+            at,
+            observer: executableVerdict.kind === "match" ? `match (${executableVerdict.status})` : `${executableVerdict.kind}: ${executableVerdict.detail}`,
+            implementor: held.lastObservation?.implementor ?? "unobserved",
+            guardedPrompt: executableVerdict.kind === "match" && executableVerdict.inputGuard !== null,
+          };
+          if (executableVerdict.kind !== "match") held.lastFailure = { at, detail: executableVerdict.detail };
+        });
         const removed = item.decision.terminal && executableVerdict.kind === "observer-gone"
           ? recordTerminalFailure(item, detail, item.loaded.entry.terminalFailureTicks)
           : false;
@@ -546,14 +532,14 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
     const invalidAfterLookup = executableItems.filter((candidate) => !beforePrompt.includes(candidate));
     if (invalidAfterLookup.length > 0) {
       releaseReservations(invalidAfterLookup);
-      for (const { item } of invalidAfterLookup) results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: "deferred", detail: "reservation, enrollment, executor or Observer changed during final delivery lookup; stale wake discarded" });
+      for (const { item } of invalidAfterLookup) results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: "deferred", detail: "reservation, enrollment, executor or Observer changed during the final identity lookup; stale wake discarded" });
     }
     reservedItems = beforePrompt;
     if (reservedItems.length === 0) continue;
     lines = reservedItems.map(({ item, run }) => ({ slug: run.facts.slug, statePath: item.loaded.entry.statePath, runInstanceId: run.supervision.runInstanceId, observerSessionId: run.supervision.observer.sessionId, reasons: item.decision.due }));
     let outcome: PromptOutcome;
     try {
-      outcome = checkedCall(() => options.herdr.promptAgent({ target: executableObserver.paneId, text: renderWake(executableObserver.sessionId, lines), expectedInputGuard: executableVerdict.inputGuard }, executableObserver.hostScope));
+      outcome = checkedCall(`wake submission ${executableObserver.paneId}`, (remainingMs) => options.herdr.promptAgent({ target: executableObserver.paneId, text: renderWake(executableObserver.sessionId, lines), expectedInputGuard: executableVerdict.inputGuard }, executableObserver.hostScope, remainingMs));
     } catch (error) {
       // No prompt call began when checkedCall raises its cap/deadline. Restore
       // the exact prior attempt record so a provably absent effect costs no
@@ -609,7 +595,9 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
 
 export function runTick(options: TickOptions): TickResult {
   const now = options.now ?? (() => Date.now());
+  const monotonicNow = options.monotonicNow ?? options.now ?? (() => performance.now());
   const started = now();
+  const startedMonotonic = monotonicNow === now ? started : monotonicNow();
   const operationId = crypto.randomUUID();
   const currentProcessIncarnation = processIncarnation(process.pid);
   const claimed = updateIndex(options.indexFile, (index) => {
@@ -636,7 +624,7 @@ export function runTick(options: TickOptions): TickResult {
     const exactOwnerAlive = lease !== null && ownerAlive
       && (legacyOwnerCouldMatch || (storedIncarnation.kind === "exact" && (observedIncarnation === null || observedIncarnation === storedIncarnation.value)));
     if (exactOwnerAlive) return;
-    index.tickExecutor = { operationId, pid: process.pid, processIncarnation: currentProcessIncarnation, startedAt: new Date(started).toISOString(), expiresAt: new Date(started + TICK_EXECUTOR_LEASE_MS).toISOString() };
+    index.tickExecutor = { operationId, pid: process.pid, processIncarnation: currentProcessIncarnation, startedAt: new Date(started).toISOString() };
   });
   // updateIndex may replay the callback after a lost revision race. Closure
   // flags described an abandoned attempt in the round-two reproduction; the
@@ -647,7 +635,7 @@ export function runTick(options: TickOptions): TickResult {
     return { at, herdr: previous, runs: [], executor: "already-running" };
   }
   try {
-    return executeTick(options, operationId);
+    return executeTick(options, operationId, started, startedMonotonic);
   } finally {
     updateIndex(options.indexFile, (index) => {
       if (index.tickExecutor?.operationId === operationId) index.tickExecutor = null;

@@ -2,10 +2,10 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { getAgent, guardedPromptSupport, type HerdrEnvironment } from "../implement/herdr";
 import { recordEvent } from "../implement/events";
-import { loadState, nowIso, persistState } from "../implement/store";
-import type { ImplementCommandResult, ObserverIdentity } from "../implement/types";
+import { loadState, nowIso, persistState, resolveStatePath } from "../implement/store";
+import type { ImplementCommandResult, ImplementState, ObserverIdentity } from "../implement/types";
 import { currentHerdrRole } from "../runs/session";
-import { readIndex, enrollRun, type SupervisorIndex } from "./index";
+import { captureEnrollmentGeneration, readIndex, reconcileEnrollmentAuthority, type EnrollmentAuthority, type SupervisorIndex } from "./index";
 import { installLaunchAgent, launchAgentStatus, uninstallLaunchAgent, type LaunchAgentSpec } from "./launchd";
 import { indexPath, launchdLogPath, tickLogPath, TICK_INTERVAL_MS } from "./paths";
 import { herdrForTick, rotateLog, runTick } from "./tick";
@@ -142,18 +142,30 @@ function uninstall(env: NodeJS.ProcessEnv): ImplementCommandResult {
  * lease is live (persistState), and refused when herdr cannot name this
  * pane's session - an unverifiable Observer would never receive a wake.
  */
-function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.ProcessEnv): ImplementCommandResult {
+export interface SupervisorCommandHooks {
+  /** Deterministic concurrency boundary after handover authority is durable. */
+  afterHandoverPersist?: () => void;
+  herdr?: HerdrEnvironment;
+}
+
+async function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.ProcessEnv, hooks: SupervisorCommandHooks = {}): Promise<ImplementCommandResult> {
   if (currentHerdrRole(env) === "implementor") throw new Error("a marked implementor pane cannot become the Observer");
   const approval = flag(args, "approval")?.trim() ?? "";
   if (approval === "") throw new Error("handover requires --approval \"<the user's verbatim words>\"");
   const slug = flag(args, "slug");
   const statePathFlag = flag(args, "state");
-  const { statePath, state } = loadState(projectRoot, { ...(slug !== undefined ? { slug } : {}), ...(statePathFlag !== undefined ? { state: statePathFlag } : {}) });
+  const stateOptions = { ...(slug !== undefined ? { slug } : {}), ...(statePathFlag !== undefined ? { state: statePathFlag } : {}) };
+  const statePath = resolveStatePath(projectRoot, stateOptions);
+  const supervisorIndex = indexPath(env);
+  // Capture the scheduler generation before the authority snapshot. A newer
+  // dispatch that lands after this point must remain authoritative.
+  const expectedEnrollmentId = captureEnrollmentGeneration(supervisorIndex, statePath);
+  const { state } = loadState(projectRoot, { state: statePath });
   const supervision = state.supervision ?? null;
   const pending = state.pendingDispatch ?? null;
   if (supervision === null && pending === null) throw new Error(`run ${state.topicSlug} has no supervision or pending dispatch record; it was never dispatched under Herdr`);
   if (state.status !== "active") throw new Error(`run ${state.topicSlug} is ${state.status}; a finished run is not handed over`);
-  const observer = currentObserverIdentity(env);
+  const observer = currentObserverIdentity(env, hooks.herdr ?? { env });
   if (observer.identity === null) throw new Error(observer.problem ?? "cannot read this pane's identity");
   const at = nowIso();
   const from = supervision?.observer ?? pending!.observer;
@@ -171,19 +183,34 @@ function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.Process
   }
   recordEvent(state, { kind: "handover", actor: "human", subject: null, summary: `Observer handed over to session ${observer.identity.sessionId} in ${observer.identity.paneId}`, at });
   persistState(statePath, state);
-  const active = pending ?? supervision!;
-  enrollRun(indexPath(env), { statePath, runInstanceId: active.runInstanceId, recoveryOwner: active.recoveryOwner, at });
-  return result("handover", true, `run ${state.topicSlug} is now observed by session ${observer.identity.sessionId} in pane ${observer.identity.paneId}; wakes and partial recovery resume on the next action`, { observer: observer.identity, handovers: pending?.handovers?.length ?? supervision?.handovers.length ?? 0, pendingPhase: pending?.phase ?? null });
+  hooks.afterHandoverPersist?.();
+  const authorityOf = (current: ImplementState): EnrollmentAuthority | null => {
+    const active = current.pendingDispatch ?? current.supervision ?? null;
+    return active === null ? null : { runInstanceId: active.runInstanceId, recoveryOwner: active.recoveryOwner };
+  };
+  reconcileEnrollmentAuthority(supervisorIndex, {
+    statePath,
+    expectedEnrollmentId,
+    readAuthority: () => authorityOf(loadState(projectRoot, { state: statePath }).state),
+    at,
+    cause: `handover to Observer ${observer.identity.sessionId} reconciled current dispatch authority`,
+  });
+  const current = loadState(projectRoot, { state: statePath }).state;
+  const currentRecord = current.pendingDispatch ?? current.supervision ?? null;
+  if (currentRecord === null || currentRecord.observer.sessionId !== observer.identity.sessionId || currentRecord.observer.paneId !== observer.identity.paneId) {
+    throw new Error("handover authority changed after persistence; the current enrollment was reconciled but this handover is no longer authoritative");
+  }
+  return result("handover", true, `run ${current.topicSlug} is now observed by session ${observer.identity.sessionId} in pane ${observer.identity.paneId}; wakes and partial recovery resume on the next action`, { observer: observer.identity, handovers: current.pendingDispatch?.handovers?.length ?? current.supervision?.handovers.length ?? 0, pendingPhase: current.pendingDispatch?.phase ?? null });
 }
 
-export async function runSupervisorCommand(projectRoot: string, args: SupervisorArgs, env: NodeJS.ProcessEnv = process.env): Promise<ImplementCommandResult> {
+export async function runSupervisorCommand(projectRoot: string, args: SupervisorArgs, env: NodeJS.ProcessEnv = process.env, hooks: SupervisorCommandHooks = {}): Promise<ImplementCommandResult> {
   const subcommand = args.positional[1];
   try {
     if (subcommand === "tick") return tick(env);
     if (subcommand === "status") return status(env);
     if (subcommand === "install") return install(env);
     if (subcommand === "uninstall") return uninstall(env);
-    if (subcommand === "handover") return handover(projectRoot, args, env);
+    if (subcommand === "handover") return handover(projectRoot, args, env, hooks);
     return { ok: false, action: `supervisor:${subcommand ?? "unknown"}`, exitCode: 2, message: "unknown supervisor subcommand; use tick, status, install, uninstall, or handover" };
   } catch (error) {
     return { ok: false, action: `supervisor:${subcommand ?? "unknown"}`, exitCode: 2, message: error instanceof Error ? error.message : String(error) };

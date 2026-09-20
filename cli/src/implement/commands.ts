@@ -21,7 +21,7 @@ import { assertNoActiveVerification, recoverVerification, cancelVerificationExec
 import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEscalation, renderDiagnosis, solverPrompt, validateDiagnosis } from "./solver";
 import { closePreparedSpawn, getAgent, herdrCapabilities, isAgentAlive, promptAgent, readPane, spawnImplementor, type SpawnPlacement } from "./herdr";
 import { currentObserverIdentity, newRunInstanceId } from "../supervisor/commands";
-import { enrollRun, readIndex, reconcileRunEnrollment, type SupervisorIndex } from "../supervisor/index";
+import { captureEnrollmentGeneration, readIndex, reconcileEnrollmentAuthority, type SupervisorIndex } from "../supervisor/index";
 import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest } from "../supervisor/digest";
 import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
@@ -604,7 +604,7 @@ export function reconcileCurrentDispatchPrerequisites(projectRoot: string, state
   // the later review reproduced a replacement with active verification that
   // otherwise left state on the new run and the index on the stale run.
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    const expectedEnrollmentId = enrollmentAt(readIndex(indexPath()), statePath)?.enrollmentId ?? null;
+    const expectedEnrollmentId = captureEnrollmentGeneration(indexPath(), statePath);
     const before = loadState(projectRoot, { state: statePath }).state;
     assertRunOpenForMutation(before);
     if (before.activeVerification !== undefined) throw new DispatchRejected(`verification still active: ${before.activeVerification.attemptId}; dispatch prerequisites changed nothing`);
@@ -615,7 +615,13 @@ export function reconcileCurrentDispatchPrerequisites(projectRoot: string, state
     afterAuthoritySnapshot?.();
     writeActivePointer(projectRoot, before, observerSession);
     const desired = desiredEnrollment(before);
-    const reconciled = reconcileRunEnrollment(indexPath(), { statePath, desired, expectedEnrollmentId, at: nowIso(), cause });
+    const reconciled = reconcileEnrollmentAuthority(indexPath(), {
+      statePath,
+      expectedEnrollmentId,
+      readAuthority: () => desiredEnrollment(loadState(projectRoot, { state: statePath }).state),
+      at: nowIso(),
+      cause,
+    }).index;
     const after = loadState(projectRoot, { state: statePath }).state;
     if (prerequisiteFingerprint(after) === prerequisiteFingerprint(before) && enrollmentMatches(reconciled, statePath, desired)) return after;
   }
@@ -623,7 +629,7 @@ export function reconcileCurrentDispatchPrerequisites(projectRoot: string, state
 }
 
 export function repairPendingDispatchPrerequisites(projectRoot: string, statePath: string, state: ImplementState, pending: PendingDispatch, afterEnrollmentSnapshot?: () => void): { state: ImplementState; pending: PendingDispatch } {
-  const expectedEnrollmentId = enrollmentAt(readIndex(indexPath()), statePath)?.enrollmentId ?? null;
+  const expectedEnrollmentId = captureEnrollmentGeneration(indexPath(), statePath);
   // The review reproduced a replacement that landed before generation
   // capture: stale pending authority then claimed the replacement's token.
   // Capture the token first and validate the exact pending intent afterward,
@@ -637,13 +643,13 @@ export function repairPendingDispatchPrerequisites(projectRoot: string, statePat
   // resolve through the sessionless bookmark, which must exist before the
   // executable handoff can tell the child to use them.
   writeActivePointer(projectRoot, state, null);
-  const reconciled = reconcileRunEnrollment(indexPath(), {
+  const reconciled = reconcileEnrollmentAuthority(indexPath(), {
     statePath,
-    desired: { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner },
     expectedEnrollmentId,
+    readAuthority: () => desiredEnrollment(loadState(projectRoot, { state: statePath }).state),
     at: nowIso(),
     cause: `partial dispatch ${pending.runInstanceId} restored before executable handoff`,
-  });
+  }).index;
   const validated = revalidatePendingHandoff(projectRoot, statePath, pending, "dispatch authority changed while navigation or enrollment was restored");
   if (!enrollmentMatches(reconciled, statePath, { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner })) {
     throw new DispatchRejected("dispatch enrollment changed while navigation was restored; no handoff input was sent");
@@ -815,7 +821,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     // silently missing a child that may already be starting.
     state.pendingDispatch = pending;
     persistState(statePath, state);
-    try { enrollRun(indexPath(), { statePath, runInstanceId, recoveryOwner, at: dispatchedAt }); }
+    try { reconcileCurrentDispatchPrerequisites(projectRoot, statePath, `planned dispatch ${runInstanceId} enrolled before child start`); }
     catch (error) {
       state.pendingDispatch = null;
       persistState(statePath, state);
@@ -864,7 +870,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         };
         recordId = recordDispatch(projectRoot, statePath, state, { ...started, agent: started.name, cwd: placed.placement!.cwd }, "observer",
           `implementor ${started.name} (${started.kind}) started in ${started.paneId}; exact identity recorded before handoff`, supervision).id;
-        enrollRun(indexPath(), { statePath, runInstanceId, recoveryOwner, at: dispatchedAt });
+        reconcileCurrentDispatchPrerequisites(projectRoot, statePath, `started dispatch ${runInstanceId} reconciled before executable handoff`);
       },
       beforeSubmit: () => {
         const ready = revalidatePendingHandoff(projectRoot, statePath, pending, "run or dispatch authority changed during the final target lookup");
@@ -1029,7 +1035,7 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
     state.pendingDispatch = pending;
     persistState(statePath, state);
     try {
-      enrollRun(indexPath(), { statePath, runInstanceId: replacementInstanceId, recoveryOwner: pending.recoveryOwner, at: dispatchedAt });
+      reconcileCurrentDispatchPrerequisites(projectRoot, statePath, `planned replacement ${replacementInstanceId} enrolled before child start`);
       reset = spawnImplementor({
         name: replacementName,
         placement: replacement.placement,
@@ -1061,7 +1067,7 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
           };
           recordDispatch(projectRoot, statePath, state, { ...started, agent: started.name, cwd: replacement.placement!.cwd }, issuer,
             `replacement implementor ${started.name} started in ${started.paneId} for escalation ${record.id}; exact identity recorded before handoff`, refreshed);
-          enrollRun(indexPath(), { statePath, runInstanceId: replacementInstanceId, recoveryOwner: refreshed.recoveryOwner, at: dispatchedAt });
+          reconcileCurrentDispatchPrerequisites(projectRoot, statePath, `started replacement ${replacementInstanceId} reconciled before executable handoff`);
         },
         beforeSubmit: () => {
           const ready = revalidatePendingHandoff(projectRoot, statePath, pending, "run or replacement authority changed during the final target lookup");

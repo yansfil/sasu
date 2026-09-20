@@ -102,7 +102,9 @@ test("engineering 14: a live executor is not stolen merely because its lease tim
   const herdr = fakeTickHerdr();
   const result = tick(index, herdr, T0);
   assert.equal(result.executor, "already-running");
-  assert.equal(readIndex(index).tickExecutor.operationId, "live-but-delayed");
+  const executor = readIndex(index).tickExecutor;
+  assert.equal(executor.operationId, "live-but-delayed");
+  assert.equal("expiresAt" in executor, false, "legacy expiry metadata is not retained as a false recovery promise");
 });
 
 test("engineering 11/14: process incarnation is stable across caller timezone changes", () => {
@@ -289,6 +291,58 @@ test("engineering 10/15: slow external probes persist continuation instead of re
   }
   assert.equal(fake.prompts.length, 20, "persistent latency still rotates through every deferred enrollment");
   assert.equal(new Set(fake.prompts.map((prompt) => prompt.target)).size, 20);
+});
+
+test("engineering 11/15: one slow ready run completes inside the admitted tick deadline", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: new Date(T0).toISOString() });
+  const fake = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
+  let clock = T0;
+  const budgets = [];
+  const slowHerdr = {
+    probe(scope, timeoutMs) { budgets.push(timeoutMs); clock += 6_000; return fake.herdr.probe(scope); },
+    getAgent(target, scope, timeoutMs) { budgets.push(timeoutMs); clock += 6_000; return fake.herdr.getAgent(target, scope); },
+    promptAgent(input, scope, timeoutMs) { budgets.push(timeoutMs); clock += 6_000; return fake.herdr.promptAgent(input, scope); },
+  };
+
+  const result = runTick({ indexFile: index, herdr: slowHerdr, now: () => clock, log: silent });
+
+  assert.equal(result.runs[0].action, "sent");
+  assert.equal(fake.prompts.length, 1);
+  assert.ok(clock - T0 <= TICK_DEADLINE_MS, `tick took ${clock - T0}ms`);
+  assert.equal(budgets.length, 4, "one implementor observation, initial Observer observation, final identity check and submission");
+  assert.equal(budgets.every((budget) => Number.isFinite(budget) && budget > 0 && budget <= TICK_DEADLINE_MS), true, "every adapter call receives the remaining monotonic budget");
+});
+
+test("engineering 10/11/15: a slow single-run delivery reaches a bounded actionable outcome instead of starving", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: new Date(T0).toISOString() });
+  const fake = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
+  let clock = T0;
+  const slowHerdr = {
+    probe(scope, timeoutMs) { clock += Math.min(6_500, timeoutMs ?? 6_500); return fake.herdr.probe(scope); },
+    getAgent(target, scope, timeoutMs) { clock += Math.min(6_500, timeoutMs ?? 6_500); return fake.herdr.getAgent(target, scope); },
+    promptAgent(input, scope, timeoutMs) {
+      const allowed = timeoutMs ?? 6_500;
+      clock += Math.min(6_500, allowed);
+      if (allowed < 6_500) return { outcome: "unknown", path: "session-match", code: "herdr_prompt_timeout", detail: "admitted deadline reached" };
+      return fake.herdr.promptAgent(input, scope);
+    },
+  };
+
+  const results = [];
+  for (let pass = 0; pass < 4; pass += 1) {
+    const started = clock;
+    results.push(runTick({ indexFile: index, herdr: slowHerdr, now: () => clock, log: silent }));
+    assert.ok(clock - started <= TICK_DEADLINE_MS, `tick ${pass + 1} exceeded the total bound`);
+    clock += MIN;
+  }
+
+  assert.equal(readIndex(index).entries[0].pendingWake.attempts, MAX_UNKNOWN_WAKE_ATTEMPTS);
+  assert.equal(results.at(-1).runs[0].action, "failed");
+  assert.match(results.at(-1).runs[0].detail, /no further automatic input/);
 });
 
 test("engineering 10/15: a fair bounded batch eventually delivers every ready run", () => {

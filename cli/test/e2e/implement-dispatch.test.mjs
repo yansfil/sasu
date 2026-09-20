@@ -12,6 +12,7 @@ import { installFakeHerdr } from "../helpers/fake-herdr.mjs";
 import { attemptFixture } from "../helpers/implement-state.mjs";
 import { reconcileCurrentDispatchPrerequisites, repairPendingDispatchPrerequisites, runImplementCommand } from "../../dist/implement/commands.js";
 import { enrollRun, readIndex, unenrollRun, updateIndex } from "../../dist/supervisor/index.js";
+import { runSupervisorCommand } from "../../dist/supervisor/commands.js";
 
 const OBSERVER = "observer-session";
 const IMPLEMENTOR = "implementor-session";
@@ -327,6 +328,50 @@ test("B2/B18: approved handover transfers a planned dispatch before supervision 
   const recovered = sasu(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff"], { env: replacementEnv });
   assert.equal(recovered.status, 0, recovered.text);
   assert.equal(state(root).ownerSessionId, "replacement-session", "the transferred Observer can begin the next dispatch without a second adoption");
+});
+
+test("B18/engineering 11/13: handover cannot replace a newer dispatch enrollment after its state commit", async () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake, home } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  assert.equal(dispatch(root, env).status, 0);
+  const oldInstance = state(root).supervision.runInstanceId;
+  fake.patchAgent("w4G:p12", { name: "observer", agent: "claude", agent_status: "idle", pane_id: "w4G:p12", terminal_id: "term_replacement", agent_session: { value: "replacement-session" }, tokens: { activity: "2000" }, state_change_seq: 2 });
+  const newerInstance = "newer-dispatch-instance";
+  let barrierReached = false;
+  const handed = await runSupervisorCommand(root, {
+    positional: ["supervisor", "handover"],
+    flags: new Map([["slug", "fixture"], ["approval", "user: replacement Observer takes over"]]),
+  }, { ...env, CLAUDE_SESSION_ID: "replacement-session" }, {
+    herdr: { env: { ...env, CLAUDE_SESSION_ID: "replacement-session" } },
+    afterHandoverPersist: () => {
+      barrierReached = true;
+      const newer = state(root);
+      newer.pendingDispatch = {
+        runInstanceId: newerInstance,
+        observer: newer.supervision.observer,
+        plannedAgent: "replacement",
+        phase: "planned",
+        prepared: null,
+        implementor: null,
+        canonicalRepository: root,
+        prdPath: newer.prdPath,
+        dispatchHead: null,
+        dispatchedAt: "2026-09-20T15:00:00.000Z",
+        patrolIntervalMs: 15 * 60 * 1000,
+        recoveryOwner: "supervisor",
+        handovers: [],
+      };
+      fs.writeFileSync(path.join(root, STATE_PATH), `${JSON.stringify(newer, null, 2)}\n`);
+      enrollRun(path.join(home, ".sasu", "supervisor", "index.json"), { statePath: path.join(root, STATE_PATH), runInstanceId: newerInstance, recoveryOwner: "supervisor", at: "2026-09-20T15:00:00.000Z" });
+    },
+  });
+  assert.equal(barrierReached, true);
+  assert.equal(handed.ok, true, handed.message);
+  assert.equal(state(root).pendingDispatch.runInstanceId, newerInstance);
+  assert.notEqual(oldInstance, newerInstance);
+  assert.equal(readIndex(path.join(home, ".sasu", "supervisor", "index.json")).entries[0].runInstanceId, newerInstance, "handover reconciliation must preserve the current dispatch generation");
 });
 
 test("D-04/engineering 10: a positively absent started child has an idempotent recovery operation", () => {
