@@ -59,6 +59,7 @@ export const LOG_EVENT_CAP_BYTES = 256 * 1024;
 export const MAX_WAKE_RUNS_PER_PROMPT = 50;
 export const MAX_WAKE_BYTES = 128 * 1024;
 export const MAX_UNKNOWN_WAKE_ATTEMPTS = 2;
+export const TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP = 3;
 
 export function rotateLog(file: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -136,6 +137,16 @@ export function runTick(options: TickOptions): TickResult {
   };
 
   interface Judged { loaded: Loaded; run: ReadRun; decision: Decision }
+  const recordTerminalFailure = (item: Judged, detail: string, prior: number): boolean => {
+    const count = prior + 1;
+    addUpdate(item.loaded.entry, (held) => {
+      held.terminalFailureTicks = Math.max(held.terminalFailureTicks, count);
+      held.lastFailure = { at, detail: `${detail}; terminal delivery failed ${count}/${TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP} consecutive tick(s)` };
+    });
+    if (count < TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP) return false;
+    removals.push({ statePath: item.loaded.entry.statePath, enrollmentId: item.loaded.entry.enrollmentId, cause: `terminal run could not notify its Observer for ${count} consecutive ticks: ${detail}` });
+    return true;
+  };
   const judged: Judged[] = [];
   for (const entry of index.entries) {
     const loaded = loadEntry(entry);
@@ -161,7 +172,7 @@ export function runTick(options: TickOptions): TickResult {
     const run = loaded.run;
     let decision: Decision;
     try {
-      const implementorScope = run.supervision.implementor.hostScope ?? run.supervision.observer.hostScope;
+      const implementorScope = run.supervision.implementor.hostScope;
       decision = decideRun(run.facts, {
         implementor: lookup(run.supervision.implementor.paneId, implementorScope),
         observer: lookup(run.supervision.observer.paneId, run.supervision.observer.hostScope),
@@ -182,6 +193,7 @@ export function runTick(options: TickOptions): TickResult {
     const observation = { at, observer: decision.observer.kind === "match" ? `match (${decision.observer.status})` : `${decision.observer.kind}: ${decision.observer.detail}`, implementor: decision.implementor.kind === "present" ? `present (${decision.implementor.status})` : `${decision.implementor.kind}: ${decision.implementor.detail}`, guardedPrompt: decision.observer.kind === "match" && decision.observer.inputGuard !== null };
     addUpdate(item.loaded.entry, (held) => {
       held.missingTicks = 0;
+      if (!decision.terminal) held.terminalFailureTicks = 0;
       held.lastObservation = observation;
       if (decision.observer.kind !== "match") held.lastFailure = { at, detail: decision.observer.detail };
       else if (decision.implementor.kind === "unobservable") held.lastFailure = { at, detail: decision.implementor.detail };
@@ -193,7 +205,10 @@ export function runTick(options: TickOptions): TickResult {
       continue;
     }
     if (decision.deferral !== null) {
-      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision, action: "deferred", detail: decision.deferral });
+      const removed = decision.terminal
+        ? recordTerminalFailure(item, decision.deferral, item.loaded.entry.terminalFailureTicks)
+        : false;
+      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision, action: removed ? "removed" : "deferred", detail: decision.deferral });
       log({ event: "supervisor.wake.deferred", slug: item.run.facts.slug, enrollmentId: item.loaded.entry.enrollmentId, reasons: decision.due.map((entry) => entry.reason), detail: decision.deferral, at });
       continue;
     }
@@ -201,7 +216,8 @@ export function runTick(options: TickOptions): TickResult {
     if (item.loaded.entry.pendingWake?.episode === episode && item.loaded.entry.pendingWake.attempts >= MAX_UNKNOWN_WAKE_ATTEMPTS) {
       const detail = `wake delivery remains unknown after ${MAX_UNKNOWN_WAKE_ATTEMPTS} attempts; no further automatic input is sent for episode ${episode}`;
       addUpdate(item.loaded.entry, (held) => { held.lastFailure = { at, detail }; });
-      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision, action: "failed", detail });
+      const removed = decision.terminal ? recordTerminalFailure(item, detail, item.loaded.entry.terminalFailureTicks) : false;
+      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision, action: removed ? "removed" : "failed", detail });
       continue;
     }
     const observer = item.run.supervision.observer;
@@ -235,7 +251,21 @@ export function runTick(options: TickOptions): TickResult {
     const freshVerdict = judgeObserver(currentObserver, options.herdr.getAgent(currentObserver.paneId, currentObserver.hostScope));
     if (freshVerdict.kind !== "match" || freshVerdict.status === "working" || freshVerdict.status === "blocked") {
       const detail = freshVerdict.kind !== "match" ? `${freshVerdict.kind}: ${freshVerdict.detail}` : `observer is ${freshVerdict.status}; delivery deferred`;
-      for (const { item } of currentItems) results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: "deferred", detail });
+      for (const { item } of currentItems) {
+        addUpdate(item.loaded.entry, (held) => {
+          held.lastObservation = {
+            at,
+            observer: freshVerdict.kind === "match" ? `match (${freshVerdict.status})` : `${freshVerdict.kind}: ${freshVerdict.detail}`,
+            implementor: held.lastObservation?.implementor ?? "unobserved",
+            guardedPrompt: freshVerdict.kind === "match" && freshVerdict.inputGuard !== null,
+          };
+          if (freshVerdict.kind !== "match") held.lastFailure = { at, detail: freshVerdict.detail };
+        });
+        const removed = item.decision.terminal
+          ? recordTerminalFailure(item, detail, item.loaded.entry.terminalFailureTicks)
+          : false;
+        results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: removed ? "removed" : "deferred", detail });
+      }
       continue;
     }
     // Agent lookup can block. Recheck enrollment and state after it returns,
@@ -283,7 +313,7 @@ export function runTick(options: TickOptions): TickResult {
           held.pendingWake = null;
           held.lastFailure = null;
         } else if (outcome.outcome === "unknown") {
-          const attempts = held.pendingWake?.episode === episode ? held.pendingWake.attempts + 1 : 1;
+          const attempts = item.loaded.entry.pendingWake?.episode === episode ? item.loaded.entry.pendingWake.attempts + 1 : 1;
           held.pendingWake = { episode, attempts, at };
           held.lastFailure = { at, detail: `wake delivery unknown (${outcome.code}), attempt ${attempts}/${MAX_UNKNOWN_WAKE_ATTEMPTS}: ${outcome.detail}` };
         } else {
@@ -291,7 +321,10 @@ export function runTick(options: TickOptions): TickResult {
           held.lastFailure = { at, detail: `wake rejected (${outcome.code}): ${outcome.detail}` };
         }
       });
-      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: outcome.outcome === "accepted" ? "sent" : "failed", detail: `${item.decision.due.map((candidate) => candidate.reason).join("+")}: ${outcome.outcome} via ${outcome.path} (${outcome.code})` });
+      const removed = item.decision.terminal && outcome.outcome !== "accepted"
+        ? recordTerminalFailure(item, `wake ${outcome.outcome} (${outcome.code}): ${outcome.detail}`, item.loaded.entry.terminalFailureTicks)
+        : false;
+      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: outcome.outcome === "accepted" ? "sent" : removed ? "removed" : "failed", detail: `${item.decision.due.map((candidate) => candidate.reason).join("+")}: ${outcome.outcome} via ${outcome.path} (${outcome.code})` });
       if (item.decision.terminal && outcome.outcome === "accepted") removals.push({ statePath: item.loaded.entry.statePath, enrollmentId: item.loaded.entry.enrollmentId, cause: `run ${item.run.facts.status}; terminal wake accepted` });
     }
     log({ event: "supervisor.wake.attempted", observer: currentObserver.sessionId, pane: currentObserver.paneId, hostScope: currentObserver.hostScope, runs: lines.map((line) => ({ statePath: line.statePath, slug: line.slug, instance: line.runInstanceId, reasons: line.reasons.map((entry) => entry.reason) })), outcome: outcome.outcome, path: outcome.path, code: outcome.code, at });

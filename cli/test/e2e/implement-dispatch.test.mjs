@@ -66,7 +66,7 @@ test("a worktree run's implementor is opened in a workspace on that worktree, ne
   assert.deepEqual(created, ["workspace", "create", "--cwd", worktree, "--label", "fixture", "--env", "SASU_HERDR_ROLE=implementor", "--env", `PATH=${env.PATH}`, "--env", `SASU_RUN_INSTANCE_ID=${runInstanceId}`, "--no-focus"], "the pane carries the marker and the run instance it was opened for");
   assert.equal(asked.some((argv) => argv[0] === "pane" && argv[1] === "split"), false, "the Observer's pane is never split");
   assert.deepEqual(asked.find((argv) => argv[1] === "start").slice(0, 7), ["agent", "start", "impl", "--kind", "claude", "--pane", "w7Z:p1"]);
-  assert.deepEqual(asked.find((argv) => argv[1] === "prompt"), ["agent", "prompt", "impl", PACKET]);
+  assert.deepEqual(asked.find((argv) => argv[1] === "prompt"), ["agent", "prompt", "w7Z:p1", PACKET]);
   assert.deepEqual(asked.find((argv) => argv[1] === "report-metadata"), ["pane", "report-metadata", "w7Z:p1", "--source", "sasu", "--token", "parent_pane=w4G:p12"], "the Observer's pane is declared as the parent, for hide's tree");
   assert.equal(dispatched.json.detail.parentLineage, "reported");
 
@@ -190,12 +190,12 @@ test("D-04: identity and enrollment persist before handoff, and a failed handoff
   assert.deepEqual(fake.prompts().map((entry) => [entry.target, entry.text]), [["w4G:p13", PACKET]]);
 });
 
-test("D-04: a crash-window agent is recovered from the prepared pane without creating another pane", () => {
+test("D-04: a prepared live agent without a durably captured UUID is refused rather than adopted", () => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
   const { env, fake } = herdrEnv(root);
   assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
-  const failed = dispatch(root, { ...env, HERDR_FAKE_FAIL_GET_TARGET: "impl" });
+  const failed = dispatch(root, { ...env, HERDR_FAKE_FAIL_GET_TARGET: "w4G:p13" });
   assert.equal(failed.status, 1, failed.text);
   const partial = state(root).pendingDispatch;
   assert.equal(partial.phase, "prepared");
@@ -204,11 +204,11 @@ test("D-04: a crash-window agent is recovered from the prepared pane without cre
   assert.equal(fake.prompts().length, 0);
 
   const resumed = sasu(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff"], { env, input: PACKET });
-  assert.equal(resumed.status, 0, resumed.text);
-  assert.equal(state(root).pendingDispatch, null);
-  assert.equal(state(root).supervision.implementor.sessionId, "impl-session");
-  assert.equal(fake.prompts().length, 1);
-  assert.equal(argvLog(fake.log).filter((argv) => argv[0] === "tab" && argv[1] === "create").length, 1, "recovery reuses the prepared pane");
+  assert.notEqual(resumed.status, 0, resumed.text);
+  assert.match(resumed.text, /identity was not durably recorded before it started/);
+  assert.equal(state(root).pendingDispatch.phase, "prepared");
+  assert.equal(fake.prompts().length, 0);
+  assert.equal(argvLog(fake.log).filter((argv) => argv[0] === "tab" && argv[1] === "create").length, 1, "recovery creates no second pane");
 });
 
 test("an in-place run's implementor is opened as a tab in the Observer's workspace", () => {

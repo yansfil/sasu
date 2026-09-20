@@ -59,6 +59,13 @@ test("a prompt rejected before the herdr process starts is definite and retryabl
     run: () => ({ status: null, stdout: "", stderr: "spawn herdr ENOENT", errorCode: "ENOENT" }),
   });
   assert.deepEqual({ outcome: result.outcome, code: result.code }, { outcome: "rejected", code: "herdr_spawn_failed" });
+
+  for (const errorCode of ["ETIMEDOUT", "ENOBUFS"]) {
+    const uncertain = promptAgent({ target: "w8D:p1", text: "x", expectedInputGuard: null }, {
+      run: () => ({ status: null, stdout: "", stderr: errorCode, errorCode }),
+    });
+    assert.equal(uncertain.outcome, "unknown", `${errorCode} may happen after the child received input`);
+  }
 });
 
 test("B11: a guarded wake carries the guard, needs the submitted acknowledgement, and never falls back to the plain path", () => {

@@ -24,6 +24,8 @@ export interface IndexEntry {
   recoveryOwner: RecoveryOwner;
   addedAt: string;
   missingTicks: number;
+  /** Consecutive ticks where a terminal run could not notify its Observer. */
+  terminalFailureTicks: number;
   lastWake: WakeRecord | null;
   /** One bounded current episode per reason. */
   acknowledgements: Partial<Record<WakeReason, string>>;
@@ -40,17 +42,20 @@ export interface SupervisorIndex {
   lastHerdr: { available: boolean; detail: string | null } | null;
   entries: IndexEntry[];
   removed: Array<{ at: string; statePath: string; cause: string }>;
+  /** Bounded operation ids make a linked write recognizable under a newer head. */
+  appliedWrites: string[];
 }
 
 export const REMOVED_HISTORY_CAP = 50;
 export const MISSING_TICKS_BEFORE_CLEANUP = 3;
 export const MAX_INDEX_ENTRIES = 1024;
 export const MAX_INDEX_BYTES = 8 * 1024 * 1024;
+export const APPLIED_WRITES_CAP = 1024;
 const RETAINED_REVISIONS = 4;
 const REVISION_PREFIX = ".revision-";
 
 export function emptyIndex(): SupervisorIndex {
-  return { schema: INDEX_SCHEMA, lastTickAt: null, lastHerdr: null, entries: [], removed: [] };
+  return { schema: INDEX_SCHEMA, lastTickAt: null, lastHerdr: null, entries: [], removed: [], appliedWrites: [] };
 }
 
 const legacyEnrollmentId = (entry: Record<string, unknown>): string =>
@@ -88,20 +93,29 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
       if (typeof pending["episode"] !== "string" || !Number.isInteger(pending["attempts"]) || Number(pending["attempts"]) < 1 || typeof pending["at"] !== "string") throw new Error(`supervisor index entry ${record["statePath"]} has invalid pendingWake: ${file}`);
       pendingWake = { episode: pending["episode"], attempts: Number(pending["attempts"]), at: pending["at"] };
     }
+    const terminalFailureTicks = record["terminalFailureTicks"] === undefined ? 0 : record["terminalFailureTicks"];
+    if (!Number.isInteger(terminalFailureTicks) || Number(terminalFailureTicks) < 0) throw new Error(`supervisor index entry ${record["statePath"]} has invalid terminalFailureTicks: ${file}`);
     return {
       statePath: record["statePath"], runInstanceId: record["runInstanceId"], enrollmentId,
       recoveryOwner: record["recoveryOwner"], addedAt: typeof record["addedAt"] === "string" ? record["addedAt"] : "1970-01-01T00:00:00.000Z",
-      missingTicks: record["missingTicks"] as number, lastWake: (record["lastWake"] ?? null) as WakeRecord | null,
+      missingTicks: record["missingTicks"] as number,
+      terminalFailureTicks: Number(terminalFailureTicks),
+      lastWake: (record["lastWake"] ?? null) as WakeRecord | null,
       acknowledgements, lastAcknowledgedAt: optionalTimestamp(record["lastAcknowledgedAt"], "lastAcknowledgedAt", file), pendingWake,
       lastFailure: (record["lastFailure"] ?? null) as IndexEntry["lastFailure"], lastObservation: (record["lastObservation"] ?? null) as IndexEntry["lastObservation"],
     };
   });
+  const appliedWrites = candidate["appliedWrites"] === undefined ? [] : candidate["appliedWrites"];
+  if (!Array.isArray(appliedWrites) || appliedWrites.length > APPLIED_WRITES_CAP || appliedWrites.some((entry) => typeof entry !== "string" || entry === "" || entry.length > 128)) {
+    throw new Error(`supervisor index has invalid appliedWrites: ${file}`);
+  }
   return {
     schema: INDEX_SCHEMA,
     lastTickAt: optionalTimestamp(candidate["lastTickAt"], "lastTickAt", file),
     lastHerdr: candidate["lastHerdr"] !== null && typeof candidate["lastHerdr"] === "object" ? candidate["lastHerdr"] as SupervisorIndex["lastHerdr"] : null,
     entries,
     removed: Array.isArray(candidate["removed"]) ? candidate["removed"] as SupervisorIndex["removed"] : [],
+    appliedWrites: appliedWrites as string[],
   };
 }
 
@@ -162,11 +176,14 @@ function pruneRevisions(file: string): void {
  * re-read and re-apply their mutation. This closes the old compare-then-rename
  * window where both writers could compare equal and the later rename won.
  */
-export function updateIndex(file: string, mutate: (index: SupervisorIndex) => void, attempts = 8, beforeCommit?: () => void): SupervisorIndex {
+export function updateIndex(file: string, mutate: (index: SupervisorIndex) => void, attempts = 8, beforeCommit?: () => void, afterCommit?: () => void): SupervisorIndex {
+  const operationId = crypto.randomUUID();
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const before = readSource(file);
     const index = parseSource(before.source, before.sourceFile);
     mutate(index);
+    if (!index.appliedWrites.includes(operationId)) index.appliedWrites.push(operationId);
+    if (index.appliedWrites.length > APPLIED_WRITES_CAP) index.appliedWrites = index.appliedWrites.slice(-APPLIED_WRITES_CAP);
     if (index.entries.length > MAX_INDEX_ENTRIES) throw new Error(`supervisor index entry cap ${MAX_INDEX_ENTRIES} exceeded; nothing was written`);
     if (index.removed.length > REMOVED_HISTORY_CAP) index.removed = index.removed.slice(-REMOVED_HISTORY_CAP);
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -179,18 +196,20 @@ export function updateIndex(file: string, mutate: (index: SupervisorIndex) => vo
       const committedRevision = before.revision + 1;
       fs.linkSync(temporary, revisionFile(file, committedRevision));
       fs.unlinkSync(temporary);
+      afterCommit?.();
       // A writer can sleep long enough for its comparison revision and next
       // slot to be pruned, then successfully recreate that old slot. It has
       // not joined the current chain in that case. Re-read after link and
       // re-apply the same intent unless this write is still the head.
-      if (readSource(file).revision !== committedRevision) {
+      const head = readIndex(file);
+      if (!head.appliedWrites.includes(operationId)) {
         try { fs.unlinkSync(revisionFile(file, committedRevision)); } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
         continue;
       }
       pruneRevisions(file);
-      return index;
+      return head;
     } catch (error) {
       try { fs.unlinkSync(temporary); } catch {}
       if ((error as NodeJS.ErrnoException).code === "EEXIST") continue;
@@ -211,7 +230,7 @@ export function enrollRun(file: string, entry: { statePath: string; runInstanceI
     index.entries = index.entries.filter((existing) => existing.statePath !== entry.statePath);
     index.entries.push({
       statePath: entry.statePath, runInstanceId: entry.runInstanceId, enrollmentId, recoveryOwner: entry.recoveryOwner,
-      addedAt: entry.at, missingTicks: 0, lastWake: null, acknowledgements: {}, lastAcknowledgedAt: null, pendingWake: null,
+      addedAt: entry.at, missingTicks: 0, terminalFailureTicks: 0, lastWake: null, acknowledgements: {}, lastAcknowledgedAt: null, pendingWake: null,
       lastFailure: null, lastObservation: null,
     });
   });

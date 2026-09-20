@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { emptyIndex, enrollRun, INDEX_SCHEMA, MAX_INDEX_BYTES, MAX_INDEX_ENTRIES, readIndex, REMOVED_HISTORY_CAP, updateIndex } from "../../dist/supervisor/index.js";
+import { APPLIED_WRITES_CAP, emptyIndex, enrollRun, INDEX_SCHEMA, MAX_INDEX_BYTES, MAX_INDEX_ENTRIES, readIndex, REMOVED_HISTORY_CAP, updateIndex } from "../../dist/supervisor/index.js";
 
 const file = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-index-")), "index.json");
 
@@ -78,6 +78,24 @@ test("a delayed writer cannot recreate a pruned old revision and mistake it for 
   assert.equal(read.lastHerdr.detail, "writer-5", "the intervening writes survive the replay");
 });
 
+test("a successful write is not replayed when a successor lands after its link", () => {
+  const index = file();
+  let mutations = 0;
+  let successor = false;
+  updateIndex(index, (held) => {
+    mutations += 1;
+    held.lastTickAt = "2026-09-18T00:01:00.000Z";
+  }, 8, undefined, () => {
+    if (successor) return;
+    successor = true;
+    updateIndex(index, (held) => { held.lastHerdr = { available: true, detail: "successor" }; });
+  });
+  const read = readIndex(index);
+  assert.equal(mutations, 1, "the already committed intent is recognized under the successor revision");
+  assert.equal(read.lastTickAt, "2026-09-18T00:01:00.000Z");
+  assert.equal(read.lastHerdr.detail, "successor");
+});
+
 test("engineering 15: removal history is capped", () => {
   const index = file();
   updateIndex(index, (held) => { for (let i = 0; i < REMOVED_HISTORY_CAP + 25; i += 1) held.removed.push({ at: "t", statePath: `/r/${i}`, cause: "c" }); });
@@ -86,13 +104,21 @@ test("engineering 15: removal history is capped", () => {
   assert.equal(read.removed[0].statePath, "/r/25", "the oldest fall off the front");
 });
 
+test("engineering 15: committed operation history is capped", () => {
+  const index = file();
+  updateIndex(index, (held) => { held.appliedWrites = Array.from({ length: APPLIED_WRITES_CAP + 25 }, (_, i) => `old-${i}`); });
+  const read = readIndex(index);
+  assert.equal(read.appliedWrites.length, APPLIED_WRITES_CAP);
+  assert.equal(read.appliedWrites[0], "old-26", "the newest prior ids and this update's id are retained");
+});
+
 test("engineering 15: enrollment and immutable revision history have explicit caps", () => {
   const index = file();
   const full = emptyIndex();
   full.entries = Array.from({ length: MAX_INDEX_ENTRIES }, (_, i) => ({
     statePath: `/repo/agents/runs/${i}/state.json`, runInstanceId: `instance-${i}`, enrollmentId: `enrollment-${i}`,
     recoveryOwner: "supervisor", addedAt: "2026-09-18T00:00:00.000Z", missingTicks: 0,
-    lastWake: null, acknowledgements: {}, lastAcknowledgedAt: null, pendingWake: null, lastFailure: null, lastObservation: null,
+    lastWake: null, acknowledgements: {}, lastAcknowledgedAt: null, pendingWake: null, lastFailure: null, lastObservation: null, terminalFailureTicks: 0,
   }));
   fs.writeFileSync(index, `${JSON.stringify(full)}\n`);
   assert.throws(

@@ -14,6 +14,8 @@ export interface ReadRun {
   facts: RunFacts;
 }
 
+export const MAX_RUN_STATE_BYTES = 8 * 1024 * 1024;
+
 export function requireSupervision(state: ImplementState): SupervisionRecord {
   const supervision = state.supervision ?? null;
   if (supervision === null) throw new Error(`run ${state.topicSlug} was never dispatched under Herdr, so it has no supervision record`);
@@ -42,6 +44,8 @@ export function runFacts(state: ImplementState, supervision: SupervisionRecord):
 
 /** Read one run record from disk; every failure is the caller's to record against that run alone (B12). */
 export function readRun(statePath: string): ReadRun {
+  const bytes = fs.statSync(statePath).size;
+  if (bytes > MAX_RUN_STATE_BYTES) throw new Error(`implement state is ${bytes} bytes, above the ${MAX_RUN_STATE_BYTES} byte cap: ${statePath}`);
   const state = parseImplementState(fs.readFileSync(statePath, "utf8"));
   const supervision = requireSupervision(state);
   return { state, supervision, facts: runFacts(state, supervision) };

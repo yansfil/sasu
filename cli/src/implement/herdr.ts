@@ -402,7 +402,10 @@ function createPane(
   if (paneId === "" || tabId === "" || workspaceId === "") {
     return { created: null, problem: `${call} reported no root pane, tab and workspace id; refusing to start an implementor into an unknown pane` };
   }
-  const closeArgv = placement.kind === "workspace" ? ["workspace", "close", workspaceId] : ["tab", "close", tabId];
+  // Recovery owns the root pane, not the workspace or tab that contains it.
+  // Closing the container could destroy unrelated panes created after this
+  // dispatch, so every cleanup path targets the exact pane it recorded.
+  const closeArgv = ["pane", "close", paneId];
   return { created: { paneId, workspaceId, tabId, closeArgv }, problem: null };
 }
 
@@ -516,9 +519,12 @@ export function spawnImplementor(
       : `herdr pane report-metadata ${created} failed (${declared.status ?? "no status"}): ${(declared.stderr || declared.stdout).trim()}; the row will show as a root, not under ${dispatcher}`,
   };
 
-  const observed = getAgent(input.name, { ...environment, run });
-  if (observed.kind !== "found" || observed.agent.sessionId === null || observed.agent.terminalId === null) {
-    const detail = observed.kind === "found" ? "herdr omitted session UUID or terminal id" : observed.detail;
+  const observed = getAgent(created, { ...environment, run });
+  if (observed.kind !== "found" || observed.agent.paneId !== created || observed.agent.name !== input.name
+    || observed.agent.sessionId === null || observed.agent.terminalId === null) {
+    const detail = observed.kind === "found"
+      ? `expected ${input.name} in ${created}, found ${observed.agent.name ?? "unnamed"} in ${observed.agent.paneId} with session ${observed.agent.sessionId ?? "missing"} and terminal ${observed.agent.terminalId ?? "missing"}`
+      : observed.detail;
     return { ok: false, value: null, problem: `implementor ${input.name} is running in ${created}, but its exact identity could not be recorded before handoff: ${detail}; no handoff was sent` };
   }
   const identity: SpawnResult = {
@@ -531,14 +537,14 @@ export function spawnImplementor(
     return { ok: false, value: null, problem: `implementor ${input.name} is running in ${created}, but pre-handoff persistence failed: ${error instanceof Error ? error.message : String(error)}; no handoff was sent` };
   }
 
-  const prompted = run(["agent", "prompt", input.name, input.prompt], cwd);
-  if (prompted.status !== 0) {
+  const prompted = promptAgent({ target: created, text: input.prompt, expectedInputGuard: observed.agent.inputGuard }, { ...environment, run });
+  if (prompted.outcome !== "accepted") {
     // The prompt carries the whole handoff in one argv entry, and a failing
     // wrapper may echo argv. Never retain output for this call: it would
     // write the operator's verbatim context into the supervisor's log. The
     // started pane stays open - the agent is alive and the supervisor can
     // hand it the packet itself.
-    return { ok: false, value: null, problem: `herdr agent prompt ${input.name} <redacted prompt> failed (${prompted.status ?? "no status"}); the implementor is running in ${created} with no handoff` };
+    return { ok: false, value: null, problem: `herdr agent prompt ${created} <redacted prompt> was not confirmed (${prompted.outcome}, ${prompted.code}); the implementor is running in ${created} with no handoff` };
   }
   return { ok: true, value: identity, problem: null };
 }
@@ -570,8 +576,7 @@ export function closePreparedSpawn(prepared: PreparedSpawn, environment: HerdrEn
     && Array.isArray(info.foreground_processes) && info.foreground_processes.length === 1
     && info.foreground_processes[0]?.pid === info.shell_pid;
   if (!shellOnly) return { ok: false, value: null, problem: `prepared pane ${prepared.paneId} is not a proven empty shell; refusing to close it` };
-  const closeArgv = prepared.placement === "workspace" ? ["workspace", "close", prepared.workspaceId] : ["tab", "close", prepared.tabId];
-  const closed = run(closeArgv, prepared.cwd);
+  const closed = run(["pane", "close", prepared.paneId], prepared.cwd);
   return closed.status === 0
     ? { ok: true, value: true, problem: null }
     : { ok: false, value: null, problem: `failed to close empty prepared pane ${prepared.paneId}: ${(closed.stderr || closed.stdout).trim()}` };
@@ -713,6 +718,8 @@ const REJECTED_BEFORE_INPUT = new Set([
   "agent_input_guard_mismatch", "guarded_prompt_unsupported", "herdr_spawn_failed",
 ]);
 
+const PROCESS_DID_NOT_START = new Set(["ENOENT", "EACCES", "ENOEXEC"]);
+
 /**
  * Hole 5: submit one wake.
  *
@@ -751,7 +758,11 @@ export function promptAgent(
   }
   const structured = herdrErrorCode(executed.stderr) ?? herdrErrorCode(executed.stdout);
   const usage = /unknown option/i.test(executed.stderr) || /unknown option/i.test(executed.stdout);
-  const code = structured ?? (executed.status === 2 && guarded && usage ? "guarded_prompt_unsupported" : executed.errorCode !== undefined ? "herdr_spawn_failed" : executed.status === null ? "herdr_prompt_timeout" : "herdr_prompt_failed");
+  const code = structured ?? (executed.status === 2 && guarded && usage
+    ? "guarded_prompt_unsupported"
+    : executed.errorCode !== undefined
+      ? PROCESS_DID_NOT_START.has(executed.errorCode) ? "herdr_spawn_failed" : executed.errorCode === "ETIMEDOUT" ? "herdr_prompt_timeout" : "herdr_prompt_failed"
+      : executed.status === null ? "herdr_prompt_timeout" : "herdr_prompt_failed");
   const detail = (executed.stderr || executed.stdout).trim().slice(0, 300) || "herdr returned no diagnostic";
   return {
     outcome: REJECTED_BEFORE_INPUT.has(code) ? "rejected" : "unknown",

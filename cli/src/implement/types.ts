@@ -279,7 +279,7 @@ export interface SupervisionRecord {
   runInstanceId: string;
   observer: ObserverIdentity;
   /** Exact identity captured after start and before the handoff is submitted. */
-  implementor: { paneId: string; agent: string; sessionId?: string; terminalId?: string; hostScope?: string; recordedAt?: string };
+  implementor: { paneId: string; agent: string; sessionId: string; terminalId: string; hostScope: string; recordedAt: string };
   /** Realpath of the repository's common git dir, so two worktrees of one repository and two repositories with one slug never collide. */
   canonicalRepository: string;
   prdPath: string;

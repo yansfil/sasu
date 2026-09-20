@@ -300,14 +300,8 @@ export function parseImplementState(text: string): ImplementState {
     identity(supervision["observer"], "supervision.observer");
     assertRecord(supervision["implementor"], "supervision.implementor");
     const implementor = supervision["implementor"] as Record<string, unknown>;
-    for (const field of ["paneId", "agent"] as const) assertString(implementor[field], `supervision.implementor.${field}`);
-    const identityFields = ["sessionId", "terminalId", "hostScope", "recordedAt"] as const;
-    const identityCount = identityFields.filter((field) => implementor[field] !== undefined).length;
-    if (identityCount !== 0 && identityCount !== identityFields.length) throw new Error("malformed implement state: supervision.implementor identity must be complete when present");
-    if (identityCount > 0) {
-      for (const field of ["sessionId", "terminalId", "hostScope"] as const) assertString(implementor[field], `supervision.implementor.${field}`);
-      assertIsoTimestamp(implementor["recordedAt"], "supervision.implementor.recordedAt");
-    }
+    for (const field of ["paneId", "agent", "sessionId", "terminalId", "hostScope"] as const) assertString(implementor[field], `supervision.implementor.${field}`);
+    assertIsoTimestamp(implementor["recordedAt"], "supervision.implementor.recordedAt");
     for (const handover of array(supervision["handovers"], "supervision.handovers")) {
       assertRecord(handover, "supervision.handovers[]");
       assertIsoTimestamp(handover["at"], "supervision.handovers[].at");

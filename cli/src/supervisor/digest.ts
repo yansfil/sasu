@@ -25,6 +25,9 @@ export interface RunDigest {
   implementor: {
     agent: string;
     paneId: string;
+    sessionId: string;
+    terminalId: string;
+    hostScope: string;
     /** herdr's lifecycle state, or the reason it could not be read. */
     status: string;
     activityAt: string | null;
@@ -125,8 +128,9 @@ function gitFacts(workRoot: string, dispatchHead: string | null): RunDigest["git
   };
 }
 
-function verifyFacts(state: ImplementState): RunDigest["verify"] {
-  const attempts = state.verificationAttempts;
+function verifyFacts(state: ImplementState, dispatchedAt: string): RunDigest["verify"] {
+  const boundary = Date.parse(dispatchedAt);
+  const attempts = state.verificationAttempts.filter((attempt) => Date.parse(attempt.finishedAt) >= boundary);
   const latest = attempts.at(-1) ?? null;
   const lastTwo = attempts.slice(-2);
   const repeatedlyFailing = lastTwo.length < 2 ? [] : state.suite.commands
@@ -137,17 +141,30 @@ function verifyFacts(state: ImplementState): RunDigest["verify"] {
     latestVerdict: latest?.verdict ?? null,
     latestAt: latest?.finishedAt ?? null,
     repeatedlyFailing,
-    reportStatus: state.verificationReport?.status ?? null,
+    reportStatus: state.verificationReport !== null && Date.parse(state.verificationReport.generatedAt) >= boundary ? state.verificationReport.status : null,
   };
+}
+
+function scopedHerdr(environment: HerdrEnvironment, hostScope: string): HerdrEnvironment {
+  if (environment.run !== undefined) return environment;
+  const env = { ...(environment.env ?? process.env) };
+  if (hostScope === "default") delete env["HERDR_SOCKET_PATH"];
+  else env["HERDR_SOCKET_PATH"] = hostScope;
+  return { ...environment, env };
 }
 
 export function buildDigest(state: ImplementState, supervision: SupervisionRecord, options: { herdr?: HerdrEnvironment; now?: () => number } = {}): RunDigest {
   const facts = runFacts(state, supervision);
   const now = options.now ?? (() => Date.now());
   const workRoot = requireWorkRoot(state);
-  const looked = getAgent(supervision.implementor.paneId, options.herdr ?? {});
+  const looked = getAgent(supervision.implementor.paneId, scopedHerdr(options.herdr ?? {}, supervision.implementor.hostScope));
   const implementor = looked.kind === "found"
-    ? { status: looked.agent.name !== null && looked.agent.name !== supervision.implementor.agent ? `pane holds ${looked.agent.name}, not ${supervision.implementor.agent}` : looked.agent.status, activityAt: looked.agent.activityAt === null ? null : new Date(looked.agent.activityAt).toISOString() }
+    ? { status: looked.agent.paneId !== supervision.implementor.paneId
+      || looked.agent.name !== supervision.implementor.agent
+      || looked.agent.sessionId !== supervision.implementor.sessionId
+      || looked.agent.terminalId !== supervision.implementor.terminalId
+      ? `identity mismatch: found ${looked.agent.name ?? "unnamed"} session ${looked.agent.sessionId ?? "missing"} terminal ${looked.agent.terminalId ?? "missing"} in ${looked.agent.paneId}`
+      : looked.agent.status, activityAt: looked.agent.activityAt === null ? null : new Date(looked.agent.activityAt).toISOString() }
     : { status: looked.kind === "absent" ? "gone: no agent in the pane" : `unavailable: ${looked.detail}`, activityAt: null };
   const events = state.events.filter((event) => Date.parse(event.at) >= facts.dispatchedAt);
   return {
@@ -158,9 +175,9 @@ export function buildDigest(state: ImplementState, supervision: SupervisionRecor
     dispatchedAt: supervision.dispatchedAt,
     dispatchHead: supervision.dispatchHead,
     workRoot,
-    implementor: { agent: supervision.implementor.agent, paneId: supervision.implementor.paneId, ...implementor },
+    implementor: { agent: supervision.implementor.agent, paneId: supervision.implementor.paneId, sessionId: supervision.implementor.sessionId, terminalId: supervision.implementor.terminalId, hostScope: supervision.implementor.hostScope, ...implementor },
     git: gitFacts(workRoot, supervision.dispatchHead),
-    verify: verifyFacts(state),
+    verify: verifyFacts(state, supervision.dispatchedAt),
     events: { count: state.events.length, lastAt: state.events.at(-1)?.at ?? null, lastKind: state.events.at(-1)?.kind ?? null, sinceDispatch: events.length },
   };
 }
@@ -178,7 +195,7 @@ export function renderDigest(digest: RunDigest): string[] {
   const now = Date.parse(digest.generatedAt);
   const lines = [
     `${digest.slug} instance ${digest.runInstanceId}: dispatched ${ago(digest.dispatchedAt, now)} (${digest.dispatchedAt}), head at dispatch ${digest.dispatchHead ?? "unavailable"}; recovery owner ${digest.recoveryOwner}`,
-    `Implementor ${digest.implementor.agent} in ${digest.implementor.paneId}: ${digest.implementor.status}; last herdr activity ${ago(digest.implementor.activityAt, now)}`,
+    `Implementor ${digest.implementor.agent} in ${digest.implementor.paneId} on ${digest.implementor.hostScope}, session ${digest.implementor.sessionId}, terminal ${digest.implementor.terminalId}: ${digest.implementor.status}; last herdr activity ${ago(digest.implementor.activityAt, now)}`,
   ];
   if (!digest.git.available) lines.push(`Git: ${digest.git.problem}`);
   else {

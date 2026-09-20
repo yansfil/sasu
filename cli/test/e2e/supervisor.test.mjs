@@ -13,6 +13,7 @@ import { installFakeHerdr, installFakeLaunchctl } from "../helpers/fake-herdr.mj
 import { readIndex, updateIndex } from "../../dist/supervisor/index.js";
 import { launchdLogPath } from "../../dist/supervisor/paths.js";
 import { LOG_CAP_BYTES } from "../../dist/supervisor/tick.js";
+import { attemptFixture } from "../helpers/implement-state.mjs";
 
 const OBSERVER = "0b5e7e1e-0000-4000-8000-00000000000a";
 const OBSERVER_PANE = "w4G:p12";
@@ -222,6 +223,9 @@ test("B3/D-09: a tick killed after the prompt effect but before persistence dupl
 test("B10/B16: status --digest is deterministic on a fixture history, reads only for the recorded Observer, and carries no judgment", () => {
   const run = dispatchedRun();
   run.herdr.setAgents({ [OBSERVER_PANE]: observerAgent(), [IMPL_PANE]: implAgent() });
+  const recordedState = state(run.root);
+  recordedState.verificationAttempts = [attemptFixture({ id: "pre-dispatch", finishedAt: "2026-09-17T00:00:00.000Z", verdict: "FAIL" })];
+  fs.writeFileSync(run.statePath, `${JSON.stringify(recordedState, null, 2)}\n`);
   fs.writeFileSync(path.join(run.root, "feature.txt"), "one\ntwo\nthree\n");
   fs.writeFileSync(path.join(run.root, "suite.cjs"), "process.exit(0);\n");
   git(run.root, ["add", "feature.txt", "suite.cjs"]);
@@ -245,6 +249,11 @@ test("B10/B16: status --digest is deterministic on a fixture history, reads only
   assert.equal(digest.git.uncommitted.files, 1);
   assert.deepEqual(digest.git.outsideBoundary, [], "agents/ is ignored by git and never enters the diff");
   assert.equal(digest.implementor.status, "working");
+  assert.deepEqual(
+    { sessionId: digest.implementor.sessionId, terminalId: digest.implementor.terminalId, hostScope: digest.implementor.hostScope },
+    { sessionId: "impl-session", terminalId: "term_impl", hostScope: "/tmp/fake.sock" },
+    "the digest exposes the exact identity and socket it verified",
+  );
   assert.equal(digest.verify.attempts, 0);
   assert.equal(digest.events.sinceDispatch, 1, "the dispatch event itself");
   const text = first.json.summary.join("\n");
@@ -252,6 +261,16 @@ test("B10/B16: status --digest is deterministic on a fixture history, reads only
   assert.match(text, /Changed since dispatch: 2 file\(s\), \+5 -1; outside delivery boundary: 0/);
   assert.match(text, /Uncommitted: 1 path\(s\)/);
   assert.doesNotMatch(text, /stuck|wandering|fine|should|looks/i, "facts only, no judgment words (D-11)");
+
+  const scoped = sasu(run.root, ["implement", "status", "--slug", "fixture", "--digest"], {
+    env: { ...run.observerEnv, HERDR_SOCKET_PATH: "/tmp/ambient-wrong.sock", HERDR_FAKE_REQUIRED_SOCKET_PATH: "/tmp/fake.sock" },
+  });
+  assert.equal(scoped.status, 0, scoped.text);
+  assert.equal(scoped.json.detail.digest.implementor.status, "working", "digest lookup routes through the recorded host scope, not ambient Herdr state");
+
+  run.herdr.setAgents({ [OBSERVER_PANE]: observerAgent(), [IMPL_PANE]: implAgent({ agent_session: { value: "replacement-session" } }) });
+  const replacement = sasu(run.root, ["implement", "status", "--slug", "fixture", "--digest"], { env: run.observerEnv });
+  assert.match(replacement.json.detail.digest.implementor.status, /identity mismatch:.*replacement-session/);
 
   const stranger = sasu(run.root, ["implement", "status", "--slug", "fixture", "--digest"], { env: { ...run.observerEnv, CLAUDE_SESSION_ID: "someone-else" } });
   assert.notEqual(stranger.status, 0);

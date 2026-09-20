@@ -137,6 +137,7 @@ test("B8: an implementor that left its pane, or whose pane holds another agent, 
 test("B8: a replacement implementor session in the same named pane is implementor-gone", () => {
   assert.deepEqual(reasons(decide({}, found({ sessionId: "replacement-session" }), T0 + MIN)), ["implementor-gone"]);
   assert.deepEqual(reasons(decide({}, found({ terminalId: "replacement-terminal" }), T0 + MIN)), ["implementor-gone"]);
+  assert.deepEqual(reasons(decide({}, found({ name: null }), T0 + MIN)), ["implementor-gone"], "an unnamed agent is not the exact dispatched identity");
 });
 
 test("B15: a retired run wakes with reason terminal and is marked to leave the index", () => {

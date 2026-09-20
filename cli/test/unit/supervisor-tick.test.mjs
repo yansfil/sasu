@@ -4,8 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { appendLog, LOG_CAP_BYTES, LOG_EVENT_CAP_BYTES, MAX_WAKE_BYTES, rotateLog, runTick } from "../../dist/supervisor/tick.js";
+import { appendLog, LOG_CAP_BYTES, LOG_EVENT_CAP_BYTES, MAX_WAKE_BYTES, rotateLog, runTick, TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP } from "../../dist/supervisor/tick.js";
 import { readIndex, enrollRun, MISSING_TICKS_BEFORE_CLEANUP } from "../../dist/supervisor/index.js";
+import { MAX_RUN_STATE_BYTES } from "../../dist/supervisor/facts.js";
 import { WAKE_MARKER } from "../../dist/supervisor/wake.js";
 import { agent, fakeTickHerdr, implementorIdentity, IMPLEMENTOR_PANE, makeSupervisedRun, OBSERVER_PANE, OBSERVER_SESSION, observerIdentity, patchState } from "../helpers/supervised-run.mjs";
 
@@ -113,6 +114,9 @@ test("D-06: Observer identity and host scope are checked again immediately befor
   assert.match(outcome.runs[0].detail, /observer-gone/);
   assert.equal(prompts.length, 0, "the replacement receives no input");
   assert.equal(lookups.every((lookup) => lookup.hostScope === "sock"), true, "all identity checks use the recorded socket scope");
+  const entry = readIndex(index).entries[0];
+  assert.match(entry.lastObservation.observer, /^observer-gone/, "the final uncached observation replaces the stale healthy one");
+  assert.match(entry.lastFailure.detail, /not the recorded Observer/);
 });
 
 test("D-06: re-enrollment during the final Observer lookup discards the stale wake", () => {
@@ -204,6 +208,25 @@ test("B12: one run's broken state.json, missing file or instance mismatch is its
   assert.equal(recorded.entries.find((entry) => entry.statePath === vanished).missingTicks, 1);
 });
 
+test("B12/engineering 15: one oversized state and one legacy identity fail closed without blocking a good run", () => {
+  const index = indexFile();
+  const good = makeSupervisedRun({ runInstanceId: "good" });
+  const oversized = makeSupervisedRun({ runInstanceId: "oversized" });
+  const legacy = makeSupervisedRun({ runInstanceId: "legacy" });
+  fs.truncateSync(oversized.statePath, MAX_RUN_STATE_BYTES + 1);
+  patchState(legacy.statePath, (state) => { delete state.supervision.implementor.sessionId; });
+  for (const [run, id] of [[good, "good"], [oversized, "oversized"], [legacy, "legacy"]]) {
+    enrollRun(index, { statePath: run.statePath, runInstanceId: id, recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  }
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
+  const outcome = tick(index, herdr, T0 + MIN);
+  const byPath = Object.fromEntries(outcome.runs.map((entry) => [entry.statePath, entry]));
+  assert.equal(byPath[good.statePath].action, "sent");
+  assert.match(byPath[oversized.statePath].detail, new RegExp(`above the ${MAX_RUN_STATE_BYTES} byte cap`));
+  assert.match(byPath[legacy.statePath].detail, /supervision\.implementor\.sessionId/);
+  assert.equal(herdr.prompts.length, 1);
+});
+
 test("B15: a state.json that stays missing is removed after N consecutive ticks with its cause, and a file that comes back resets the count", () => {
   const index = indexFile();
   const run = makeSupervisedRun();
@@ -239,6 +262,23 @@ test("B15: a retired run is woken once with reason terminal and then leaves the 
   assert.match(recorded.removed.at(-1).cause, /run retired; terminal wake accepted/);
   assert.equal(tick(index, herdr, T0 + 7 * MIN).runs.length, 0);
   assert.equal(herdr.prompts.length, 1);
+});
+
+test("B15: a retired run with a missing Observer is removed after a bounded failed-delivery window", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  patchState(run.statePath, (state) => { state.status = "retired"; state.retirement = { retiredAt: "2026-09-18T10:05:00.000Z", retiredBySessionId: null }; });
+  const herdr = fakeTickHerdr({ agents: { impl: implementor() } });
+  for (let i = 1; i < TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP; i += 1) {
+    assert.equal(tick(index, herdr, T0 + i * MIN).runs[0].action, "deferred");
+  }
+  const final = tick(index, herdr, T0 + TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP * MIN);
+  assert.equal(final.runs[0].action, "removed");
+  const recorded = readIndex(index);
+  assert.equal(recorded.entries.length, 0);
+  assert.match(recorded.removed.at(-1).cause, new RegExp(`${TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP} consecutive ticks`));
+  assert.equal(herdr.prompts.length, 0);
 });
 
 test("B8: a working Observer is not interrupted; the same condition is delivered on the next tick it is idle", () => {

@@ -25,7 +25,7 @@ export interface RunFacts {
   dispatchedAt: number;
   patrolIntervalMs: number;
   observer: ObserverIdentity;
-  implementor: { paneId: string; agent: string; sessionId?: string; terminalId?: string; hostScope?: string; recordedAt?: string };
+  implementor: { paneId: string; agent: string; sessionId: string; terminalId: string; hostScope: string; recordedAt: string };
 }
 
 export interface Observed {
@@ -86,13 +86,13 @@ export function judgeImplementor(recorded: RunFacts["implementor"], lookup: Agen
   if (lookup.kind === "unavailable") return { kind: "unobservable", detail: lookup.detail };
   if (lookup.kind === "absent") return { kind: "implementor-gone", detail: `no agent in the Implementor's pane ${recorded.paneId}` };
   const agent = lookup.agent;
-  if (agent.name !== null && agent.name !== recorded.agent) {
-    return { kind: "implementor-gone", detail: `pane ${recorded.paneId} now holds agent ${agent.name}, not the dispatched ${recorded.agent}` };
+  if (agent.name !== recorded.agent) {
+    return { kind: "implementor-gone", detail: `pane ${recorded.paneId} now holds agent ${agent.name ?? "(unnamed)"}, not the dispatched ${recorded.agent}` };
   }
-  if (recorded.sessionId !== undefined && agent.sessionId !== recorded.sessionId) {
+  if (agent.sessionId !== recorded.sessionId) {
     return { kind: "implementor-gone", detail: `pane ${recorded.paneId} now holds session ${agent.sessionId ?? "(unreported)"}, not dispatched implementor session ${recorded.sessionId}` };
   }
-  if (recorded.terminalId !== undefined && agent.terminalId !== recorded.terminalId) {
+  if (agent.terminalId !== recorded.terminalId) {
     return { kind: "implementor-gone", detail: `pane ${recorded.paneId} now reports terminal ${agent.terminalId ?? "(unreported)"}, not dispatched implementor terminal ${recorded.terminalId}` };
   }
   return { kind: "present", status: agent.status, activityAt: agent.activityAt, stateChangeSeq: agent.stateChangeSeq };

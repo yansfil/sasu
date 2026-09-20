@@ -23,7 +23,7 @@ import { currentObserverIdentity, newRunInstanceId } from "../supervisor/command
 import { enrollRun, unenrollRun } from "../supervisor/index";
 import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest } from "../supervisor/digest";
-import { DEFAULT_PATROL_INTERVAL_MS, parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
+import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
 import { DispatchRejected, assertDispatchablePrd, assertNotImplementor, dispatchImplementor, parseEnvPairs, placementFor } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
@@ -543,6 +543,15 @@ function readHandoffPacket(): string {
   }
 }
 
+function restoreSupervisionAfterPartialDispatch(statePath: string, state: ImplementState, pending: PendingDispatch, at: string, cause: string): void {
+  const previous = state.supervision ?? null;
+  if (previous === null) {
+    unenrollRun(indexPath(), { statePath, runInstanceId: pending.runInstanceId, at, cause });
+    return;
+  }
+  enrollRun(indexPath(), { statePath, runInstanceId: previous.runInstanceId, recoveryOwner: previous.recoveryOwner, at });
+}
+
 function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   try {
     assertNotImplementor();
@@ -554,7 +563,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       if (currentSessionId() !== pending.observer.sessionId) throw new DispatchRejected(`only recorded Observer ${pending.observer.sessionId} may resume this handoff`);
       if (pending.phase === "planned") {
         const at = nowIso();
-        unenrollRun(indexPath(), { statePath, runInstanceId: pending.runInstanceId, at, cause: "planned partial dispatch recovered before any agent was started" });
+        restoreSupervisionAfterPartialDispatch(statePath, state, pending, at, "planned partial dispatch recovered before any agent was started");
         state.pendingDispatch = null;
         persistState(statePath, state);
         return result("dispatch", true, `planned partial dispatch ${pending.runInstanceId} was cleared before any agent started; run dispatch again to create a fresh pane`, { runInstanceId: pending.runInstanceId, recovered: "planned", possibleEmptyPane: true });
@@ -567,34 +576,20 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
           const cleaned = closePreparedSpawn({ ...prepared, name: pending.plannedAgent }, resumeHerdr);
           if (!cleaned.ok) return result("dispatch", false, `prepared dispatch could not be cleaned safely: ${cleaned.problem}`, { pendingDispatch: pending });
           const at = nowIso();
-          unenrollRun(indexPath(), { statePath, runInstanceId: pending.runInstanceId, at, cause: "empty prepared pane cleaned before retry" });
+          restoreSupervisionAfterPartialDispatch(statePath, state, pending, at, "empty prepared pane cleaned before retry");
           state.pendingDispatch = null;
           persistState(statePath, state);
           return result("dispatch", true, `empty prepared pane ${prepared.paneId} was closed and partial dispatch ${pending.runInstanceId} was cleared; run dispatch again`, { runInstanceId: pending.runInstanceId, recovered: "prepared-empty", paneId: prepared.paneId });
         }
         if (observed.kind === "unavailable") throw new DispatchRejected(`cannot inspect prepared pane ${prepared.paneId}: ${observed.detail}; no input was sent`);
-        if (observed.agent.sessionId === null || observed.agent.terminalId === null || (observed.agent.name !== null && observed.agent.name !== pending.plannedAgent)) {
-          throw new DispatchRejected(`prepared pane ${prepared.paneId} does not hold an exactly identifiable ${pending.plannedAgent}; no input was sent`);
-        }
-        const implementor = { paneId: prepared.paneId, agent: pending.plannedAgent, sessionId: observed.agent.sessionId, terminalId: observed.agent.terminalId, hostScope: prepared.hostScope, recordedAt: nowIso() };
-        pending.phase = "started";
-        pending.implementor = implementor;
-        state.pendingDispatch = pending;
-        const supervision: SupervisionRecord = {
-          runInstanceId: pending.runInstanceId, observer: pending.observer, implementor,
-          canonicalRepository: pending.canonicalRepository, prdPath: pending.prdPath, dispatchHead: pending.dispatchHead,
-          dispatchedAt: pending.dispatchedAt, patrolIntervalMs: pending.patrolIntervalMs, recoveryOwner: pending.recoveryOwner, handovers: [],
-        };
-        recordDispatch(projectRoot, statePath, state, { agent: pending.plannedAgent, kind: prepared.kind, paneId: prepared.paneId, workspaceId: prepared.workspaceId, tabId: prepared.tabId, cwd: prepared.cwd }, "observer",
-          `implementor ${pending.plannedAgent} (${prepared.kind}) recovered in ${prepared.paneId}; exact identity recorded before resumed handoff`, supervision);
-        enrollRun(indexPath(), { statePath, runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner, at: pending.dispatchedAt });
-        resumeHerdr = herdrEnvironmentForHostScope(implementor.hostScope);
+        throw new DispatchRejected(`prepared pane ${prepared.paneId} now contains a live agent, but its exact identity was not durably recorded before it started; refusing to adopt it or send input. Inspect and close that pane explicitly, then recover the partial dispatch`);
       }
       if (pending.implementor === null) throw new DispatchRejected("partial dispatch has no implementor identity after recovery; no input was sent");
       const looked = getAgent(pending.implementor.paneId, resumeHerdr);
-      if (looked.kind !== "found" || looked.agent.sessionId !== pending.implementor.sessionId || looked.agent.terminalId !== pending.implementor.terminalId) {
+      if (looked.kind !== "found" || looked.agent.paneId !== pending.implementor.paneId || looked.agent.name !== pending.implementor.agent
+        || looked.agent.sessionId !== pending.implementor.sessionId || looked.agent.terminalId !== pending.implementor.terminalId) {
         const mismatch = looked.kind === "found"
-          ? `found session ${looked.agent.sessionId ?? "missing"} terminal ${looked.agent.terminalId ?? "missing"}`
+          ? `found ${looked.agent.name ?? "unnamed"} in ${looked.agent.paneId}, session ${looked.agent.sessionId ?? "missing"}, terminal ${looked.agent.terminalId ?? "missing"}`
           : looked.detail;
         throw new DispatchRejected(`the partial dispatch target no longer has recorded implementor ${pending.implementor.sessionId}: ${mismatch}; no input was sent`);
       }
@@ -806,12 +801,6 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
   const briefing = buildHandoffBriefing(handoff);
   const replacement = replacementPlacement(state, id);
   const replacementInstanceId = newRunInstanceId();
-  const reset = agent === null
-    ? { ok: false, value: null, problem: "no --agent given; reset the implementor's context yourself and hand it the three artifacts below" }
-    : replacement.placement === null
-      ? { ok: false, value: null, problem: replacement.problem ?? "no placement" }
-      : spawnImplementor({ name: `${agent}-r${id}`, placement: replacement.placement, prompt: briefing, env: { [RUN_INSTANCE_ENV_KEY]: replacementInstanceId } });
-
   const record = recordEscalation(state, {
     at, target, reason, profile,
     model: lane.judge?.model ?? null,
@@ -826,31 +815,93 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
     kind: "escalate",
     actor: issuer,
     subject: target,
-    summary: `escalation ${record.id} diagnosed${reset.ok ? " and the implementor was reset" : "; the context reset is the supervisor's to perform"}`,
+    summary: `escalation ${record.id} diagnosed${agent === null ? "; the context reset is the supervisor's to perform" : "; replacement dispatch planned"}`,
     at,
   });
   persistState(statePath, state);
+
+  let reset: ReturnType<typeof spawnImplementor> = { ok: false, value: null, problem: "no --agent given; reset the implementor's context yourself and hand it the three artifacts below" };
   let enrollProblem: string | null = null;
-  if (reset.ok && reset.value !== null) {
-    // The replacement is a new dispatch of the same run: it gets a new
-    // instance id and pane in the supervision record, and the Observer
-    // identity stays as recorded (the escalating session may not be it).
-    const previous = state.supervision ?? null;
-    const refreshed: SupervisionRecord | null = previous === null ? null : {
-      ...previous,
+  const previous = state.supervision ?? null;
+  if (agent !== null && replacement.placement === null) {
+    reset = { ok: false, value: null, problem: replacement.problem ?? "no placement" };
+  } else if (agent !== null && previous === null) {
+    reset = { ok: false, value: null, problem: "the run has no supervision record, so a replacement cannot be addressed or recovered safely" };
+  } else if (agent !== null && replacement.placement !== null && previous !== null) {
+    const replacementName = `${agent}-r${id}`;
+    const dispatchedAt = nowIso();
+    const pending: PendingDispatch = {
       runInstanceId: replacementInstanceId,
-      implementor: { paneId: reset.value.paneId, agent: reset.value.name, sessionId: reset.value.sessionId, terminalId: reset.value.terminalId, hostScope: reset.value.hostScope, recordedAt: reset.value.recordedAt },
-      dispatchHead: repositoryHead(replacement.placement!.cwd),
-      dispatchedAt: nowIso(),
+      observer: previous.observer,
+      plannedAgent: replacementName,
+      phase: "planned",
+      prepared: null,
+      implementor: null,
+      canonicalRepository: canonicalRepository(replacement.placement.cwd),
+      prdPath: state.prdPath,
+      dispatchHead: repositoryHead(replacement.placement.cwd),
+      dispatchedAt,
+      patrolIntervalMs: previous.patrolIntervalMs,
+      recoveryOwner: previous.recoveryOwner,
     };
-    recordDispatch(projectRoot, statePath, state, { ...reset.value, agent: reset.value.name, cwd: replacement.placement!.cwd }, issuer,
-      `replacement implementor ${reset.value.name} started in ${reset.value.paneId} for escalation ${record.id}`, refreshed);
-    if (refreshed !== null) {
-      try { enrollRun(indexPath(), { statePath, runInstanceId: refreshed.runInstanceId, recoveryOwner: refreshed.recoveryOwner, at: refreshed.dispatchedAt }); }
-      catch (error) { enrollProblem = error instanceof Error ? error.message : String(error); }
+    state.pendingDispatch = pending;
+    persistState(statePath, state);
+    try {
+      enrollRun(indexPath(), { statePath, runInstanceId: replacementInstanceId, recoveryOwner: pending.recoveryOwner, at: dispatchedAt });
+      reset = spawnImplementor({
+        name: replacementName,
+        placement: replacement.placement,
+        prompt: briefing,
+        env: { [RUN_INSTANCE_ENV_KEY]: replacementInstanceId },
+        afterCreate: (created) => {
+          pending.phase = "prepared";
+          pending.prepared = {
+            paneId: created.paneId, workspaceId: created.workspaceId, tabId: created.tabId, cwd: created.cwd,
+            kind: created.kind, placement: created.placement, hostScope: created.hostScope,
+            parentPaneId: created.parentPaneId, preparedAt: created.preparedAt,
+          };
+          state.pendingDispatch = pending;
+          persistState(statePath, state);
+        },
+        beforePrompt: (started) => {
+          const implementor = { paneId: started.paneId, agent: started.name, sessionId: started.sessionId, terminalId: started.terminalId, hostScope: started.hostScope, recordedAt: started.recordedAt };
+          pending.phase = "started";
+          pending.implementor = implementor;
+          state.pendingDispatch = pending;
+          const refreshed: SupervisionRecord = {
+            ...previous,
+            runInstanceId: replacementInstanceId,
+            implementor,
+            canonicalRepository: pending.canonicalRepository,
+            prdPath: pending.prdPath,
+            dispatchHead: pending.dispatchHead,
+            dispatchedAt,
+          };
+          recordDispatch(projectRoot, statePath, state, { ...started, agent: started.name, cwd: replacement.placement!.cwd }, issuer,
+            `replacement implementor ${started.name} started in ${started.paneId} for escalation ${record.id}; exact identity recorded before handoff`, refreshed);
+          enrollRun(indexPath(), { statePath, runInstanceId: replacementInstanceId, recoveryOwner: refreshed.recoveryOwner, at: dispatchedAt });
+        },
+      });
+      if (reset.ok) {
+        state.pendingDispatch = null;
+        persistState(statePath, state);
+      } else if (pending.phase === "planned") {
+        restoreSupervisionAfterPartialDispatch(statePath, state, pending, nowIso(), "replacement dispatch failed before a pane was created");
+        state.pendingDispatch = null;
+        persistState(statePath, state);
+      }
+    } catch (error) {
+      enrollProblem = error instanceof Error ? error.message : String(error);
+      if (pending.phase === "planned") {
+        try { restoreSupervisionAfterPartialDispatch(statePath, state, pending, nowIso(), "replacement enrollment failed before a pane was created"); }
+        catch (restoreError) { enrollProblem = `${enrollProblem}; prior supervision restore failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`; }
+        state.pendingDispatch = null;
+        persistState(statePath, state);
+      }
+      reset = { ok: false, value: null, problem: enrollProblem };
     }
   }
-  return result("escalate", true, `escalation ${record.id} diagnosed: ${diagnosis.summary}. ${reset.ok ? "A replacement implementor was started with the three handoff artifacts." : `Context reset not performed automatically (${reset.problem}).`}${enrollProblem === null ? "" : ` The replacement is NOT supervised: the index could not be written (${enrollProblem}).`}`, {
+  return result("escalate", true, `escalation ${record.id} diagnosed: ${diagnosis.summary}. ${reset.ok ? "A replacement implementor was started with the three handoff artifacts." : `Context reset not performed automatically (${reset.problem}).`}${state.pendingDispatch === undefined || state.pendingDispatch === null ? "" : ` A durable ${state.pendingDispatch.phase} replacement record remains for dispatch --resume-handoff.`}${enrollProblem === null ? "" : ` Supervision setup failed (${enrollProblem}).`}`, {
     escalation: record,
     handoff,
     briefing,

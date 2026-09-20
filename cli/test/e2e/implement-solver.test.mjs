@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import { ESCALATE_LIMIT_PER_RUN } from "../../dist/implement/types.js";
-import { makeProject as createProject, start, run as runCli, registerEvidence, CLI, isolatedEnv } from "../helpers/implement-fixture.mjs";
+import { readIndex } from "../../dist/supervisor/index.js";
+import { makeProject as createProject, start, run as runCli, registerEvidence, CLI, isolatedEnv, PRD_PATH } from "../helpers/implement-fixture.mjs";
+import { installFakeHerdr } from "../helpers/fake-herdr.mjs";
 function makeProject() { const root = createProject({ count: 1 }); start(root); return root; }
 const run = (root, args, env = {}) => runCli(root, args, { env });
 const DIAGNOSIS = {
@@ -26,6 +28,44 @@ function stubEnv(root, diagnosis = DIAGNOSIS) {
 const escalate = (root, env, extra = []) => run(root, [
   "implement", "escalate", "--issuer", "observer", "--reason", "repeated incomplete verification", ...extra,
 ], env);
+
+test("D-04: escalation persists replacement identity and enrollment before submitting the handoff", async () => {
+  const root = fs.realpathSync(createProject({ count: 1 }));
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const outside = fs.mkdtempSync(`${root}-herdr-`);
+  const fake = installFakeHerdr(outside);
+  const home = path.join(outside, "home");
+  fs.mkdirSync(home, { recursive: true });
+  const observerEnv = { ...fake.env, HOME: home, HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12", HERDR_WORKSPACE_ID: "w4G", CLAUDE_SESSION_ID: "observer-session" };
+  assert.equal(runCli(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env: observerEnv }).status, 0);
+  const dispatched = spawnSync(process.execPath, [CLI, "implement", "dispatch", "--name", "impl", "--prd", PRD_PATH, "--json"], {
+    cwd: root, encoding: "utf8", env: isolatedEnv(observerEnv), input: "ROLE: Implementor\nSOURCE: fixture\nRETURN CONTRACT: status", timeout: 30_000,
+  });
+  assert.equal(dispatched.status, 0, dispatched.stderr + dispatched.stdout);
+
+  const judge = stubEnv(root);
+  const ready = path.join(outside, "prompt-ready");
+  const release = path.join(outside, "prompt-release");
+  const env = isolatedEnv({ ...observerEnv, ...judge, HERDR_FAKE_PROMPT_BARRIER_READY: ready, HERDR_FAKE_PROMPT_BARRIER_RELEASE: release });
+  const child = spawn(process.execPath, [CLI, "implement", "escalate", "--issuer", "observer", "--reason", "stuck", "--agent", "impl", "--adopt", "user requested replacement", "--json"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const deadline = Date.now() + 15_000;
+  while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(fs.existsSync(ready), true, stderr || stdout);
+  const during = state(root);
+  assert.equal(during.pendingDispatch.phase, "started");
+  assert.equal(during.pendingDispatch.implementor.sessionId, "impl-session");
+  assert.equal(during.supervision.runInstanceId, during.pendingDispatch.runInstanceId);
+  const indexed = readIndex(path.join(home, ".sasu", "supervisor", "index.json"));
+  assert.equal(indexed.entries[0].runInstanceId, during.pendingDispatch.runInstanceId);
+  fs.writeFileSync(release, "release\n");
+  const exitCode = await new Promise((resolve) => child.on("close", resolve));
+  assert.equal(exitCode, 0, stderr + stdout);
+  assert.equal(state(root).pendingDispatch, null);
+});
 
 // --- AC33: no state write during the solver's execution ---------------------
 
