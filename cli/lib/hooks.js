@@ -20,6 +20,16 @@ function ownedBy(markers) {
 
 const isHarnessOwnedHook = ownedBy(HARNESS_HOOK_MARKERS);
 
+function withoutOwnedCommands(matcher, markers) {
+  if (!matcher || !Array.isArray(matcher.hooks)) return matcher;
+  const hooks = matcher.hooks.filter((hook) => !(typeof hook?.command === "string" && markers.some((marker) => hook.command.includes(marker))));
+  return hooks.length === 0 ? null : { ...matcher, hooks };
+}
+
+function stripOwned(matchers, markers) {
+  return matchers.map((matcher) => withoutOwnedCommands(matcher, markers)).filter((matcher) => matcher !== null);
+}
+
 function readHooksConfig(file) {
   const config = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
   if (!config.hooks || typeof config.hooks !== "object") config.hooks = {};
@@ -42,8 +52,8 @@ function ensureHooks(file, entriesByEvent) {
   for (const event of Object.keys(config.hooks)) {
     if (Object.prototype.hasOwnProperty.call(entriesByEvent, event)) continue;
     const existing = Array.isArray(config.hooks[event]) ? config.hooks[event] : [];
-    const kept = existing.filter((matcher) => !isHarnessOwnedHook(matcher));
-    if (kept.length !== existing.length) {
+    const kept = stripOwned(existing, HARNESS_HOOK_MARKERS);
+    if (JSON.stringify(kept) !== JSON.stringify(existing)) {
       if (kept.length) config.hooks[event] = kept;
       else delete config.hooks[event];
       changed = true;
@@ -51,7 +61,7 @@ function ensureHooks(file, entriesByEvent) {
   }
   for (const [event, command] of Object.entries(entriesByEvent)) {
     const existing = Array.isArray(config.hooks[event]) ? config.hooks[event] : [];
-    const kept = existing.filter((matcher) => !isHarnessOwnedHook(matcher));
+    const kept = stripOwned(existing, HARNESS_HOOK_MARKERS);
     const desired = { hooks: [{ type: "command", command, timeout: 10 }] };
     const next = [...kept, desired];
     if (JSON.stringify(next) !== JSON.stringify(existing)) {
@@ -68,12 +78,11 @@ function ensureHooks(file, entriesByEvent) {
 function removeHooks(file, markers) {
   if (!fs.existsSync(file)) return { file, changed: false };
   const config = readHooksConfig(file);
-  const owned = ownedBy(markers);
   let changed = false;
   for (const event of Object.keys(config.hooks)) {
     const existing = Array.isArray(config.hooks[event]) ? config.hooks[event] : [];
-    const kept = existing.filter((matcher) => !owned(matcher));
-    if (kept.length !== existing.length) {
+    const kept = stripOwned(existing, markers);
+    if (JSON.stringify(kept) !== JSON.stringify(existing)) {
       if (kept.length) config.hooks[event] = kept;
       else delete config.hooks[event];
       changed = true;

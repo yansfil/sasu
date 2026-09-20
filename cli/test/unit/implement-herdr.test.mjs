@@ -16,6 +16,7 @@ const dispatcher = { agent: "claude", agent_status: "working", pane_id: "w4G:p12
 /** herdr 0.9.0-preview's creation shape: the workspace, its first tab and the root pane the agent starts in. */
 const workspaceOk = JSON.stringify({ result: { workspace: { workspace_id: "w7Z" }, tab: { tab_id: "w7Z:t1" }, root_pane: { pane_id: "w7Z:p1" }, type: "workspace_created" } });
 const tabOk = JSON.stringify({ result: { tab: { tab_id: "w4G:t9" }, root_pane: { pane_id: "w4G:p13" }, type: "tab_created" } });
+const implementorInfo = (paneId) => JSON.stringify({ result: { type: "agent_info", agent: { name: "impl", agent: "claude", agent_status: "working", pane_id: paneId, terminal_id: "term_impl", agent_session: { value: "impl-session" }, tokens: { activity: "1000" }, state_change_seq: 1 } } });
 /** A run isolated into a worktree: the implementor gets a workspace of its own on it. */
 const WS = { kind: "workspace", cwd: "/repo.worktrees/fixture", label: "fixture" };
 /** An in-place run: the implementor gets a tab in the workspace the Observer sits in. */
@@ -34,6 +35,7 @@ function recorder(overrides = {}) {
     if (key === "agent list") return { status: 0, stdout: listing(dispatcher), stderr: "" };
     if (key === "workspace create") return { status: 0, stdout: workspaceOk, stderr: "" };
     if (key === "tab create") return { status: 0, stdout: tabOk, stderr: "" };
+    if (key === "agent get") return { status: 0, stdout: implementorInfo(args[2] === "impl" ? (argv.some((call) => call[0] === "tab") ? "w4G:p13" : "w7Z:p1") : args[2]), stderr: "" };
     return { status: 0, stdout: "{}", stderr: "" };
   };
   const matching = (key) => argv.filter((args) => args.slice(0, 2).join(" ") === key);
@@ -130,7 +132,7 @@ test("all three holes work when herdr answers", () => {
   const { run } = recorder();
   const spawned = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run });
   assert.equal(spawned.ok, true);
-  assert.deepEqual(spawned.value, { paneId: "w7Z:p1", workspaceId: "w7Z", tabId: "w7Z:t1", name: "impl", kind: "claude", lineage: { parentPaneId: "w4G:p12", problem: null } });
+  assert.deepEqual({ ...spawned.value, recordedAt: "<timestamp>" }, { paneId: "w7Z:p1", workspaceId: "w7Z", tabId: "w7Z:t1", name: "impl", kind: "claude", lineage: { parentPaneId: "w4G:p12", problem: null }, sessionId: "impl-session", terminalId: "term_impl", hostScope: "default", recordedAt: "<timestamp>" });
   assert.equal(readPane({ name: "impl" }, { env: LIVE, run: ok("pane text") }).value, "pane text");
 });
 
@@ -171,6 +173,34 @@ test("a dispatch injects the implementor marker when the pane is created", () =>
   assert.deepEqual(of("agent prompt"), ["agent", "prompt", "impl", "p"]);
 });
 
+test("D-04: the exact created pane is persisted before agent start", () => {
+  const { argv, run } = recorder();
+  let atCallback = [];
+  let prepared = null;
+  const outcome = spawnImplementor({
+    name: "impl", placement: WS, prompt: "p",
+    afterCreate: (value) => { prepared = value; atCallback = argv.map((args) => args.slice(0, 2).join(" ")); },
+  }, { env: LIVE, run });
+  assert.equal(outcome.ok, true, outcome.problem);
+  assert.deepEqual(atCallback, ["agent list", "workspace create"], "no agent process exists when the durable callback runs");
+  assert.deepEqual({ ...prepared, preparedAt: "<timestamp>" }, {
+    paneId: "w7Z:p1", workspaceId: "w7Z", tabId: "w7Z:t1", cwd: "/repo.worktrees/fixture",
+    name: "impl", kind: "claude", placement: "workspace", hostScope: "default", parentPaneId: "w4G:p12", preparedAt: "<timestamp>",
+  });
+});
+
+test("D-04: failed pre-start persistence closes the exact empty pane and starts no agent", () => {
+  const recorded = recorder();
+  const outcome = spawnImplementor({
+    name: "impl", placement: WS, prompt: "p",
+    afterCreate: () => { throw new Error("disk full"); },
+  }, { env: LIVE, run: recorded.run });
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.problem, /disk full.*empty pane was closed/);
+  assert.equal(recorded.count("workspace close"), 1);
+  assert.equal(recorded.count("agent start"), 0);
+});
+
 // The pane is never a split of the supervisor's: hide lists a pane under the
 // Herdr workspace that owns it, so a split beside the Observer put every
 // implementor under the root checkout however far away its worktree was, and
@@ -185,7 +215,7 @@ test("a worktree run gets a workspace of its own and an in-place run gets a tab,
   const spawned = spawnImplementor({ name: "impl", placement: TAB, prompt: "p" }, { env: LIVE, run: tab.run });
   assert.equal(spawned.ok, true, spawned.problem);
   assert.deepEqual(tab.of("tab create"), ["tab", "create", "--workspace", "w4G", "--cwd", "/repo", "--label", "fixture", "--env", "SASU_HERDR_ROLE=implementor", "--no-focus"]);
-  assert.deepEqual(spawned.value, { paneId: "w4G:p13", workspaceId: "w4G", tabId: "w4G:t9", name: "impl", kind: "claude", lineage: { parentPaneId: "w4G:p12", problem: null } });
+  assert.deepEqual({ ...spawned.value, recordedAt: "<timestamp>" }, { paneId: "w4G:p13", workspaceId: "w4G", tabId: "w4G:t9", name: "impl", kind: "claude", lineage: { parentPaneId: "w4G:p12", problem: null }, sessionId: "impl-session", terminalId: "term_impl", hostScope: "default", recordedAt: "<timestamp>" });
   assert.equal(tab.count("pane split"), 0);
   assert.equal(tab.count("workspace create"), 0);
   assert.deepEqual(tab.of("agent start").slice(5, 7), ["--pane", "w4G:p13"]);

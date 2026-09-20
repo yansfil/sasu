@@ -18,9 +18,9 @@ import { recordEvent } from "./events";
 import { AmendmentRejected, applyAmendment } from "./amend";
 import { assertNoActiveVerification, recoverVerification, cancelVerificationExecution, completeVerificationExecution, beginVerification, progressVerification, prepareVerificationExecution, recordVerificationExecution, finishVerification } from "./verification-activity";
 import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEscalation, renderDiagnosis, solverPrompt, validateDiagnosis } from "./solver";
-import { herdrCapabilities, isAgentAlive, readPane, spawnImplementor, type SpawnPlacement } from "./herdr";
+import { closePreparedSpawn, getAgent, herdrCapabilities, isAgentAlive, promptAgent, readPane, spawnImplementor, type SpawnPlacement } from "./herdr";
 import { currentObserverIdentity, newRunInstanceId } from "../supervisor/commands";
-import { enrollRun } from "../supervisor/index";
+import { enrollRun, unenrollRun } from "../supervisor/index";
 import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest } from "../supervisor/digest";
 import { DEFAULT_PATROL_INTERVAL_MS, parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
@@ -28,7 +28,7 @@ import { DispatchRejected, assertDispatchablePrd, assertNotImplementor, dispatch
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, repositoryHead, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, StateConflictError } from "./store";
-import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type SolverHandoff, type DispatchRecord, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, type SupervisionRecord, ESCALATE_LIMIT_PER_RUN } from "./types";
+import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type SolverHandoff, type DispatchRecord, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, type PendingDispatch, type SupervisionRecord, ESCALATE_LIMIT_PER_RUN } from "./types";
 
 export interface ImplementArgs {
   positional: string[];
@@ -38,6 +38,13 @@ export interface ImplementArgs {
 }
 
 const ARTIFACT_KINDS = new Set(["screenshot", "image", "browser", "api", "db", "log", "file", "command-log"]);
+
+function herdrEnvironmentForHostScope(hostScope: string): { env: NodeJS.ProcessEnv } {
+  const env = { ...process.env };
+  if (hostScope === "default") delete env["HERDR_SOCKET_PATH"];
+  else env["HERDR_SOCKET_PATH"] = hostScope;
+  return { env };
+}
 
 export const DIRTY_INTAKE_QUESTION = "커밋되지 않은 판정 대상 파일이 있습니다. 이 작업을 어떻게 시작할까요?";
 export const DIRTY_INTAKE_OPTIONS = [
@@ -406,6 +413,9 @@ function assertRunOwnership(statePath: string, state: ImplementState, args: Impl
     // another worktree, an earlier dispatch) cannot claim this record (D-04).
     const carried = process.env[RUN_INSTANCE_ENV_KEY]?.trim() ?? "";
     const expected = state.supervision?.runInstanceId ?? null;
+    if (currentHerdrRole() === "implementor" && expected !== null && carried === "") {
+      throw new Error(`this pane is marked implementor but carries no ${RUN_INSTANCE_ENV_KEY}; it cannot prove it owns run instance ${expected}`);
+    }
     if (currentHerdrRole() === "implementor" && carried !== "" && expected !== null && carried !== expected) {
       throw new Error(`this pane was dispatched for run instance ${carried}, but '${state.topicSlug}' is instance ${expected}; it is not this pane's run`);
     }
@@ -538,7 +548,68 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     assertNotImplementor();
     const { statePath, state } = loadState(projectRoot, stateOptions(args));
     assertRunOpenForMutation(state);
+    if (args.flags.get("resume-handoff") === true) {
+      const pending = state.pendingDispatch ?? null;
+      if (pending === null) throw new DispatchRejected("there is no partial dispatch whose handoff can be resumed");
+      if (currentSessionId() !== pending.observer.sessionId) throw new DispatchRejected(`only recorded Observer ${pending.observer.sessionId} may resume this handoff`);
+      if (pending.phase === "planned") {
+        const at = nowIso();
+        unenrollRun(indexPath(), { statePath, runInstanceId: pending.runInstanceId, at, cause: "planned partial dispatch recovered before any agent was started" });
+        state.pendingDispatch = null;
+        persistState(statePath, state);
+        return result("dispatch", true, `planned partial dispatch ${pending.runInstanceId} was cleared before any agent started; run dispatch again to create a fresh pane`, { runInstanceId: pending.runInstanceId, recovered: "planned", possibleEmptyPane: true });
+      }
+      let resumeHerdr = herdrEnvironmentForHostScope(pending.implementor?.hostScope ?? pending.prepared?.hostScope ?? pending.observer.hostScope);
+      if (pending.phase === "prepared") {
+        const prepared = pending.prepared!;
+        const observed = getAgent(prepared.paneId, resumeHerdr);
+        if (observed.kind === "absent") {
+          const cleaned = closePreparedSpawn({ ...prepared, name: pending.plannedAgent }, resumeHerdr);
+          if (!cleaned.ok) return result("dispatch", false, `prepared dispatch could not be cleaned safely: ${cleaned.problem}`, { pendingDispatch: pending });
+          const at = nowIso();
+          unenrollRun(indexPath(), { statePath, runInstanceId: pending.runInstanceId, at, cause: "empty prepared pane cleaned before retry" });
+          state.pendingDispatch = null;
+          persistState(statePath, state);
+          return result("dispatch", true, `empty prepared pane ${prepared.paneId} was closed and partial dispatch ${pending.runInstanceId} was cleared; run dispatch again`, { runInstanceId: pending.runInstanceId, recovered: "prepared-empty", paneId: prepared.paneId });
+        }
+        if (observed.kind === "unavailable") throw new DispatchRejected(`cannot inspect prepared pane ${prepared.paneId}: ${observed.detail}; no input was sent`);
+        if (observed.agent.sessionId === null || observed.agent.terminalId === null || (observed.agent.name !== null && observed.agent.name !== pending.plannedAgent)) {
+          throw new DispatchRejected(`prepared pane ${prepared.paneId} does not hold an exactly identifiable ${pending.plannedAgent}; no input was sent`);
+        }
+        const implementor = { paneId: prepared.paneId, agent: pending.plannedAgent, sessionId: observed.agent.sessionId, terminalId: observed.agent.terminalId, hostScope: prepared.hostScope, recordedAt: nowIso() };
+        pending.phase = "started";
+        pending.implementor = implementor;
+        state.pendingDispatch = pending;
+        const supervision: SupervisionRecord = {
+          runInstanceId: pending.runInstanceId, observer: pending.observer, implementor,
+          canonicalRepository: pending.canonicalRepository, prdPath: pending.prdPath, dispatchHead: pending.dispatchHead,
+          dispatchedAt: pending.dispatchedAt, patrolIntervalMs: pending.patrolIntervalMs, recoveryOwner: pending.recoveryOwner, handovers: [],
+        };
+        recordDispatch(projectRoot, statePath, state, { agent: pending.plannedAgent, kind: prepared.kind, paneId: prepared.paneId, workspaceId: prepared.workspaceId, tabId: prepared.tabId, cwd: prepared.cwd }, "observer",
+          `implementor ${pending.plannedAgent} (${prepared.kind}) recovered in ${prepared.paneId}; exact identity recorded before resumed handoff`, supervision);
+        enrollRun(indexPath(), { statePath, runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner, at: pending.dispatchedAt });
+        resumeHerdr = herdrEnvironmentForHostScope(implementor.hostScope);
+      }
+      if (pending.implementor === null) throw new DispatchRejected("partial dispatch has no implementor identity after recovery; no input was sent");
+      const looked = getAgent(pending.implementor.paneId, resumeHerdr);
+      if (looked.kind !== "found" || looked.agent.sessionId !== pending.implementor.sessionId || looked.agent.terminalId !== pending.implementor.terminalId) {
+        const mismatch = looked.kind === "found"
+          ? `found session ${looked.agent.sessionId ?? "missing"} terminal ${looked.agent.terminalId ?? "missing"}`
+          : looked.detail;
+        throw new DispatchRejected(`the partial dispatch target no longer has recorded implementor ${pending.implementor.sessionId}: ${mismatch}; no input was sent`);
+      }
+      const packet = readHandoffPacket().trim();
+      if (packet === "") throw new DispatchRejected("resume-handoff requires the handoff packet on stdin");
+      const sent = promptAgent({ target: pending.implementor.paneId, text: packet, expectedInputGuard: looked.agent.inputGuard }, resumeHerdr);
+      if (sent.outcome !== "accepted") return result("dispatch", false, `handoff was not confirmed (${sent.outcome}, ${sent.code}): ${sent.detail}; pending dispatch remains for an explicit retry`, { pendingDispatch: pending, prompt: sent });
+      state.pendingDispatch = null;
+      persistState(statePath, state);
+      return result("dispatch", true, `handoff resumed to ${pending.plannedAgent} in ${pending.implementor.paneId}; dispatch ${pending.runInstanceId} is complete`, { runInstanceId: pending.runInstanceId, implementor: pending.implementor, prompt: sent });
+    }
     assertRunOwnership(statePath, state, args);
+    if (state.pendingDispatch !== undefined && state.pendingDispatch !== null) {
+      throw new DispatchRejected(`run has a ${state.pendingDispatch.phase} partial dispatch for ${state.pendingDispatch.plannedAgent}; re-run with --resume-handoff${state.pendingDispatch.phase === "started" || state.pendingDispatch.phase === "prepared" ? " and the packet on stdin" : " to clear the pre-start intent"}`);
+    }
     const prd = assertDispatchablePrd(projectRoot, requiredFlag(args, "prd"));
     if (prd.relative !== state.prdPath) {
       throw new DispatchRejected(`${prd.relative} is not the PRD run '${state.topicSlug}' started from (${state.prdPath}); pass --slug for the run that PRD belongs to`);
@@ -569,8 +640,29 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     const observer = currentObserverIdentity();
     if (observer.identity === null) throw new DispatchRejected(`the Observer cannot be recorded: ${observer.problem}`);
     const runInstanceId = newRunInstanceId();
-    const dispatched = dispatchImplementor(projectRoot, {
-      name: requiredFlag(args, "name"),
+    const name = requiredFlag(args, "name");
+    const dispatchedAt = nowIso();
+    const pending: PendingDispatch = {
+      runInstanceId, observer: observer.identity, plannedAgent: name, phase: "planned", prepared: null, implementor: null,
+      canonicalRepository: canonicalRepository(placed.placement.cwd), prdPath: state.prdPath,
+      dispatchHead: repositoryHead(placed.placement.cwd), dispatchedAt, patrolIntervalMs, recoveryOwner,
+    };
+    // The durable intent and enrollment exist before a pane is created. A
+    // tick during this short window reports the partial dispatch rather than
+    // silently missing a child that may already be starting.
+    state.pendingDispatch = pending;
+    persistState(statePath, state);
+    try { enrollRun(indexPath(), { statePath, runInstanceId, recoveryOwner, at: dispatchedAt }); }
+    catch (error) {
+      state.pendingDispatch = null;
+      persistState(statePath, state);
+      throw new DispatchRejected(`supervision enrollment failed before child start: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    let recordId: number | null = null;
+    let dispatched;
+    try {
+      dispatched = dispatchImplementor(projectRoot, {
+      name,
       prdPath: prd.relative,
       handoff: readHandoffPacket(),
       placement: placed.placement,
@@ -578,46 +670,46 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       model: flag(args, "model")?.trim() || undefined,
       effort: flag(args, "effort")?.trim() || undefined,
       env: { ...extraEnv, [RUN_INSTANCE_ENV_KEY]: runInstanceId },
-    });
+      afterCreate: (created) => {
+        pending.phase = "prepared";
+        pending.prepared = {
+          paneId: created.paneId, workspaceId: created.workspaceId, tabId: created.tabId, cwd: created.cwd,
+          kind: created.kind, placement: created.placement, hostScope: created.hostScope,
+          parentPaneId: created.parentPaneId, preparedAt: created.preparedAt,
+        };
+        state.pendingDispatch = pending;
+        persistState(statePath, state);
+      },
+      beforeHandoff: (started) => {
+        const implementor = { paneId: started.paneId, agent: started.name, sessionId: started.sessionId, terminalId: started.terminalId, hostScope: started.hostScope, recordedAt: started.recordedAt };
+        pending.phase = "started";
+        pending.implementor = implementor;
+        state.pendingDispatch = pending;
+        const supervision: SupervisionRecord = {
+          runInstanceId, observer: observer.identity!, implementor,
+          canonicalRepository: pending.canonicalRepository, prdPath: pending.prdPath, dispatchHead: pending.dispatchHead,
+          dispatchedAt, patrolIntervalMs, recoveryOwner, handovers: [],
+        };
+        recordId = recordDispatch(projectRoot, statePath, state, { ...started, agent: started.name, cwd: placed.placement!.cwd }, "observer",
+          `implementor ${started.name} (${started.kind}) started in ${started.paneId}; exact identity recorded before handoff`, supervision).id;
+        enrollRun(indexPath(), { statePath, runInstanceId, recoveryOwner, at: dispatchedAt });
+      },
+      });
+    } catch (error) {
+      return result("dispatch", false, `dispatch is incomplete: ${error instanceof Error ? error.message : String(error)}. The durable ${state.pendingDispatch?.phase ?? "planned"} record remains; no unrecorded handoff was submitted.`, { runInstanceId, pendingDispatch: state.pendingDispatch ?? pending });
+    }
+    if (recordId === null) throw new Error("dispatch returned without its pre-handoff record");
+    state.pendingDispatch = null;
+    persistState(statePath, state);
     const where = placed.placement.kind === "workspace"
       ? `a new workspace on ${dispatched.cwd}`
       : `a new tab of workspace ${dispatched.workspaceId} at ${dispatched.cwd}`;
-    const supervision: SupervisionRecord = {
-      runInstanceId,
-      observer: observer.identity,
-      implementor: { paneId: dispatched.paneId, agent: dispatched.agent },
-      canonicalRepository: canonicalRepository(dispatched.cwd),
-      prdPath: state.prdPath,
-      dispatchHead: repositoryHead(dispatched.cwd),
-      dispatchedAt: nowIso(),
-      patrolIntervalMs,
-      recoveryOwner,
-      handovers: [],
-    };
-    // From here the implementor is live. A failure to record or to enroll
-    // must say exactly that, because the agent keeps working either way and
-    // "dispatch failed" would read as "nothing started" (B2).
-    let record: DispatchRecord;
-    try {
-      record = recordDispatch(projectRoot, statePath, state, dispatched, "observer",
-        `implementor ${dispatched.agent} (${dispatched.kind}) started in ${dispatched.paneId}, ${where}`, supervision);
-    } catch (error) {
-      return { ok: false, action: "dispatch", exitCode: 1, message: `implementor ${dispatched.agent} is RUNNING in ${dispatched.paneId} with its handoff, but the run record could not be updated (${error instanceof Error ? error.message : String(error)}); it is unsupervised and unowned - re-run dispatch is refused while it lives, so record it by hand or stop it before retrying` };
-    }
-    let enrolled: string | null = null;
-    try {
-      enrollRun(indexPath(), { statePath, runInstanceId, recoveryOwner, at: supervision.dispatchedAt });
-    } catch (error) {
-      enrolled = error instanceof Error ? error.message : String(error);
-    }
-    const supervised = enrolled === null
-      ? `supervised as instance ${runInstanceId} (patrol every ${Math.round(patrolIntervalMs / 60_000)} min, recovery owner ${recoveryOwner})`
-      : `NOT supervised: the index could not be written (${enrolled}); the run record holds instance ${runInstanceId}, and \`sasu supervisor handover --slug ${state.topicSlug} --approval ...\` re-enrolls it`;
+    const supervised = `supervised as instance ${runInstanceId} (patrol every ${Math.round(patrolIntervalMs / 60_000)} min, recovery owner ${recoveryOwner})`;
     return result(
       "dispatch",
-      enrolled === null,
+      true,
       `implementor ${dispatched.agent} (${dispatched.kind}) started in ${dispatched.paneId}, ${where}, from ${dispatched.prd}; ${supervised}`,
-      { ...dispatched, dispatchId: record.id, slug: state.topicSlug, runInstanceId, observer: observer.identity, patrolIntervalMs, recoveryOwner, enrolled: enrolled === null, enrollProblem: enrolled },
+      { ...dispatched, dispatchId: recordId, slug: state.topicSlug, runInstanceId, observer: observer.identity, patrolIntervalMs, recoveryOwner, enrolled: true, enrollProblem: null },
       [
         ...(dispatched.parentLineage === "reported" ? [] : [`Lineage was not recorded: ${dispatched.parentLineage.unreported}`]),
         `The supervisor tick wakes this session when the implementor settles, blocks, escalates, stalls, disappears or finishes, and on patrol; nothing else needs arming.`,
@@ -713,11 +805,12 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
 
   const briefing = buildHandoffBriefing(handoff);
   const replacement = replacementPlacement(state, id);
+  const replacementInstanceId = newRunInstanceId();
   const reset = agent === null
     ? { ok: false, value: null, problem: "no --agent given; reset the implementor's context yourself and hand it the three artifacts below" }
     : replacement.placement === null
       ? { ok: false, value: null, problem: replacement.problem ?? "no placement" }
-      : spawnImplementor({ name: `${agent}-r${id}`, placement: replacement.placement, prompt: briefing });
+      : spawnImplementor({ name: `${agent}-r${id}`, placement: replacement.placement, prompt: briefing, env: { [RUN_INSTANCE_ENV_KEY]: replacementInstanceId } });
 
   const record = recordEscalation(state, {
     at, target, reason, profile,
@@ -745,8 +838,8 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
     const previous = state.supervision ?? null;
     const refreshed: SupervisionRecord | null = previous === null ? null : {
       ...previous,
-      runInstanceId: newRunInstanceId(),
-      implementor: { paneId: reset.value.paneId, agent: reset.value.name },
+      runInstanceId: replacementInstanceId,
+      implementor: { paneId: reset.value.paneId, agent: reset.value.name, sessionId: reset.value.sessionId, terminalId: reset.value.terminalId, hostScope: reset.value.hostScope, recordedAt: reset.value.recordedAt },
       dispatchHead: repositoryHead(replacement.placement!.cwd),
       dispatchedAt: nowIso(),
     };
@@ -1111,6 +1204,14 @@ function digest(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   const { state } = loadState(projectRoot, stateOptions(args));
   const supervision = state.supervision ?? null;
   if (supervision === null) throw new Error(`run ${state.topicSlug} has no digest: it was never dispatched under Herdr`);
+  const expectedInstance = flag(args, "instance");
+  if (expectedInstance !== undefined && expectedInstance !== supervision.runInstanceId) {
+    throw new Error(`digest refused: expected run instance ${expectedInstance}, but the record is ${supervision.runInstanceId}`);
+  }
+  const expectedObserver = flag(args, "observer");
+  if (expectedObserver !== undefined && expectedObserver !== supervision.observer.sessionId) {
+    throw new Error(`digest refused: expected Observer ${expectedObserver}, but the record names ${supervision.observer.sessionId}`);
+  }
   const session = currentSessionId();
   if (session !== supervision.observer.sessionId) {
     throw new Error(`digest refused: run '${state.topicSlug}' is observed by session ${supervision.observer.sessionId}, and this session is ${session ?? "unidentified"}; nothing was changed. \`sasu implement status --json\` remains readable`);

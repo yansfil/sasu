@@ -102,7 +102,7 @@ export interface HerdrCapabilities {
 
 export interface HerdrEnvironment {
   env?: NodeJS.ProcessEnv;
-  run?: (args: string[], cwd?: string) => { status: number | null; stdout: string; stderr: string };
+  run?: (args: string[], cwd?: string) => { status: number | null; stdout: string; stderr: string; errorCode?: string };
   /** Wall clock and blocking sleep; injected by tests, so a 30 s wait costs a test nothing. */
   clock?: HerdrClock;
 }
@@ -112,11 +112,14 @@ export interface HerdrClock {
   sleep(ms: number): void;
 }
 
-function defaultRun(args: string[], cwd?: string): { status: number | null; stdout: string; stderr: string } {
-  const executed = spawnSync("herdr", args, { cwd, encoding: "utf8", shell: false, timeout: 15_000 });
-  if (executed.error !== undefined) return { status: null, stdout: "", stderr: String(executed.error) };
+function defaultRun(args: string[], cwd?: string, env: NodeJS.ProcessEnv = process.env): { status: number | null; stdout: string; stderr: string; errorCode?: string } {
+  const executed = spawnSync("herdr", args, { cwd, env, encoding: "utf8", shell: false, timeout: 15_000 });
+  if (executed.error !== undefined) return { status: null, stdout: "", stderr: String(executed.error), errorCode: (executed.error as NodeJS.ErrnoException).code };
   return { status: executed.status, stdout: executed.stdout ?? "", stderr: executed.stderr ?? "" };
 }
+
+const environmentRun = (environment: HerdrEnvironment): NonNullable<HerdrEnvironment["run"]> =>
+  environment.run ?? ((args, cwd) => defaultRun(args, cwd, environment.env));
 
 const defaultClock: HerdrClock = {
   now: () => Date.now(),
@@ -173,7 +176,7 @@ export function environmentCapabilities(environment: HerdrEnvironment): HerdrCap
 export function herdrCapabilities(environment: HerdrEnvironment = {}): HerdrCapabilities {
   const base = environmentCapabilities(environment);
   if (!base.holes.read) return base;
-  const run = environment.run ?? defaultRun;
+  const run = environmentRun(environment);
   const probe = run([...AGENT_LIST_ARGV]);
   if (probe.status !== 0) {
     const call = `herdr ${AGENT_LIST_ARGV.join(" ")}`;
@@ -283,6 +286,10 @@ export interface SpawnRequest {
   effort?: string;
   /** Extra variables for the new pane's shell, on top of PATH and the role marker. */
   env?: Record<string, string>;
+  /** Persists the exact created pane before an agent process is started. */
+  afterCreate?: (prepared: PreparedSpawn) => void;
+  /** Persists the exact started identity before any handoff bytes are submitted. */
+  beforePrompt?: (started: SpawnResult) => void;
 }
 
 /** The variable name of the role marker, so a caller cannot smuggle a second value for it. */
@@ -339,6 +346,10 @@ export interface SpawnResult {
   name: string;
   kind: string;
   lineage: SpawnLineage;
+  sessionId: string;
+  terminalId: string;
+  hostScope: string;
+  recordedAt: string;
 }
 
 interface CreatedPane {
@@ -347,6 +358,19 @@ interface CreatedPane {
   tabId: string;
   /** Closes exactly what the creation made, and nothing the supervisor owns. */
   closeArgv: string[];
+}
+
+export interface PreparedSpawn {
+  paneId: string;
+  workspaceId: string;
+  tabId: string;
+  cwd: string;
+  name: string;
+  kind: string;
+  placement: "workspace" | "tab";
+  hostScope: string;
+  parentPaneId: string;
+  preparedAt: string;
 }
 
 /**
@@ -406,7 +430,7 @@ export function spawnImplementor(
 ): HoleResult<SpawnResult> {
   const capabilities = environmentCapabilities(environment);
   if (!capabilities.holes.spawn) return { ok: false, value: null, problem: `spawn unavailable: ${capabilities.reason}` };
-  const run = environment.run ?? defaultRun;
+  const run = environmentRun(environment);
   const dispatcher = paneId(environment.env ?? process.env);
 
   // The kind is the dispatching pane's own agent unless overridden: a
@@ -428,6 +452,18 @@ export function spawnImplementor(
   if (made.created === null) return { ok: false, value: null, problem: made.problem };
   const cwd = input.placement.cwd;
   const created = made.created.paneId;
+  const prepared: PreparedSpawn = {
+    paneId: created, workspaceId: made.created.workspaceId, tabId: made.created.tabId, cwd,
+    name: input.name, kind, placement: input.placement.kind,
+    hostScope: (environment.env ?? process.env)["HERDR_SOCKET_PATH"]?.trim() || "default",
+    parentPaneId: dispatcher, preparedAt: new Date().toISOString(),
+  };
+  try { input.afterCreate?.(prepared); }
+  catch (error) {
+    const closed = run(made.created.closeArgv, cwd);
+    const cleanup = closed.status === 0 ? "the empty pane was closed" : `the empty pane could not be closed (${closed.status ?? "no status"})`;
+    return { ok: false, value: null, problem: `pane ${created} was created, but pre-start persistence failed: ${error instanceof Error ? error.message : String(error)}; no agent was started and ${cleanup}` };
+  }
 
   const startArgv = ["agent", "start", input.name, "--kind", kind, "--pane", created, ...nativeAgentArgs(kind, input.model, input.effort)];
   const clock = environment.clock ?? defaultClock;
@@ -480,6 +516,21 @@ export function spawnImplementor(
       : `herdr pane report-metadata ${created} failed (${declared.status ?? "no status"}): ${(declared.stderr || declared.stdout).trim()}; the row will show as a root, not under ${dispatcher}`,
   };
 
+  const observed = getAgent(input.name, { ...environment, run });
+  if (observed.kind !== "found" || observed.agent.sessionId === null || observed.agent.terminalId === null) {
+    const detail = observed.kind === "found" ? "herdr omitted session UUID or terminal id" : observed.detail;
+    return { ok: false, value: null, problem: `implementor ${input.name} is running in ${created}, but its exact identity could not be recorded before handoff: ${detail}; no handoff was sent` };
+  }
+  const identity: SpawnResult = {
+    paneId: created, workspaceId: made.created.workspaceId, tabId: made.created.tabId, name: input.name, kind, lineage,
+    sessionId: observed.agent.sessionId, terminalId: observed.agent.terminalId,
+    hostScope: (environment.env ?? process.env)["HERDR_SOCKET_PATH"]?.trim() || "default", recordedAt: new Date().toISOString(),
+  };
+  try { input.beforePrompt?.(identity); }
+  catch (error) {
+    return { ok: false, value: null, problem: `implementor ${input.name} is running in ${created}, but pre-handoff persistence failed: ${error instanceof Error ? error.message : String(error)}; no handoff was sent` };
+  }
+
   const prompted = run(["agent", "prompt", input.name, input.prompt], cwd);
   if (prompted.status !== 0) {
     // The prompt carries the whole handoff in one argv entry, and a failing
@@ -489,7 +540,41 @@ export function spawnImplementor(
     // hand it the packet itself.
     return { ok: false, value: null, problem: `herdr agent prompt ${input.name} <redacted prompt> failed (${prompted.status ?? "no status"}); the implementor is running in ${created} with no handoff` };
   }
-  return { ok: true, value: { paneId: created, workspaceId: made.created.workspaceId, tabId: made.created.tabId, name: input.name, kind, lineage }, problem: null };
+  return { ok: true, value: identity, problem: null };
+}
+
+/**
+ * Close a pane that a persisted partial dispatch proves it created, but only
+ * after Herdr proves the pane has no agent and is still a shell-only process.
+ * This is the recovery half of the pre-start record: no guessed pane and no
+ * coordinate-based cleanup can enter this path.
+ */
+export function closePreparedSpawn(prepared: PreparedSpawn, environment: HerdrEnvironment = {}): HoleResult<boolean> {
+  const observed = getAgent(prepared.paneId, environment);
+  if (observed.kind === "found") return { ok: false, value: null, problem: `prepared pane ${prepared.paneId} now holds an agent; refusing to close it` };
+  if (observed.kind === "unavailable") return { ok: false, value: null, problem: observed.detail };
+  const run = environmentRun(environment);
+  const inspected = run(["pane", "process-info", "--pane", prepared.paneId], prepared.cwd);
+  if (inspected.status !== 0) {
+    const code = herdrErrorCode(inspected.stderr) ?? herdrErrorCode(inspected.stdout);
+    if (code === "pane_not_found" || code === "agent_not_found") return { ok: true, value: true, problem: null };
+    return { ok: false, value: null, problem: `cannot inspect prepared pane ${prepared.paneId}: ${(inspected.stderr || inspected.stdout).trim()}` };
+  }
+  const parsed = parseJson(inspected.stdout) as { result?: { process_info?: {
+    pane_id?: string; shell_pid?: number; foreground_process_group_id?: number; foreground_processes?: { pid?: number }[];
+  } } } | null;
+  const info = parsed?.result?.process_info;
+  const shellOnly = info?.pane_id === prepared.paneId
+    && Number.isInteger(info.shell_pid) && info.shell_pid! > 0
+    && info.foreground_process_group_id === info.shell_pid
+    && Array.isArray(info.foreground_processes) && info.foreground_processes.length === 1
+    && info.foreground_processes[0]?.pid === info.shell_pid;
+  if (!shellOnly) return { ok: false, value: null, problem: `prepared pane ${prepared.paneId} is not a proven empty shell; refusing to close it` };
+  const closeArgv = prepared.placement === "workspace" ? ["workspace", "close", prepared.workspaceId] : ["tab", "close", prepared.tabId];
+  const closed = run(closeArgv, prepared.cwd);
+  return closed.status === 0
+    ? { ok: true, value: true, problem: null }
+    : { ok: false, value: null, problem: `failed to close empty prepared pane ${prepared.paneId}: ${(closed.stderr || closed.stdout).trim()}` };
 }
 
 /** Hole 2: read an agent's recent output, for diagnosis only. */
@@ -499,7 +584,7 @@ export function readPane(
 ): HoleResult<string> {
   const capabilities = environmentCapabilities(environment);
   if (!capabilities.holes.read) return { ok: false, value: null, problem: `read unavailable: ${capabilities.reason}` };
-  const run = environment.run ?? defaultRun;
+  const run = environmentRun(environment);
   const executed = run(["agent", "read", input.name, "--source", "recent-unwrapped", "--lines", String(input.lines ?? 120)]);
   if (executed.status !== 0) {
     return { ok: false, value: null, problem: `herdr agent read ${input.name} failed (${executed.status ?? "no status"}): ${(executed.stderr || executed.stdout).trim()}` };
@@ -523,7 +608,7 @@ export function isAgentAlive(
 ): HoleResult<boolean> {
   const capabilities = environmentCapabilities(environment);
   if (!capabilities.holes.alive) return { ok: false, value: null, problem: `alive unavailable: ${capabilities.reason}` };
-  const listed = listAgents(environment.run ?? defaultRun);
+  const listed = listAgents(environmentRun(environment));
   if (listed.problem !== null) return { ok: false, value: null, problem: listed.problem };
   return { ok: true, value: listed.agents.some((entry) => entry.name === input.name), problem: null };
 }
@@ -572,7 +657,7 @@ const AGENT_STATUSES = new Set(["idle", "working", "blocked", "done", "unknown"]
  * `unavailable`, which the caller must not read as absence (D-06).
  */
 export function getAgent(target: string, environment: HerdrEnvironment = {}): AgentLookup {
-  const run = environment.run ?? defaultRun;
+  const run = environmentRun(environment);
   const executed = run(["agent", "get", target]);
   if (executed.status !== 0) {
     const code = herdrErrorCode(executed.stderr) ?? herdrErrorCode(executed.stdout);
@@ -625,7 +710,7 @@ export interface PromptOutcome {
 /** Codes herdr returns before any input reaches the pane (measured 2026-09-18 on 0.9.1; guard codes from the fork). */
 const REJECTED_BEFORE_INPUT = new Set([
   "agent_not_found", "agent_name_not_found", "agent_blocked", "agent_not_ready", "agent_pane_not_found",
-  "agent_input_guard_mismatch", "guarded_prompt_unsupported",
+  "agent_input_guard_mismatch", "guarded_prompt_unsupported", "herdr_spawn_failed",
 ]);
 
 /**
@@ -650,7 +735,7 @@ export function promptAgent(
   input: { target: string; text: string; expectedInputGuard: string | null },
   environment: HerdrEnvironment = {},
 ): PromptOutcome {
-  const run = environment.run ?? defaultRun;
+  const run = environmentRun(environment);
   const guarded = input.expectedInputGuard !== null;
   const argv = ["agent", "prompt", input.target, input.text, ...(guarded ? ["--expected-input-guard", input.expectedInputGuard!] : [])];
   const executed = run(argv);
@@ -666,7 +751,7 @@ export function promptAgent(
   }
   const structured = herdrErrorCode(executed.stderr) ?? herdrErrorCode(executed.stdout);
   const usage = /unknown option/i.test(executed.stderr) || /unknown option/i.test(executed.stdout);
-  const code = structured ?? (executed.status === 2 && guarded && usage ? "guarded_prompt_unsupported" : executed.status === null ? "herdr_prompt_timeout" : "herdr_prompt_failed");
+  const code = structured ?? (executed.status === 2 && guarded && usage ? "guarded_prompt_unsupported" : executed.errorCode !== undefined ? "herdr_spawn_failed" : executed.status === null ? "herdr_prompt_timeout" : "herdr_prompt_failed");
   const detail = (executed.stderr || executed.stdout).trim().slice(0, 300) || "herdr returned no diagnostic";
   return {
     outcome: REJECTED_BEFORE_INPUT.has(code) ? "rejected" : "unknown",
@@ -686,7 +771,7 @@ export function promptAgent(
  * `input_guard` field herdr actually returns.
  */
 export function guardedPromptSupport(environment: HerdrEnvironment = {}): { supported: boolean | null; detail: string | null } {
-  const run = environment.run ?? defaultRun;
+  const run = environmentRun(environment);
   const help = run(["agent", "prompt", "--help"]);
   if (help.status !== 0) return { supported: null, detail: `herdr agent prompt --help failed (${help.status ?? "no status"}): ${(help.stderr || help.stdout).trim().slice(0, 200)}` };
   return { supported: /--expected-input-guard/.test(`${help.stdout}${help.stderr}`), detail: null };

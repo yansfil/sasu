@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { emptyIndex, enrollRun, INDEX_SCHEMA, readIndex, REMOVED_HISTORY_CAP, updateIndex } from "../../dist/supervisor/index.js";
+import { emptyIndex, enrollRun, INDEX_SCHEMA, MAX_INDEX_BYTES, MAX_INDEX_ENTRIES, readIndex, REMOVED_HISTORY_CAP, updateIndex } from "../../dist/supervisor/index.js";
 
 const file = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-index-")), "index.json");
 
@@ -18,14 +18,18 @@ test("D-05: a missing index is empty, a malformed one is an error the operator s
   assert.equal(read.schema, INDEX_SCHEMA);
   assert.deepEqual(read.entries.map((entry) => [entry.statePath, entry.runInstanceId, entry.missingTicks, entry.lastWake]), [["/repo/agents/runs/b/state.json", "i-2", 0, null], ["/repo/agents/runs/a/state.json", "i-3", 0, null]]);
 
-  fs.writeFileSync(index, "{not json");
-  assert.throws(() => readIndex(index), /malformed supervisor index JSON/);
-  fs.writeFileSync(index, JSON.stringify({ schema: "other", entries: [] }));
-  assert.throws(() => readIndex(index), /unsupported supervisor index schema other/);
-  fs.writeFileSync(index, JSON.stringify({ schema: INDEX_SCHEMA, entries: [{ statePath: "relative/state.json", runInstanceId: "x", missingTicks: 0 }] }));
-  assert.throws(() => readIndex(index), /no absolute statePath/);
-  fs.writeFileSync(index, JSON.stringify({ schema: INDEX_SCHEMA, entries: [{ statePath: "/repo/agents/runs/a/state.json", runInstanceId: "x", missingTicks: 0 }] }));
-  assert.throws(() => readIndex(index), /has no recoveryOwner/, "D-15: an entry that does not say who owns recovery is refused, not defaulted");
+  const malformed = file();
+  fs.writeFileSync(malformed, "{not json");
+  assert.throws(() => readIndex(malformed), /malformed supervisor index JSON/);
+  const schema = file();
+  fs.writeFileSync(schema, JSON.stringify({ schema: "other", entries: [] }));
+  assert.throws(() => readIndex(schema), /unsupported supervisor index schema other/);
+  const relative = file();
+  fs.writeFileSync(relative, JSON.stringify({ schema: INDEX_SCHEMA, entries: [{ statePath: "relative/state.json", runInstanceId: "x", missingTicks: 0 }] }));
+  assert.throws(() => readIndex(relative), /no valid absolute statePath/);
+  const ownerless = file();
+  fs.writeFileSync(ownerless, JSON.stringify({ schema: INDEX_SCHEMA, entries: [{ statePath: "/repo/agents/runs/a/state.json", runInstanceId: "x", missingTicks: 0 }] }));
+  assert.throws(() => readIndex(ownerless), /has no recoveryOwner/, "D-15: an entry that does not say who owns recovery is refused, not defaulted");
 });
 
 test("two writers never lose each other's entry: a write against moved bytes is re-applied on the fresh read", () => {
@@ -45,10 +49,64 @@ test("two writers never lose each other's entry: a write against moved bytes is 
   assert.deepEqual(read.entries.map((entry) => entry.runInstanceId), ["i-1", "i-2"], "the interleaved enrollment survived the tick's write");
 });
 
+test("two writers never lose an enrollment that lands after comparison and before commit", () => {
+  const index = file();
+  enrollRun(index, { statePath: "/repo/agents/runs/a/state.json", runInstanceId: "i-1", recoveryOwner: "supervisor", at: "2026-09-18T00:00:00.000Z" });
+  let released = false;
+  updateIndex(index, (held) => { held.lastTickAt = "2026-09-18T00:01:00.000Z"; }, 5, () => {
+    if (released) return;
+    released = true;
+    enrollRun(index, { statePath: "/repo/agents/runs/b/state.json", runInstanceId: "i-2", recoveryOwner: "supervisor", at: "2026-09-18T00:00:30.000Z" });
+  });
+  assert.equal(released, true, "the barrier ran in the post-comparison window");
+  const read = readIndex(index);
+  assert.equal(read.lastTickAt, "2026-09-18T00:01:00.000Z");
+  assert.deepEqual(read.entries.map((entry) => entry.runInstanceId), ["i-1", "i-2"]);
+});
+
+test("a delayed writer cannot recreate a pruned old revision and mistake it for a committed update", () => {
+  const index = file();
+  enrollRun(index, { statePath: "/repo/agents/runs/a/state.json", runInstanceId: "i-1", recoveryOwner: "supervisor", at: "2026-09-18T00:00:00.000Z" });
+  let advanced = false;
+  updateIndex(index, (held) => { held.lastTickAt = "2026-09-18T00:30:00.000Z"; }, 8, () => {
+    if (advanced) return;
+    advanced = true;
+    for (let i = 0; i < 6; i += 1) updateIndex(index, (current) => { current.lastHerdr = { available: true, detail: `writer-${i}` }; });
+  });
+  const read = readIndex(index);
+  assert.equal(read.lastTickAt, "2026-09-18T00:30:00.000Z", "the delayed mutation is replayed on the current chain");
+  assert.equal(read.lastHerdr.detail, "writer-5", "the intervening writes survive the replay");
+});
+
 test("engineering 15: removal history is capped", () => {
   const index = file();
   updateIndex(index, (held) => { for (let i = 0; i < REMOVED_HISTORY_CAP + 25; i += 1) held.removed.push({ at: "t", statePath: `/r/${i}`, cause: "c" }); });
   const read = readIndex(index);
   assert.equal(read.removed.length, REMOVED_HISTORY_CAP);
   assert.equal(read.removed[0].statePath, "/r/25", "the oldest fall off the front");
+});
+
+test("engineering 15: enrollment and immutable revision history have explicit caps", () => {
+  const index = file();
+  const full = emptyIndex();
+  full.entries = Array.from({ length: MAX_INDEX_ENTRIES }, (_, i) => ({
+    statePath: `/repo/agents/runs/${i}/state.json`, runInstanceId: `instance-${i}`, enrollmentId: `enrollment-${i}`,
+    recoveryOwner: "supervisor", addedAt: "2026-09-18T00:00:00.000Z", missingTicks: 0,
+    lastWake: null, acknowledgements: {}, lastAcknowledgedAt: null, pendingWake: null, lastFailure: null, lastObservation: null,
+  }));
+  fs.writeFileSync(index, `${JSON.stringify(full)}\n`);
+  assert.throws(
+    () => enrollRun(index, { statePath: "/repo/agents/runs/overflow/state.json", runInstanceId: "overflow", recoveryOwner: "supervisor", at: "2026-09-18T00:01:00.000Z" }),
+    new RegExp(`entry cap ${MAX_INDEX_ENTRIES} reached`),
+  );
+  assert.doesNotThrow(() => enrollRun(index, { statePath: "/repo/agents/runs/0/state.json", runInstanceId: "replacement", recoveryOwner: "supervisor", at: "2026-09-18T00:01:00.000Z" }), "replacement does not grow the resource");
+  for (let i = 0; i < 8; i += 1) updateIndex(index, (held) => { held.lastTickAt = `2026-09-18T00:0${i}:00.000Z`; });
+  const revisions = fs.readdirSync(path.dirname(index)).filter((name) => name.startsWith(`${path.basename(index)}.revision-`));
+  assert.equal(revisions.length, 4, "old immutable revisions are pruned");
+});
+
+test("engineering 15: an oversized index is refused before parsing", () => {
+  const index = file();
+  fs.writeFileSync(index, Buffer.alloc(MAX_INDEX_BYTES + 1, 32));
+  assert.throws(() => readIndex(index), new RegExp(`above the ${MAX_INDEX_BYTES} byte cap`));
 });

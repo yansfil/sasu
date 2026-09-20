@@ -4,10 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { runTick } from "../../dist/supervisor/tick.js";
+import { appendLog, LOG_CAP_BYTES, LOG_EVENT_CAP_BYTES, MAX_WAKE_BYTES, rotateLog, runTick } from "../../dist/supervisor/tick.js";
 import { readIndex, enrollRun, MISSING_TICKS_BEFORE_CLEANUP } from "../../dist/supervisor/index.js";
 import { WAKE_MARKER } from "../../dist/supervisor/wake.js";
-import { agent, fakeTickHerdr, IMPLEMENTOR_PANE, makeSupervisedRun, OBSERVER_PANE, OBSERVER_SESSION, observerIdentity, patchState } from "../helpers/supervised-run.mjs";
+import { agent, fakeTickHerdr, implementorIdentity, IMPLEMENTOR_PANE, makeSupervisedRun, OBSERVER_PANE, OBSERVER_SESSION, observerIdentity, patchState } from "../helpers/supervised-run.mjs";
 
 const T0 = Date.parse("2026-09-18T10:00:00.000Z");
 const MIN = 60_000;
@@ -16,9 +16,28 @@ const observer = (fields = {}) => agent(OBSERVER_PANE, { sessionId: OBSERVER_SES
 const implementor = (fields = {}) => agent(IMPLEMENTOR_PANE, { name: "impl", sessionId: "impl-sess", status: "working", activityAt: T0, ...fields });
 const silent = () => {};
 
-function tick(index, herdr, now) {
-  return runTick({ indexFile: index, herdr: herdr.herdr, now: () => now, log: silent });
+function tick(index, herdr, now, extra = {}) {
+  return runTick({ indexFile: index, herdr: herdr.herdr, now: () => now, log: silent, ...extra });
 }
+
+test("engineering 10/15: a log rotation failure is surfaced instead of silently growing the sink", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-log-"));
+  const log = path.join(directory, "tick.log");
+  fs.writeFileSync(log, Buffer.alloc(LOG_CAP_BYTES, 120));
+  fs.mkdirSync(`${log}.1`);
+  assert.throws(() => rotateLog(log), /EISDIR|directory/i);
+  assert.equal(fs.statSync(log).size, LOG_CAP_BYTES, "the failed rotation does not append beyond the cap");
+});
+
+test("engineering 15: one oversized structured event becomes an explicit bounded truncation record", () => {
+  const log = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-log-event-")), "tick.log");
+  appendLog(log, { event: "large", at: "2026-09-18T10:00:00.000Z", payload: "x".repeat(LOG_EVENT_CAP_BYTES) });
+  const recorded = JSON.parse(fs.readFileSync(log, "utf8"));
+  assert.equal(recorded.event, "supervisor.log.truncated");
+  assert.equal(recorded.originalEvent, "large");
+  assert.ok(recorded.originalBytes > LOG_EVENT_CAP_BYTES);
+  assert.ok(fs.statSync(log).size < 1024);
+});
 
 test("B8/B10: a settled implementor wakes exactly the recorded Observer once, with an identity note, and the index records the wake", () => {
   const index = indexFile();
@@ -36,7 +55,7 @@ test("B8/B10: a settled implementor wakes exactly the recorded Observer once, wi
   assert.match(body, new RegExp(`observer: ${OBSERVER_SESSION}`));
   assert.match(body, /run: fixture instance instance-1/);
   assert.match(body, /reason: settled/);
-  assert.match(body, /inspect: sasu implement status --slug fixture --digest/);
+  assert.match(body, new RegExp(`inspect: sasu implement status --state '${run.statePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' --instance 'instance-1' --observer '${OBSERVER_SESSION}' --digest`));
   assert.doesNotMatch(body, /implementation\.txt|Requirement/, "no transcript, no PRD content: an identity note only");
 
   const recorded = readIndex(index);
@@ -64,11 +83,83 @@ test("B9: a replacement session in the Observer's pane receives nothing and stat
   assert.match(entry.lastFailure.detail, /not the recorded Observer/);
 });
 
+test("D-06: Observer identity and host scope are checked again immediately before transmission", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  const lookups = [];
+  const prompts = [];
+  let observerReads = 0;
+  const herdr = { herdr: {
+    probe: (hostScope) => {
+      assert.equal(hostScope, "sock");
+      return { available: true, detail: null };
+    },
+    getAgent: (target, hostScope) => {
+      lookups.push({ target, hostScope });
+      if (target === IMPLEMENTOR_PANE) return { kind: "found", agent: implementor({ status: "blocked" }) };
+      observerReads += 1;
+      return { kind: "found", agent: observer(observerReads === 1 ? {} : { sessionId: "replacement-session" }) };
+    },
+    promptAgent: (input, hostScope) => {
+      prompts.push({ input, hostScope });
+      return { outcome: "accepted", path: "session-match", code: "submitted", detail: "ok" };
+    },
+  } };
+
+  const outcome = tick(index, herdr, T0 + MIN);
+  assert.equal(observerReads, 2, "the pre-send read is uncached");
+  assert.equal(outcome.runs[0].action, "deferred");
+  assert.match(outcome.runs[0].detail, /observer-gone/);
+  assert.equal(prompts.length, 0, "the replacement receives no input");
+  assert.equal(lookups.every((lookup) => lookup.hostScope === "sock"), true, "all identity checks use the recorded socket scope");
+});
+
+test("D-06: re-enrollment during the final Observer lookup discards the stale wake", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  let observerReads = 0;
+  const prompts = [];
+  const herdr = { herdr: {
+    probe: () => ({ available: true, detail: null }),
+    getAgent: (target) => {
+      if (target === IMPLEMENTOR_PANE) return { kind: "found", agent: implementor({ status: "blocked" }) };
+      observerReads += 1;
+      if (observerReads === 2) enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:30.000Z" });
+      return { kind: "found", agent: observer() };
+    },
+    promptAgent: (input) => {
+      prompts.push(input);
+      return { outcome: "accepted", path: "session-match", code: "submitted", detail: "ok" };
+    },
+  } };
+
+  const outcome = tick(index, herdr, T0 + MIN);
+  assert.equal(outcome.runs[0].action, "deferred");
+  assert.match(outcome.runs[0].detail, /changed during the final identity lookup/);
+  assert.equal(prompts.length, 0);
+  assert.equal(readIndex(index).entries[0].lastWake, null);
+});
+
+test("engineering 15: a single wake above the input byte cap is reported and not submitted", () => {
+  const index = indexFile();
+  const longName = "i".repeat(MAX_WAKE_BYTES);
+  const run = makeSupervisedRun({ implementor: implementorIdentity({ agent: longName }) });
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ name: longName, status: "blocked" }) } });
+  const outcome = tick(index, herdr, T0 + MIN);
+  assert.equal(outcome.runs[0].action, "failed");
+  assert.match(outcome.runs[0].detail, /above the .* byte cap/);
+  assert.equal(herdr.prompts.length, 0);
+  assert.match(readIndex(index).entries[0].lastFailure.detail, /above the .* byte cap/);
+});
+
 test("B4: several runs - two repositories with one slug, and one Observer watching two runs - each wake reaches only its own Observer, bundled per Observer", () => {
   const index = indexFile();
   const a = makeSupervisedRun({ runInstanceId: "a" });
-  const b = makeSupervisedRun({ runInstanceId: "b", observer: observerIdentity({ sessionId: "other-observer", paneId: "w9:p1", terminalId: "term_other" }), implementor: { paneId: "w9:p2", agent: "impl" } });
-  const c = makeSupervisedRun({ runInstanceId: "c", implementor: { paneId: "w3:p1", agent: "impl-c" } });
+  const b = makeSupervisedRun({ runInstanceId: "b", observer: observerIdentity({ sessionId: "other-observer", paneId: "w9:p1", terminalId: "term_other" }), implementor: implementorIdentity({ paneId: "w9:p2", sessionId: "sess", agent: "impl" }) });
+  const c = makeSupervisedRun({ runInstanceId: "c", implementor: implementorIdentity({ paneId: "w3:p1", sessionId: "sess", agent: "impl-c" }) });
   for (const [run, id] of [[a, "a"], [b, "b"], [c, "c"]]) enrollRun(index, { statePath: run.statePath, runInstanceId: id, recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
   const herdr = fakeTickHerdr({ agents: {
     obs: observer(),
@@ -189,6 +280,7 @@ test("B11: when herdr returns an input_guard for the Observer the wake goes guar
 test("B12: when herdr is not answering, the tick judges from state.json, sends nothing, and says observation was impossible", () => {
   const index = indexFile();
   const run = makeSupervisedRun({ dispatchedAt: "2026-09-18T09:00:00.000Z" });
+  patchState(run.statePath, (state) => { state.createdAt = "2026-09-18T09:00:00.000Z"; });
   enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T09:00:00.000Z" });
   const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor() } });
   herdr.state.down = true;
@@ -201,7 +293,7 @@ test("B12: when herdr is not answering, the tick judges from state.json, sends n
   assert.deepEqual(readIndex(index).lastHerdr, { available: false, detail: "socket down" });
 });
 
-test("D-09: a wake herdr rejected before input is retried next tick; one it may have delivered is not", () => {
+test("D-09: a definite rejection retries, while unknown delivery retries only to its bound", () => {
   const index = indexFile();
   const run = makeSupervisedRun();
   enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
@@ -209,6 +301,50 @@ test("D-09: a wake herdr rejected before input is retried next tick; one it may 
   herdr.herdr.promptAgent = () => ({ outcome: "rejected", path: "session-match", code: "agent_not_ready", detail: "not ready" });
   assert.equal(tick(index, herdr, T0 + MIN).runs[0].action, "failed");
   herdr.herdr.promptAgent = () => ({ outcome: "unknown", path: "session-match", code: "herdr_prompt_timeout", detail: "timeout" });
-  assert.equal(tick(index, herdr, T0 + 2 * MIN).runs[0].action, "sent", "retried after a rejection");
-  assert.equal(tick(index, herdr, T0 + 3 * MIN).runs[0].action, "none", "not retried after an unknown outcome");
+  assert.equal(tick(index, herdr, T0 + 2 * MIN).runs[0].action, "failed", "an uncertain effect is retried but never labeled sent");
+  assert.equal(tick(index, herdr, T0 + 3 * MIN).runs[0].action, "failed", "one bounded retry follows an unknown outcome");
+  assert.equal(tick(index, herdr, T0 + 4 * MIN).runs[0].action, "failed", "the same episode stops after the bounded retry");
+});
+
+test("D-09: interacting wake reasons keep independent episode acknowledgements", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  patchState(run.statePath, (state) => {
+    const id = Math.max(0, ...state.events.map((event) => event.id)) + 1;
+    state.events.push({ id, at: "2026-09-18T10:01:00.000Z", kind: "escalate", actor: "implementor", subject: null, summary: "review requested" });
+  });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "working" }) } });
+  assert.match(tick(index, herdr, T0 + 2 * MIN).runs[0].detail, /escalate/);
+  assert.match(tick(index, herdr, T0 + 20 * MIN).runs[0].detail, /patrol/, "a prior escalation must not suppress patrol");
+  herdr.state.agents.impl = implementor({ status: "idle", activityAt: T0 + 20 * MIN, stateChangeSeq: 9 });
+  assert.match(tick(index, herdr, T0 + 21 * MIN).runs[0].detail, /settled/, "a prior patrol must not suppress a new settled episode");
+  assert.equal(tick(index, herdr, T0 + 22 * MIN).runs[0].action, "none");
+  assert.equal(herdr.prompts.length, 3);
+});
+
+test("a stale tick cannot acknowledge or remove a newer enrollment at the same state path", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
+  let reenrolled = false;
+  tick(index, herdr, T0 + MIN, { beforePersist: () => {
+    if (reenrolled) return;
+    reenrolled = true;
+    patchState(run.statePath, (state) => { state.supervision.runInstanceId = "instance-2"; });
+    enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-2", recoveryOwner: "supervisor", at: "2026-09-18T10:00:30.000Z" });
+  } });
+  assert.equal(reenrolled, true);
+  let entry = readIndex(index).entries[0];
+  assert.equal(entry.runInstanceId, "instance-2");
+  assert.equal(entry.lastWake, null, "the old tick cannot acknowledge the new enrollment");
+
+  patchState(run.statePath, (state) => { state.status = "retired"; state.retirement = { retiredAt: "2026-09-18T10:02:00.000Z", retiredBySessionId: null }; });
+  tick(index, herdr, T0 + 3 * MIN, { beforePersist: () => {
+    patchState(run.statePath, (state) => { state.status = "active"; state.retirement = null; state.supervision.runInstanceId = "instance-3"; });
+    enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-3", recoveryOwner: "supervisor", at: "2026-09-18T10:02:30.000Z" });
+  } });
+  entry = readIndex(index).entries[0];
+  assert.equal(entry.runInstanceId, "instance-3", "the old terminal decision cannot remove the new enrollment");
 });

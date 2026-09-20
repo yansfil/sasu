@@ -404,6 +404,12 @@ async function main(): Promise<void> {
   // --state resolve from the current directory.
   if (command === "supervisor") {
     const supervisorResult = await runSupervisorCommand(projectRoot, args);
+    const quiet = subcommand === "tick" && args.flags.get("quiet") === true;
+    if (quiet && supervisorResult.ok) exit(supervisorResult.exitCode);
+    if (quiet && !supervisorResult.ok) {
+      process.stderr.write(`[${supervisorResult.action}] FAIL - ${supervisorResult.message}\n`);
+      exit(supervisorResult.exitCode);
+    }
     if (asJson) {
       process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...supervisorResult }, null, 2)}\n`);
     } else {

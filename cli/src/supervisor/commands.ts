@@ -7,8 +7,8 @@ import type { ImplementCommandResult, ObserverIdentity } from "../implement/type
 import { currentHerdrRole } from "../runs/session";
 import { readIndex, enrollRun, type SupervisorIndex } from "./index";
 import { installLaunchAgent, launchAgentStatus, uninstallLaunchAgent, type LaunchAgentSpec } from "./launchd";
-import { indexPath, tickLogPath } from "./paths";
-import { herdrForTick, runTick } from "./tick";
+import { indexPath, launchdLogPath, tickLogPath, TICK_INTERVAL_MS } from "./paths";
+import { herdrForTick, rotateLog, runTick } from "./tick";
 
 const { HARNESS_HOOK_MARKERS, removeHooks, runtimeHookFiles } = require("../../lib/hooks.js") as {
   HARNESS_HOOK_MARKERS: string[];
@@ -51,9 +51,12 @@ export function currentObserverIdentity(env: NodeJS.ProcessEnv = process.env, he
 }
 
 function tick(env: NodeJS.ProcessEnv): ImplementCommandResult {
+  rotateLog(launchdLogPath(env));
   const outcome = runTick({ indexFile: indexPath(env), herdr: herdrForTick() });
   const sent = outcome.runs.filter((run) => run.action === "sent").length;
-  return result("tick", true, `tick at ${outcome.at}: ${outcome.runs.length} run(s), ${sent} wake(s) sent${outcome.herdr.available ? "" : "; herdr unavailable, state.json judgment only"}`, { ...outcome, runs: outcome.runs.map((run) => ({ statePath: run.statePath, slug: run.slug, action: run.action, detail: run.detail, due: run.decision?.due.map((entry) => entry.reason) ?? [], candidates: run.decision?.candidates.map((entry) => entry.reason) ?? [] })) });
+  const failed = outcome.runs.filter((run) => run.action === "failed").length;
+  const ok = outcome.herdr.available && failed === 0;
+  return result("tick", ok, `tick at ${outcome.at}: ${outcome.runs.length} run(s), ${sent} wake(s) sent, ${failed} failure(s)${outcome.herdr.available ? "" : "; herdr unavailable, state.json judgment only"}`, { ...outcome, runs: outcome.runs.map((run) => ({ statePath: run.statePath, slug: run.slug, action: run.action, detail: run.detail, due: run.decision?.due.map((entry) => entry.reason) ?? [], candidates: run.decision?.candidates.map((entry) => entry.reason) ?? [] })) });
 }
 
 function slugOf(statePath: string): string {
@@ -67,6 +70,7 @@ export function supervisorStatusView(env: NodeJS.ProcessEnv, herdr: HerdrEnviron
   try { index = readIndex(file); } catch (error) { indexProblem = error instanceof Error ? error.message : String(error); }
   const agent = launchAgentStatus(launchd);
   const guarded = guardedPromptSupport(herdr);
+  const now = Date.now();
   const runs = (index?.entries ?? []).map((entry) => ({
     slug: slugOf(entry.statePath),
     statePath: entry.statePath,
@@ -78,24 +82,36 @@ export function supervisorStatusView(env: NodeJS.ProcessEnv, herdr: HerdrEnviron
     lastFailure: entry.lastFailure,
     lastObservation: entry.lastObservation,
     wakePath: entry.lastObservation === null ? "unobserved" : entry.lastObservation.guardedPrompt ? "guarded" : "session-match",
-    stale: entry.missingTicks > 0 || (entry.lastObservation !== null && (/^observer-gone/.test(entry.lastObservation.observer) || /^implementor-gone/.test(entry.lastObservation.implementor))),
+    stale: entry.missingTicks > 0 || (entry.lastObservation !== null && (/^observer-gone/.test(entry.lastObservation.observer) || /^implementor-gone/.test(entry.lastObservation.implementor) || /^unobservable/.test(entry.lastObservation.observer) || /^unobservable/.test(entry.lastObservation.implementor))),
   }));
+  const tickAgeMs = index?.lastTickAt === null || index?.lastTickAt === undefined ? null : now - Date.parse(index.lastTickAt);
+  const healthProblems = [
+    ...(indexProblem === null ? [] : [indexProblem]),
+    ...(runs.length > 0 && !agent.installed ? ["LaunchAgent is not installed"] : []),
+    ...(runs.length > 0 && agent.loaded !== true ? ["LaunchAgent is not loaded"] : []),
+    ...(runs.length > 0 && tickAgeMs === null ? ["no tick has completed"] : []),
+    ...(tickAgeMs !== null && tickAgeMs > TICK_INTERVAL_MS * 3 ? [`last tick is ${Math.round(tickAgeMs / 1000)} seconds old`] : []),
+    ...(index?.lastHerdr?.available === false ? [`last tick could not observe herdr: ${index.lastHerdr.detail ?? "no detail"}`] : []),
+    ...runs.filter((run) => run.stale).map((run) => `${run.slug} routing is stale`),
+    ...runs.filter((run) => run.lastFailure !== null).map((run) => `${run.slug} current failure: ${run.lastFailure!.detail}`),
+  ];
   const lines = [
     `LaunchAgent: ${agent.installed ? "installed" : "NOT installed"} at ${agent.plistPath}; ${agent.loaded === true ? "loaded" : agent.loaded === false ? "NOT loaded" : "load state unknown"}${agent.detail === null ? "" : ` (${agent.detail})`}`,
     `Last tick: ${index?.lastTickAt ?? "never"}${index?.lastHerdr === null || index?.lastHerdr === undefined ? "" : `; herdr ${index.lastHerdr.available ? "available" : `unavailable: ${index.lastHerdr.detail}`}`}`,
     `Guarded prompt: ${guarded.supported === true ? "supported by the installed herdr" : guarded.supported === false ? "not offered by the installed herdr (session-match path in use)" : `unknown: ${guarded.detail}`}`,
+    `Health: ${healthProblems.length === 0 ? "healthy" : `ATTENTION - ${healthProblems.join("; ")}`}`,
     ...(indexProblem === null ? [] : [`Index: ${indexProblem}`]),
     `Runs: ${runs.length}`,
     ...runs.map((run) => `  ${run.slug} ${run.runInstanceId}${run.stale ? " [stale]" : ""}: recovery owner ${run.recoveryOwner}; observer ${run.lastObservation?.observer ?? "unobserved"}; implementor ${run.lastObservation?.implementor ?? "unobserved"}; last wake ${run.lastWake === null ? "none" : `${run.lastWake.reasons.join("+")} at ${run.lastWake.at} ${run.lastWake.outcome} via ${run.lastWake.path}`}; last failure ${run.lastFailure === null ? "none" : `${run.lastFailure.at} ${run.lastFailure.detail}`}`),
     ...(index?.removed.slice(-5).map((removal) => `  removed ${slugOf(removal.statePath)} at ${removal.at}: ${removal.cause}`) ?? []),
   ];
-  const ok = indexProblem === null && (runs.length === 0 || (agent.installed && agent.loaded === true));
-  return { ok, lines, detail: { launchAgent: agent, lastTickAt: index?.lastTickAt ?? null, lastHerdr: index?.lastHerdr ?? null, guardedPrompt: guarded, indexPath: file, indexProblem, runs, removed: index?.removed ?? [], tickLog: tickLogPath(env) } };
+  const ok = healthProblems.length === 0;
+  return { ok, lines, detail: { launchAgent: agent, lastTickAt: index?.lastTickAt ?? null, lastTickAgeMs: tickAgeMs, lastHerdr: index?.lastHerdr ?? null, guardedPrompt: guarded, indexPath: file, indexProblem, healthProblems, runs, removed: index?.removed ?? [], tickLog: tickLogPath(env) } };
 }
 
 function status(env: NodeJS.ProcessEnv): ImplementCommandResult {
   const view = supervisorStatusView(env);
-  return result("status", true, view.ok ? "supervisor is healthy" : "supervisor needs attention", view.detail, view.lines);
+  return result("status", view.ok, view.ok ? "supervisor is healthy" : "supervisor needs attention", view.detail, view.lines);
 }
 
 function install(env: NodeJS.ProcessEnv): ImplementCommandResult {
@@ -161,4 +177,3 @@ export async function runSupervisorCommand(projectRoot: string, args: Supervisor
 export function newRunInstanceId(): string {
   return crypto.randomUUID();
 }
-

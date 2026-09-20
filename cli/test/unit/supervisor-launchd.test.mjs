@@ -30,6 +30,7 @@ test("the plist runs the tick every interval under the user's own HOME and PATH,
   const text = renderPlist(spec("/Users/some one", { path: "/a&b:/c<d" }));
   assert.match(text, new RegExp(`<string>${LAUNCHD_LABEL}</string>`));
   assert.match(text, /<string>supervisor<\/string>\s*<string>tick<\/string>/);
+  assert.match(text, /<string>tick<\/string>\s*<string>--quiet<\/string>/);
   assert.match(text, new RegExp(`<key>StartInterval</key>\\s*<integer>${TICK_INTERVAL_SECONDS}</integer>`));
   assert.match(text, /<key>RunAtLoad<\/key>\s*<true\/>/);
   assert.doesNotMatch(text, /KeepAlive/, "no long-lived daemon: launchd starts a fresh tick each interval (D-03)");
@@ -87,4 +88,29 @@ test("a launchctl failure is a reported problem, never a silent success", () => 
   const status = launchAgentStatus({ env: { HOME: home }, launchctl: () => ({ status: null, stdout: "", stderr: "spawn launchctl ENOENT" }), uid: 501 });
   assert.equal(status.loaded, null);
   assert.match(status.detail, /launchctl unavailable/);
+});
+
+test("a failed definition replacement leaves the old plist intact and the retry performs the replacement", () => {
+  const home = isolated();
+  const base = fakeLaunchctl();
+  const env = { HOME: home };
+  const initial = { env, launchctl: base.run, uid: 501 };
+  installLaunchAgent(spec(home), initial);
+  const plist = launchAgentPlistPath(env);
+  const oldBytes = fs.readFileSync(plist, "utf8");
+  let refuseBootout = true;
+  const run = (args) => {
+    if (args[0] === "bootout" && refuseBootout) {
+      refuseBootout = false;
+      return { status: 5, stdout: "", stderr: "busy" };
+    }
+    return base.run(args);
+  };
+  const failed = installLaunchAgent(spec(home, { cli: "/new/cli.js" }), { env, launchctl: run, uid: 501 });
+  assert.match(failed.problem, /bootout failed/);
+  assert.equal(fs.readFileSync(plist, "utf8"), oldBytes, "a failed unload cannot leave new bytes pretending to be loaded");
+  const retried = installLaunchAgent(spec(home, { cli: "/new/cli.js" }), { env, launchctl: run, uid: 501 });
+  assert.equal(retried.problem, null);
+  assert.match(fs.readFileSync(plist, "utf8"), /\/new\/cli\.js/);
+  assert.match(base.loaded.get(LAUNCHD_LABEL), /\/new\/cli\.js/);
 });

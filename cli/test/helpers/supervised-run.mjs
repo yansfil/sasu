@@ -13,8 +13,12 @@ export function observerIdentity(overrides = {}) {
   return { runtime: "claude", sessionId: OBSERVER_SESSION, terminalId: "term_obs", paneId: OBSERVER_PANE, hostScope: "sock", recordedAt: "2026-09-18T10:00:00.000Z", ...overrides };
 }
 
+export function implementorIdentity(overrides = {}) {
+  return { paneId: IMPLEMENTOR_PANE, agent: "impl", sessionId: "impl-sess", terminalId: "term", hostScope: "sock", recordedAt: "2026-09-18T10:00:00.000Z", ...overrides };
+}
+
 /** Start a run in a fresh project and record it as dispatched; returns the absolute state path. */
-export function makeSupervisedRun({ slug = "fixture", runInstanceId = "instance-1", dispatchedAt = "2026-09-18T10:00:00.000Z", patrolIntervalMs = 15 * 60 * 1000, observer = observerIdentity(), implementor = { paneId: IMPLEMENTOR_PANE, agent: "impl" }, recoveryOwner = "supervisor", project } = {}) {
+export function makeSupervisedRun({ slug = "fixture", runInstanceId = "instance-1", dispatchedAt = "2026-09-18T10:00:00.000Z", patrolIntervalMs = 15 * 60 * 1000, observer = observerIdentity(), implementor = implementorIdentity(), recoveryOwner = "supervisor", project } = {}) {
   const root = project ?? fs.realpathSync(makeProject());
   const statePath = path.join(root, STATE_PATH);
   if (!fs.existsSync(statePath)) {

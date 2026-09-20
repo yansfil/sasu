@@ -278,8 +278,8 @@ export interface SupervisionRecord {
   /** Random per dispatch; the child pane carries it as SASU_RUN_INSTANCE_ID. */
   runInstanceId: string;
   observer: ObserverIdentity;
-  /** Pane and agent name the implementor was started as. */
-  implementor: { paneId: string; agent: string };
+  /** Exact identity captured after start and before the handoff is submitted. */
+  implementor: { paneId: string; agent: string; sessionId?: string; terminalId?: string; hostScope?: string; recordedAt?: string };
   /** Realpath of the repository's common git dir, so two worktrees of one repository and two repositories with one slug never collide. */
   canonicalRepository: string;
   prdPath: string;
@@ -290,6 +290,32 @@ export interface SupervisionRecord {
   /** Who replaces a dead Observer: only one loop may input into a session (D-15). */
   recoveryOwner: "supervisor" | "task-factory";
   handovers: ObserverHandover[];
+}
+
+export interface PendingDispatch {
+  runInstanceId: string;
+  observer: ObserverIdentity;
+  plannedAgent: string;
+  phase: "planned" | "prepared" | "started";
+  /** Exact pane created before an agent is started, so crash recovery owns it. */
+  prepared: {
+    paneId: string;
+    workspaceId: string;
+    tabId: string;
+    cwd: string;
+    kind: string;
+    placement: "workspace" | "tab";
+    hostScope: string;
+    parentPaneId: string;
+    preparedAt: string;
+  } | null;
+  implementor: SupervisionRecord["implementor"] | null;
+  canonicalRepository: string;
+  prdPath: string;
+  dispatchHead: string | null;
+  dispatchedAt: string;
+  patrolIntervalMs: number;
+  recoveryOwner: "supervisor" | "task-factory";
 }
 
 export type PrdJudgeRecord =
@@ -334,6 +360,8 @@ export interface ImplementState {
   dispatches?: DispatchRecord[];
   /** Absent until a Herdr dispatch enrolls the run for supervision; read as none. */
   supervision?: SupervisionRecord | null;
+  /** Durable dispatch intent, cleared only after the handoff submission succeeds. */
+  pendingDispatch?: PendingDispatch | null;
   requirements: BehaviorRequirement[];
   activeVerification?: ActiveVerification;
   artifacts: RegisteredArtifact[];

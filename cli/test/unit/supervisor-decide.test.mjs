@@ -15,7 +15,8 @@ const OBSERVER = { runtime: "claude", sessionId: "obs-uuid", terminalId: "term_o
 function facts(overrides = {}) {
   return {
     slug: "fixture", status: "active", lastEventAt: T0, lastEventId: 3, lastEscalateId: null,
-    dispatchedAt: T0, patrolIntervalMs: 15 * MIN, observer: OBSERVER, implementor: { paneId: "w2:p1", agent: "impl" },
+    dispatchedAt: T0, patrolIntervalMs: 15 * MIN, observer: OBSERVER,
+    implementor: { paneId: "w2:p1", agent: "impl", sessionId: "impl-uuid", terminalId: "term_impl", hostScope: "sock", recordedAt: new Date(T0).toISOString() },
     ...overrides,
   };
 }
@@ -68,12 +69,16 @@ test("B8: blocked wakes at once and is not repeated while the same block lasts",
   assert.deepEqual(reasons(decide({}, found({ status: "blocked", stateChangeSeq: 4 }), T0 + 2 * MIN, { lastWake: wake })), []);
 });
 
-test("B8: a rejected wake does not count as answered, so the next tick tries again", () => {
+test("B8/D-09: an unaccepted wake does not count as answered, so bounded delivery policy can retry it", () => {
   const first = decide({}, found({ status: "blocked", stateChangeSeq: 4 }), T0 + MIN);
   const rejected = { at: new Date(T0 + MIN).toISOString(), reasons: ["blocked"], episode: episodeKey(first.due), outcome: "rejected", path: "session-match", code: "agent_blocked" };
   assert.deepEqual(reasons(decide({}, found({ status: "blocked", stateChangeSeq: 4 }), T0 + 2 * MIN, { lastWake: rejected })), ["blocked"]);
   const unknown = { ...rejected, outcome: "unknown", code: "herdr_prompt_timeout" };
-  assert.deepEqual(reasons(decide({}, found({ status: "blocked", stateChangeSeq: 4 }), T0 + 2 * MIN, { lastWake: unknown })), [], "an unknown outcome may have delivered and is never resent");
+  assert.deepEqual(
+    reasons(decide({}, found({ status: "blocked", stateChangeSeq: 4 }), T0 + 2 * MIN, { lastWake: unknown })),
+    ["blocked"],
+    "an unknown outcome remains due; the tick layer applies the two-attempt delivery cap",
+  );
 });
 
 test("B8: an escalate event wakes once per event", () => {
@@ -127,6 +132,11 @@ test("B8: an implementor that left its pane, or whose pane holds another agent, 
   assert.deepEqual(reasons(replaced), ["implementor-gone"]);
   const wake = { at: new Date(T0 + MIN).toISOString(), reasons: ["implementor-gone"], episode: episodeKey(gone.due), outcome: "accepted", path: "session-match", code: "submitted" };
   assert.deepEqual(reasons(decide({}, { kind: "absent", detail: "nobody" }, T0 + 2 * MIN, { lastWake: wake })), []);
+});
+
+test("B8: a replacement implementor session in the same named pane is implementor-gone", () => {
+  assert.deepEqual(reasons(decide({}, found({ sessionId: "replacement-session" }), T0 + MIN)), ["implementor-gone"]);
+  assert.deepEqual(reasons(decide({}, found({ terminalId: "replacement-terminal" }), T0 + MIN)), ["implementor-gone"]);
 });
 
 test("B15: a retired run wakes with reason terminal and is marked to leave the index", () => {

@@ -11,8 +11,14 @@ export const WAKE_MARKER = "SASU_WAKE";
 
 export interface WakeLine {
   slug: string;
+  statePath: string;
   runInstanceId: string;
+  observerSessionId: string;
   reasons: Candidate[];
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 export function renderWake(observerSessionId: string, lines: WakeLine[]): string {
@@ -21,7 +27,7 @@ export function renderWake(observerSessionId: string, lines: WakeLine[]): string
     body.push(`run: ${line.slug} instance ${line.runInstanceId}`);
     body.push(`reason: ${line.reasons.map((entry) => entry.reason).join(", ")}`);
     for (const entry of line.reasons) body.push(`  ${entry.reason}: ${entry.detail}`);
-    body.push(`inspect: sasu implement status --slug ${line.slug} --digest`);
+    body.push(`inspect: sasu implement status --state ${shellQuote(line.statePath)} --instance ${shellQuote(line.runInstanceId)} --observer ${shellQuote(line.observerSessionId)} --digest`);
   }
   return body.join("\n");
 }

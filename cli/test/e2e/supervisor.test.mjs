@@ -10,6 +10,9 @@ import test from "node:test";
 
 import { CLI, git, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
 import { installFakeHerdr, installFakeLaunchctl } from "../helpers/fake-herdr.mjs";
+import { readIndex, updateIndex } from "../../dist/supervisor/index.js";
+import { launchdLogPath } from "../../dist/supervisor/paths.js";
+import { LOG_CAP_BYTES } from "../../dist/supervisor/tick.js";
 
 const OBSERVER = "0b5e7e1e-0000-4000-8000-00000000000a";
 const OBSERVER_PANE = "w4G:p12";
@@ -51,7 +54,7 @@ function dispatchedRun(extraDispatchArgs = []) {
   const tick = () => sasu(home, ["supervisor", "tick"], { env: base });
   /** Wakes only: the dispatch's own handoff prompt is not one. */
   const wakes = () => herdr.prompts().filter((prompt) => prompt.text.startsWith("SASU_WAKE"));
-  return { root, home, herdr, launchctl, base, observerEnv, indexFile, tick, wakes, statePath: path.join(root, STATE_PATH), runInstanceId: dispatched.json.detail.runInstanceId, index: () => JSON.parse(fs.readFileSync(indexFile, "utf8")) };
+  return { root, home, herdr, launchctl, base, observerEnv, indexFile, tick, wakes, statePath: path.join(root, STATE_PATH), runInstanceId: dispatched.json.detail.runInstanceId, index: () => readIndex(indexFile) };
 }
 
 test("B1/B5/B8/B17: a dispatched run is indexed at once, a working implementor wakes nobody, a settled one wakes the Observer exactly once, and status shows it", () => {
@@ -78,7 +81,7 @@ test("B1/B5/B8/B17: a dispatched run is indexed at once, a working implementor w
   assert.equal(run.wakes().length, 1, "one wake per settled episode");
 
   const status = sasu(run.home, ["supervisor", "status"], { env: run.base });
-  assert.equal(status.status, 0, status.text);
+  assert.equal(status.status, 1, "status exit reflects the missing scheduler even though detail remains readable");
   const shown = status.json.detail.runs[0];
   assert.deepEqual({ slug: shown.slug, instance: shown.runInstanceId, reasons: shown.lastWake.reasons, outcome: shown.lastWake.outcome, path: shown.wakePath, stale: shown.stale }, { slug: "fixture", instance: run.runInstanceId, reasons: ["settled"], outcome: "accepted", path: "session-match", stale: false });
   assert.equal(status.json.detail.guardedPrompt.supported, false, "the installed (fake 0.9.1) herdr offers no guard");
@@ -87,11 +90,42 @@ test("B1/B5/B8/B17: a dispatched run is indexed at once, a working implementor w
   assert.match(status.json.summary.join("\n"), /LaunchAgent: NOT installed/);
 });
 
+test("P2 health and resource bounds: quiet ticks stay silent, rotate launchd output, and report current failures", () => {
+  const run = dispatchedRun();
+  run.herdr.setAgents({ [OBSERVER_PANE]: observerAgent(), [IMPL_PANE]: implAgent() });
+  assert.equal(sasu(run.home, ["supervisor", "install"], { env: run.base }).status, 0);
+  const log = launchdLogPath({ HOME: run.home });
+  fs.mkdirSync(path.dirname(log), { recursive: true });
+  fs.writeFileSync(log, Buffer.alloc(LOG_CAP_BYTES, 120));
+
+  const quiet = spawnSync(process.execPath, [CLI, "supervisor", "tick", "--quiet"], { cwd: run.home, env: isolatedEnv(run.base), encoding: "utf8", timeout: 60_000 });
+  assert.equal(quiet.status, 0, quiet.stderr);
+  assert.equal(quiet.stdout, "");
+  assert.equal(quiet.stderr, "");
+  assert.equal(fs.statSync(`${log}.1`).size, LOG_CAP_BYTES, "the full launchd sink is rotated before the tick");
+  assert.equal(sasu(run.home, ["supervisor", "status"], { env: run.base }).status, 0, "installed, recent and observable is healthy");
+
+  const unavailable = spawnSync(process.execPath, [CLI, "supervisor", "tick", "--quiet"], { cwd: run.home, env: isolatedEnv({ ...run.base, HERDR_FAKE_DOWN: "1" }), encoding: "utf8", timeout: 60_000 });
+  assert.equal(unavailable.status, 1);
+  assert.equal(unavailable.stdout, "");
+  assert.match(unavailable.stderr, /FAIL.*herdr unavailable/);
+  const failedStatus = sasu(run.home, ["supervisor", "status"], { env: run.base });
+  assert.equal(failedStatus.status, 1);
+  assert.match(failedStatus.json.detail.healthProblems.join("\n"), /could not observe herdr|current failure/);
+
+  assert.equal(run.tick().status, 0, "a healthy observation clears the current failure");
+  assert.equal(sasu(run.home, ["supervisor", "status"], { env: run.base }).status, 0);
+  updateIndex(run.indexFile, (index) => { index.lastTickAt = "2020-01-01T00:00:00.000Z"; });
+  const stale = sasu(run.home, ["supervisor", "status"], { env: run.base });
+  assert.equal(stale.status, 1);
+  assert.match(stale.json.detail.healthProblems.join("\n"), /last tick is .* seconds old/);
+});
+
 test("D-15/B18: status and the digest name the loop that owns Observer recovery, and the tick still wakes only the recorded Observer for a factory run", () => {
   const run = dispatchedRun(["--recovery-owner", "task-factory"]);
   assert.equal(state(run.root).supervision.recoveryOwner, "task-factory");
   const status = sasu(run.home, ["supervisor", "status"], { env: run.base });
-  assert.equal(status.status, 0, status.text);
+  assert.equal(status.status, 1, "an enrolled run with no scheduler and no tick is unhealthy");
   assert.equal(status.json.detail.runs[0].recoveryOwner, "task-factory");
   assert.match(status.json.summary.join("\n"), /fixture .*: recovery owner task-factory;/);
   run.herdr.setAgents({ [OBSERVER_PANE]: observerAgent(), [IMPL_PANE]: implAgent() });
@@ -154,28 +188,32 @@ test("B15: retiring the run wakes the Observer once with reason terminal and rem
   assert.equal(run.wakes().length, 1);
 });
 
-test("B3: a tick killed at any point leaves an index the next tick reads to the same decision, and the Observer is woken at least once and at most once more", async () => {
+test("B3/D-09: a tick killed after the prompt effect but before persistence duplicates at most once and then converges", async () => {
   const run = dispatchedRun();
   run.herdr.setAgents({ [OBSERVER_PANE]: observerAgent(), [IMPL_PANE]: implAgent({ agent_status: "blocked" }) });
-  const env = isolatedEnv(run.base);
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const child = spawn(process.execPath, [CLI, "supervisor", "tick", "--json"], { cwd: run.home, env, stdio: "ignore" });
-    const closed = new Promise((resolve) => child.once("close", resolve));
-    const delay = Math.floor(Math.random() * 400);
-    await new Promise((resolve) => setTimeout(resolve, delay));
-    child.kill("SIGKILL");
-    await closed;
-    // Whatever was on disk when the kill landed still parses.
-    if (fs.existsSync(run.indexFile)) assert.doesNotThrow(() => run.index(), `tick ${attempt} killed after ${delay}ms left a broken index`);
-    assert.equal(fs.readdirSync(path.dirname(run.indexFile)).filter((name) => name.endsWith(".tmp")).length, 0, "a killed rename leaves no half-written index");
-  }
+  const ready = path.join(path.dirname(run.indexFile), "prompt-effect.ready");
+  const release = path.join(path.dirname(run.indexFile), "prompt-effect.release");
+  const env = isolatedEnv({ ...run.base, HERDR_FAKE_PROMPT_BARRIER_READY: ready, HERDR_FAKE_PROMPT_BARRIER_RELEASE: release });
+  const child = spawn(process.execPath, [CLI, "supervisor", "tick", "--json"], { cwd: run.home, env, stdio: "ignore", detached: true });
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  const deadline = Date.now() + 10_000;
+  while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(fs.existsSync(ready), true, "the fake herdr reached the exact post-effect barrier");
+  process.kill(-child.pid, "SIGKILL");
+  await closed;
+
+  // The prompt effect happened, while the immutable index stayed parseable
+  // at its prior revision and contains no acknowledgment for the episode.
+  assert.equal(run.wakes().length, 1);
+  assert.doesNotThrow(() => run.index());
+  assert.equal(fs.readdirSync(path.dirname(run.indexFile)).filter((name) => name.endsWith(".tmp")).length, 0, "the interrupted tick leaves no half-written index");
   const settled = run.tick();
   assert.equal(settled.status, 0, settled.text);
   const prompts = run.wakes();
-  assert.ok(prompts.length >= 1, "the blocked episode reached the Observer");
+  assert.equal(prompts.length, 2, "the uncertain prompt is retried exactly once");
   const converged = run.tick();
   assert.equal(converged.json.detail.runs[0].action, "none");
-  assert.equal(run.wakes().length, prompts.length, "once recorded, the episode is never resent");
+  assert.equal(run.wakes().length, 2, "once recorded, the episode is never resent");
   const entry = run.index().entries[0];
   assert.deepEqual({ reasons: entry.lastWake.reasons, outcome: entry.lastWake.outcome }, { reasons: ["blocked"], outcome: "accepted" });
   assert.equal(prompts.every((prompt) => prompt.target === OBSERVER_PANE), true, "every duplicate went to the same verified Observer");
@@ -219,6 +257,20 @@ test("B10/B16: status --digest is deterministic on a fixture history, reads only
   assert.notEqual(stranger.status, 0);
   assert.match(stranger.text, /digest refused: run 'fixture' is observed by session/);
   assert.match(stranger.text, /nothing was changed/);
+  const wrongInstance = sasu(run.root, ["implement", "status", "--state", run.statePath, "--instance", "different-instance", "--observer", OBSERVER, "--digest"], { env: run.observerEnv });
+  assert.notEqual(wrongInstance.status, 0);
+  assert.match(wrongInstance.text, /digest refused: expected run instance different-instance/);
+  const wrongObserver = sasu(run.root, ["implement", "status", "--state", run.statePath, "--instance", run.runInstanceId, "--observer", "different-observer", "--digest"], { env: run.observerEnv });
+  assert.notEqual(wrongObserver.status, 0);
+  assert.match(wrongObserver.text, /digest refused: expected Observer different-observer/);
+  const sameSlugRoot = fs.realpathSync(makeProject());
+  const sameSlugOwner = "same-slug-owner";
+  assert.equal(sasu(sameSlugRoot, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env: { CLAUDE_SESSION_ID: sameSlugOwner } }).status, 0);
+  const exactFromOtherRepository = sasu(sameSlugRoot, ["implement", "status", "--state", run.statePath, "--instance", run.runInstanceId, "--observer", OBSERVER, "--digest"], { env: { CLAUDE_SESSION_ID: OBSERVER } });
+  assert.equal(exactFromOtherRepository.status, 0, exactFromOtherRepository.text);
+  const wrongSameSlugOwner = sasu(sameSlugRoot, ["implement", "status", "--state", run.statePath, "--instance", run.runInstanceId, "--observer", OBSERVER, "--digest"], { env: { CLAUDE_SESSION_ID: sameSlugOwner } });
+  assert.notEqual(wrongSameSlugOwner.status, 0);
+  assert.match(wrongSameSlugOwner.text, /is observed by session/);
   const plain = sasu(run.root, ["implement", "status", "--slug", "fixture"], { env: { ...run.observerEnv, CLAUDE_SESSION_ID: "someone-else" } });
   assert.equal(plain.status, 0, "the ordinary status stays open");
   assert.equal(plain.json.detail.supervision.runInstanceId, run.runInstanceId);

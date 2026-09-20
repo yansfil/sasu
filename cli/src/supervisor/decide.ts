@@ -1,7 +1,7 @@
 import type { AgentLookup } from "../implement/herdr";
 import type { ObserverIdentity } from "../implement/types";
 import { STALL_THRESHOLD_MS } from "../implement/types";
-import type { WakeReason, WakeRecord } from "./index";
+import type { IndexEntry, WakeReason, WakeRecord } from "./index";
 import { TICK_INTERVAL_MS } from "./paths";
 
 /**
@@ -25,7 +25,7 @@ export interface RunFacts {
   dispatchedAt: number;
   patrolIntervalMs: number;
   observer: ObserverIdentity;
-  implementor: { paneId: string; agent: string };
+  implementor: { paneId: string; agent: string; sessionId?: string; terminalId?: string; hostScope?: string; recordedAt?: string };
 }
 
 export interface Observed {
@@ -82,25 +82,41 @@ export function judgeObserver(recorded: ObserverIdentity, lookup: AgentLookup): 
   return { kind: "match", status: agent.status, inputGuard: agent.inputGuard };
 }
 
-export function judgeImplementor(recorded: { paneId: string; agent: string }, lookup: AgentLookup): ImplementorVerdict {
+export function judgeImplementor(recorded: RunFacts["implementor"], lookup: AgentLookup): ImplementorVerdict {
   if (lookup.kind === "unavailable") return { kind: "unobservable", detail: lookup.detail };
   if (lookup.kind === "absent") return { kind: "implementor-gone", detail: `no agent in the Implementor's pane ${recorded.paneId}` };
   const agent = lookup.agent;
   if (agent.name !== null && agent.name !== recorded.agent) {
     return { kind: "implementor-gone", detail: `pane ${recorded.paneId} now holds agent ${agent.name}, not the dispatched ${recorded.agent}` };
   }
+  if (recorded.sessionId !== undefined && agent.sessionId !== recorded.sessionId) {
+    return { kind: "implementor-gone", detail: `pane ${recorded.paneId} now holds session ${agent.sessionId ?? "(unreported)"}, not dispatched implementor session ${recorded.sessionId}` };
+  }
+  if (recorded.terminalId !== undefined && agent.terminalId !== recorded.terminalId) {
+    return { kind: "implementor-gone", detail: `pane ${recorded.paneId} now reports terminal ${agent.terminalId ?? "(unreported)"}, not dispatched implementor terminal ${recorded.terminalId}` };
+  }
   return { kind: "present", status: agent.status, activityAt: agent.activityAt, stateChangeSeq: agent.stateChangeSeq };
 }
 
-/** The `reason:episode` tokens an accepted or unknown wake has already answered. */
-function answered(lastWake: WakeRecord | null): Set<string> {
-  if (lastWake === null || lastWake.outcome === "rejected") return new Set();
-  return new Set(lastWake.episode.split("|").filter(Boolean));
+export type WakeMemory = WakeRecord | null | Pick<IndexEntry, "lastWake" | "acknowledgements" | "lastAcknowledgedAt">;
+
+function memory(value: WakeMemory): Pick<IndexEntry, "lastWake" | "acknowledgements" | "lastAcknowledgedAt"> {
+  if (value !== null && "acknowledgements" in value) return value;
+  const legacy = value as WakeRecord | null;
+  const acknowledgements: Partial<Record<WakeReason, string>> = {};
+  if (legacy !== null && legacy.outcome === "accepted") {
+    for (const token of legacy.episode.split("|")) {
+      const boundary = token.indexOf(":");
+      if (boundary > 0) acknowledgements[token.slice(0, boundary) as WakeReason] = token.slice(boundary + 1);
+    }
+  }
+  return { lastWake: legacy, acknowledgements, lastAcknowledgedAt: legacy?.outcome === "accepted" ? legacy.at : null };
 }
 
-export function decideRun(facts: RunFacts, observed: Observed, lastWake: WakeRecord | null, now: number): Decision {
+export function decideRun(facts: RunFacts, observed: Observed, wakeMemory: WakeMemory, now: number): Decision {
   const observer = judgeObserver(facts.observer, observed.observer);
   const implementor = judgeImplementor(facts.implementor, observed.implementor);
+  const prior = memory(wakeMemory);
   const candidates: Candidate[] = [];
   const terminal = facts.status !== "active";
 
@@ -137,11 +153,12 @@ export function decideRun(facts: RunFacts, observed: Observed, lastWake: WakeRec
     if (eventsSilent && herdrSilent && !alreadyWaking) {
       candidates.push({ reason: "stall", episode: String(facts.lastEventId), detail: `no state.json event since ${new Date(facts.lastEventAt).toISOString()} and ${implementor.kind === "unobservable" ? "herdr activity is unobservable" : "no herdr activity"} for ${Math.round(STALL_THRESHOLD_MS / 60_000)} minutes` });
     }
-    // Patrol: the implementor is working and nothing else is due, but the
-    // Observer has not looked for a patrol interval (B7). Measured from the
-    // last wake when there was one, else from the dispatch.
-    if (implementor.kind === "present" && implementor.status === "working" && candidates.length === 0) {
-      const lastLookAt = lastWake !== null && lastWake.outcome !== "rejected" ? Date.parse(lastWake.at) : facts.dispatchedAt;
+    // Patrol is considered after current non-patrol episodes are filtered.
+    // An already acknowledged escalation must not suppress a later patrol.
+    const nonPatrolDue = candidates.filter((entry) => prior.acknowledgements[entry.reason] !== entry.episode);
+    if (implementor.kind === "present" && implementor.status === "working" && nonPatrolDue.length === 0) {
+      const acknowledgedAt = prior.lastAcknowledgedAt === null ? Number.NaN : Date.parse(prior.lastAcknowledgedAt);
+      const lastLookAt = Number.isFinite(acknowledgedAt) ? acknowledgedAt : facts.dispatchedAt;
       if (now - lastLookAt >= facts.patrolIntervalMs) {
         const bucket = Math.floor((now - facts.dispatchedAt) / facts.patrolIntervalMs);
         candidates.push({ reason: "patrol", episode: String(bucket), detail: `implementor ${facts.implementor.agent} working; ${Math.round((now - lastLookAt) / 60_000)} minutes since the Observer last looked` });
@@ -149,8 +166,7 @@ export function decideRun(facts: RunFacts, observed: Observed, lastWake: WakeRec
     }
   }
 
-  const done = answered(lastWake);
-  const due = candidates.filter((entry) => !done.has(`${entry.reason}:${entry.episode}`));
+  const due = candidates.filter((entry) => prior.acknowledgements[entry.reason] !== entry.episode);
   let deferral: string | null = null;
   if (due.length > 0) {
     if (observer.kind !== "match") deferral = observer.kind === "observer-gone" ? `observer-gone: ${observer.detail}` : `observer unobservable: ${observer.detail}`;

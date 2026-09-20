@@ -54,6 +54,13 @@ test("a plain wake is accepted on exit 0 and reported rejected on herdr's pre-in
   assert.equal(timedOut.code, "herdr_prompt_timeout");
 });
 
+test("a prompt rejected before the herdr process starts is definite and retryable", () => {
+  const result = promptAgent({ target: "w8D:p1", text: "x", expectedInputGuard: null }, {
+    run: () => ({ status: null, stdout: "", stderr: "spawn herdr ENOENT", errorCode: "ENOENT" }),
+  });
+  assert.deepEqual({ outcome: result.outcome, code: result.code }, { outcome: "rejected", code: "herdr_spawn_failed" });
+});
+
 test("B11: a guarded wake carries the guard, needs the submitted acknowledgement, and never falls back to the plain path", () => {
   const asked = [];
   const guarded = promptAgent({ target: "w8D:p1", text: "SASU_WAKE", expectedInputGuard: "g-77" }, { run: (args) => { asked.push(args); return { status: 0, stdout: JSON.stringify({ result: { outcome: "submitted" } }), stderr: "" }; } });

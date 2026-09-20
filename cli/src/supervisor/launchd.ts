@@ -40,6 +40,7 @@ export function renderPlist(spec: LaunchAgentSpec): string {
     `    <string>${xml(spec.cli)}</string>`,
     "    <string>supervisor</string>",
     "    <string>tick</string>",
+    "    <string>--quiet</string>",
     "  </array>",
     "  <key>StartInterval</key>",
     `  <integer>${TICK_INTERVAL_SECONDS}</integer>`,
@@ -128,14 +129,14 @@ export function installLaunchAgent(spec: LaunchAgentSpec, environment: LaunchdEn
   const current = fs.existsSync(plistPath) ? fs.readFileSync(plistPath, "utf8") : null;
   const changed = current !== rendered;
   const before = launchAgentStatus(environment);
-  if (changed) {
-    fs.mkdirSync(path.dirname(plistPath), { recursive: true });
-    fs.writeFileSync(plistPath, rendered);
-  }
   const target = `${domain(environment)}/${LAUNCHD_LABEL}`;
   if (before.loaded === true && changed) {
     const out = call(["bootout", target]);
-    if (!out.ok) return { plistPath, plist: "written", launchctl: asked, loaded: true, problem: `bootout failed, the old definition is still loaded: ${out.detail}` };
+    if (!out.ok) return { plistPath, plist: "unchanged", launchctl: asked, loaded: true, problem: `bootout failed, the old definition and its matching plist remain in place: ${out.detail}` };
+  }
+  if (changed) {
+    fs.mkdirSync(path.dirname(plistPath), { recursive: true });
+    fs.writeFileSync(plistPath, rendered);
   }
   if (before.loaded !== true || changed) {
     const boot = call(["bootstrap", domain(environment), plistPath]);

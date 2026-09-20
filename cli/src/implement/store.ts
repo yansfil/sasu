@@ -112,7 +112,16 @@ function recordPathForSlug(projectRoot: string, slug: string): string {
 }
 
 export function resolveStatePath(projectRoot: string, options: { slug?: string; state?: string } = {}): string {
-  if (options.state !== undefined) return normalizeProjectPath(projectRoot, options.state).absolute;
+  if (options.state !== undefined) {
+    if (path.isAbsolute(options.state)) {
+      const absolute = path.normalize(options.state);
+      if (!absolute.endsWith(`${path.sep}state.json`) || !absolute.includes(`${path.sep}agents${path.sep}runs${path.sep}`)) {
+        throw new Error(`absolute --state must name an agents/runs/<slug>/state.json record: ${options.state}`);
+      }
+      return absolute;
+    }
+    return normalizeProjectPath(projectRoot, options.state).absolute;
+  }
   if (options.slug !== undefined) return recordPathForSlug(projectRoot, options.slug);
   const pointerPath = activePointerReadPath(projectRoot, currentSessionId());
   if (!fs.existsSync(pointerPath)) {
@@ -290,7 +299,15 @@ export function parseImplementState(text: string): ImplementState {
     };
     identity(supervision["observer"], "supervision.observer");
     assertRecord(supervision["implementor"], "supervision.implementor");
-    for (const field of ["paneId", "agent"] as const) assertString((supervision["implementor"] as Record<string, unknown>)[field], `supervision.implementor.${field}`);
+    const implementor = supervision["implementor"] as Record<string, unknown>;
+    for (const field of ["paneId", "agent"] as const) assertString(implementor[field], `supervision.implementor.${field}`);
+    const identityFields = ["sessionId", "terminalId", "hostScope", "recordedAt"] as const;
+    const identityCount = identityFields.filter((field) => implementor[field] !== undefined).length;
+    if (identityCount !== 0 && identityCount !== identityFields.length) throw new Error("malformed implement state: supervision.implementor identity must be complete when present");
+    if (identityCount > 0) {
+      for (const field of ["sessionId", "terminalId", "hostScope"] as const) assertString(implementor[field], `supervision.implementor.${field}`);
+      assertIsoTimestamp(implementor["recordedAt"], "supervision.implementor.recordedAt");
+    }
     for (const handover of array(supervision["handovers"], "supervision.handovers")) {
       assertRecord(handover, "supervision.handovers[]");
       assertIsoTimestamp(handover["at"], "supervision.handovers[].at");
@@ -298,6 +315,33 @@ export function parseImplementState(text: string): ImplementState {
       identity(handover["from"], "supervision.handovers[].from");
       identity(handover["to"], "supervision.handovers[].to");
     }
+  }
+  if (candidate.pendingDispatch !== undefined && candidate.pendingDispatch !== null) {
+    const pending = candidate.pendingDispatch as unknown as Record<string, unknown>;
+    assertRecord(pending, "pendingDispatch");
+    for (const field of ["runInstanceId", "plannedAgent", "canonicalRepository", "prdPath"] as const) assertString(pending[field], `pendingDispatch.${field}`);
+    enumValue(pending["phase"], ["planned", "prepared", "started"], "pendingDispatch.phase");
+    assertIsoTimestamp(pending["dispatchedAt"], "pendingDispatch.dispatchedAt");
+    assertNullableString(pending["dispatchHead"], "pendingDispatch.dispatchHead");
+    positiveInteger(pending["patrolIntervalMs"], "pendingDispatch.patrolIntervalMs");
+    enumValue(pending["recoveryOwner"], ["supervisor", "task-factory"], "pendingDispatch.recoveryOwner");
+    const observer = pending["observer"] as Record<string, unknown>;
+    assertRecord(observer, "pendingDispatch.observer");
+    for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(observer[field], `pendingDispatch.observer.${field}`);
+    assertIsoTimestamp(observer["recordedAt"], "pendingDispatch.observer.recordedAt");
+    if (pending["prepared"] !== null) {
+      const prepared = pending["prepared"];
+      assertRecord(prepared, "pendingDispatch.prepared");
+      for (const field of ["paneId", "workspaceId", "tabId", "cwd", "kind", "hostScope", "parentPaneId"] as const) assertString(prepared[field], `pendingDispatch.prepared.${field}`);
+      enumValue(prepared["placement"], ["workspace", "tab"], "pendingDispatch.prepared.placement");
+      assertIsoTimestamp(prepared["preparedAt"], "pendingDispatch.prepared.preparedAt");
+    } else if (pending["phase"] !== "planned") throw new Error("malformed implement state: prepared or started pendingDispatch has no prepared pane");
+    if (pending["phase"] === "started") {
+      const implementor = pending["implementor"] as Record<string, unknown>;
+      assertRecord(implementor, "pendingDispatch.implementor");
+      for (const field of ["paneId", "agent", "sessionId", "terminalId", "hostScope"] as const) assertString(implementor[field], `pendingDispatch.implementor.${field}`);
+      assertIsoTimestamp(implementor["recordedAt"], "pendingDispatch.implementor.recordedAt");
+    } else if (pending["implementor"] !== null) throw new Error("malformed implement state: unstarted pendingDispatch has an implementor identity");
   }
   if (candidate.dispatches !== undefined) {
     for (const entry of array(candidate.dispatches, "dispatches")) {
