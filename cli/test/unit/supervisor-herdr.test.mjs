@@ -75,7 +75,10 @@ exec "$SASU_TEST_NODE" -e 'process.on("SIGTERM", () => {}); setTimeout(() => pro
       500,
     );
     const elapsedMs = performance.now() - startedAt;
-    childPid = Number(readFileSync(pidFile, "utf8"));
+    const recordedPid = readFileSync(pidFile, "utf8").trim();
+    assert.match(recordedPid, /^[1-9]\d*$/, "the child readiness record must contain a positive PID");
+    childPid = Number(recordedPid);
+    assert.ok(Number.isSafeInteger(childPid), "the child PID must be safe to signal during cleanup");
     const childAlive = (() => {
       try { process.kill(childPid, 0); return true; } catch { return false; }
     })();
