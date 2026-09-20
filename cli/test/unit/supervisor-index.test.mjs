@@ -96,6 +96,23 @@ test("a successful write is not replayed when a successor lands after its link",
   assert.equal(read.lastHerdr.detail, "successor");
 });
 
+test("a successful write fails closed instead of replaying after its operation identity ages out", () => {
+  const index = file();
+  enrollRun(index, { statePath: "/repo/agents/runs/a/state.json", runInstanceId: "seed", recoveryOwner: "supervisor", at: "2026-09-18T00:00:00.000Z" });
+  let advanced = false;
+  assert.throws(() => updateIndex(index, (held) => {
+    held.entries[0].runInstanceId = "old";
+  }, 2, undefined, () => {
+    if (advanced) return;
+    advanced = true;
+    enrollRun(index, { statePath: "/repo/agents/runs/a/state.json", runInstanceId: "new", recoveryOwner: "supervisor", at: "2026-09-18T00:01:00.000Z" });
+    for (let i = 0; i < APPLIED_WRITES_CAP - 1; i += 1) {
+      updateIndex(index, (held) => { held.lastTickAt = new Date(Date.parse("2026-09-18T00:01:00.000Z") + i).toISOString(); });
+    }
+  }), /operation history before confirmation.*refusing to replay/);
+  assert.equal(readIndex(index).entries[0].runInstanceId, "new", "the current enrollment survives the ambiguous old writer");
+});
+
 test("engineering 15: removal history is capped", () => {
   const index = file();
   updateIndex(index, (held) => { for (let i = 0; i < REMOVED_HISTORY_CAP + 25; i += 1) held.removed.push({ at: "t", statePath: `/r/${i}`, cause: "c" }); });

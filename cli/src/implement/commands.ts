@@ -555,10 +555,12 @@ function restoreSupervisionAfterPartialDispatch(statePath: string, state: Implem
 function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   try {
     assertNotImplementor();
-    const { statePath, state } = loadState(projectRoot, stateOptions(args));
+    const loadedState = loadState(projectRoot, stateOptions(args));
+    const statePath = loadedState.statePath;
+    let state = loadedState.state;
     assertRunOpenForMutation(state);
     if (args.flags.get("resume-handoff") === true) {
-      const pending = state.pendingDispatch ?? null;
+      let pending = state.pendingDispatch ?? null;
       if (pending === null) throw new DispatchRejected("there is no partial dispatch whose handoff can be resumed");
       if (currentSessionId() !== pending.observer.sessionId) throw new DispatchRejected(`only recorded Observer ${pending.observer.sessionId} may resume this handoff`);
       if (pending.phase === "planned") {
@@ -585,21 +587,37 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         throw new DispatchRejected(`prepared pane ${prepared.paneId} now contains a live agent, but its exact identity was not durably recorded before it started; refusing to adopt it or send input. Inspect and close that pane explicitly, then recover the partial dispatch`);
       }
       if (pending.implementor === null) throw new DispatchRejected("partial dispatch has no implementor identity after recovery; no input was sent");
-      const looked = getAgent(pending.implementor.paneId, resumeHerdr);
-      if (looked.kind !== "found" || looked.agent.paneId !== pending.implementor.paneId || looked.agent.name !== pending.implementor.agent
-        || looked.agent.sessionId !== pending.implementor.sessionId || looked.agent.terminalId !== pending.implementor.terminalId) {
+      // stdin can wait indefinitely for the operator. Acquire the packet
+      // before the final identity lookup, then reload the CLI-owned record so
+      // a handover or replacement during that wait cannot inherit this input.
+      const packet = readHandoffPacket().trim();
+      if (packet === "") throw new DispatchRejected("resume-handoff requires the handoff packet on stdin");
+      const refreshed = loadState(projectRoot, stateOptions(args));
+      const freshPending = refreshed.state.pendingDispatch ?? null;
+      if (refreshed.statePath !== statePath || freshPending === null || freshPending.phase !== "started"
+        || freshPending.runInstanceId !== pending.runInstanceId || freshPending.implementor === null) {
+        throw new DispatchRejected("the partial dispatch changed while the handoff packet was read; no input was sent");
+      }
+      if (currentSessionId() !== freshPending.observer.sessionId) {
+        throw new DispatchRejected(`partial-handoff recovery authority moved to Observer ${freshPending.observer.sessionId} while the packet was read; no input was sent`);
+      }
+      state = refreshed.state;
+      pending = freshPending;
+      const implementor = freshPending.implementor;
+      resumeHerdr = herdrEnvironmentForHostScope(implementor.hostScope);
+      const looked = getAgent(implementor.paneId, resumeHerdr);
+      if (looked.kind !== "found" || looked.agent.paneId !== implementor.paneId || looked.agent.name !== implementor.agent
+        || looked.agent.sessionId !== implementor.sessionId || looked.agent.terminalId !== implementor.terminalId) {
         const mismatch = looked.kind === "found"
           ? `found ${looked.agent.name ?? "unnamed"} in ${looked.agent.paneId}, session ${looked.agent.sessionId ?? "missing"}, terminal ${looked.agent.terminalId ?? "missing"}`
           : looked.detail;
-        throw new DispatchRejected(`the partial dispatch target no longer has recorded implementor ${pending.implementor.sessionId}: ${mismatch}; no input was sent`);
+        throw new DispatchRejected(`the partial dispatch target no longer has recorded implementor ${implementor.sessionId}: ${mismatch}; no input was sent`);
       }
-      const packet = readHandoffPacket().trim();
-      if (packet === "") throw new DispatchRejected("resume-handoff requires the handoff packet on stdin");
-      const sent = promptAgent({ target: pending.implementor.paneId, text: packet, expectedInputGuard: looked.agent.inputGuard }, resumeHerdr);
+      const sent = promptAgent({ target: implementor.paneId, text: packet, expectedInputGuard: looked.agent.inputGuard }, resumeHerdr);
       if (sent.outcome !== "accepted") return result("dispatch", false, `handoff was not confirmed (${sent.outcome}, ${sent.code}): ${sent.detail}; pending dispatch remains for an explicit retry`, { pendingDispatch: pending, prompt: sent });
       state.pendingDispatch = null;
       persistState(statePath, state);
-      return result("dispatch", true, `handoff resumed to ${pending.plannedAgent} in ${pending.implementor.paneId}; dispatch ${pending.runInstanceId} is complete`, { runInstanceId: pending.runInstanceId, implementor: pending.implementor, prompt: sent });
+      return result("dispatch", true, `handoff resumed to ${pending.plannedAgent} in ${implementor.paneId}; dispatch ${pending.runInstanceId} is complete`, { runInstanceId: pending.runInstanceId, implementor, prompt: sent });
     }
     assertRunOwnership(statePath, state, args);
     if (state.pendingDispatch !== undefined && state.pendingDispatch !== null) {

@@ -190,6 +190,30 @@ test("D-04/D-06: initial handoff resolves and prompts the exact created pane wit
   assert.equal(wrong.count("agent prompt"), 0);
 });
 
+test("D-04/D-06: initial handoff rechecks exact identity after durable persistence", () => {
+  for (const guarded of [false, true]) {
+    let persisted = false;
+    const recorded = recorder({
+      "agent get": (args) => ({
+        status: 0,
+        stdout: implementorInfo(args[2], {
+          agent_session: { value: persisted ? "replacement-session" : "impl-session" },
+          ...(guarded ? { input_guard: persisted ? "replacement-guard" : "original-guard" } : {}),
+        }),
+        stderr: "",
+      }),
+    });
+    const outcome = spawnImplementor({
+      name: "impl", placement: WS, prompt: "executable handoff",
+      beforePrompt: () => { persisted = true; },
+    }, { env: LIVE, run: recorded.run });
+    assert.equal(outcome.ok, false, `replacement during persistence must fail closed (${guarded ? "guarded" : "unguarded"})`);
+    assert.match(outcome.problem, /identity changed after pre-handoff persistence/);
+    assert.equal(recorded.count("agent get"), 2, "persistence is followed by one fresh exact-identity lookup");
+    assert.equal(recorded.count("agent prompt"), 0, "neither guarded nor unguarded input reaches the replacement");
+  }
+});
+
 test("D-04: the exact created pane is persisted before agent start", () => {
   const { argv, run } = recorder();
   let atCallback = [];

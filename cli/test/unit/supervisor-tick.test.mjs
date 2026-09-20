@@ -346,6 +346,24 @@ test("D-09: a definite rejection retries, while unknown delivery retries only to
   assert.equal(tick(index, herdr, T0 + 4 * MIN).runs[0].action, "failed", "the same episode stops after the bounded retry");
 });
 
+test("D-09: definite rejections do not erase the same episode's uncertain-delivery budget", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
+  const outcomes = ["unknown", "rejected", "unknown", "rejected", "unknown"];
+  let submissions = 0;
+  herdr.herdr.promptAgent = () => {
+    const outcome = outcomes[submissions++] ?? "unknown";
+    return outcome === "unknown"
+      ? { outcome, path: "session-match", code: "herdr_prompt_timeout", detail: "timeout" }
+      : { outcome, path: "session-match", code: "agent_not_ready", detail: "not ready" };
+  };
+  for (let offset = 1; offset <= 5; offset += 1) tick(index, herdr, T0 + offset * MIN);
+  assert.equal(submissions, 3, "two uncertain submissions plus one definite rejection exhaust the episode's automatic input budget");
+  assert.equal(readIndex(index).entries[0].pendingWake.attempts, 2);
+});
+
 test("D-09: interacting wake reasons keep independent episode acknowledgements", () => {
   const index = indexFile();
   const run = makeSupervisedRun();

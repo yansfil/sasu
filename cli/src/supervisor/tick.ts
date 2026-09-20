@@ -317,7 +317,10 @@ export function runTick(options: TickOptions): TickResult {
           held.pendingWake = { episode, attempts, at };
           held.lastFailure = { at, detail: `wake delivery unknown (${outcome.code}), attempt ${attempts}/${MAX_UNKNOWN_WAKE_ATTEMPTS}: ${outcome.detail}` };
         } else {
-          held.pendingWake = null;
+          // A definite rejection proves only this submission had no effect.
+          // It cannot erase uncertain effects from the same episode, or an
+          // unknown/rejected sequence can submit input without a bound.
+          held.pendingWake = held.pendingWake?.episode === episode ? held.pendingWake : null;
           held.lastFailure = { at, detail: `wake rejected (${outcome.code}): ${outcome.detail}` };
         }
       });

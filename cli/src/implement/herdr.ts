@@ -537,7 +537,20 @@ export function spawnImplementor(
     return { ok: false, value: null, problem: `implementor ${input.name} is running in ${created}, but pre-handoff persistence failed: ${error instanceof Error ? error.message : String(error)}; no handoff was sent` };
   }
 
-  const prompted = promptAgent({ target: created, text: input.prompt, expectedInputGuard: observed.agent.inputGuard }, { ...environment, run });
+  // Persistence can include several filesystem and index writes. Re-read the
+  // exact pane after that work, because herdr 0.9.1 has no receiver-side
+  // input guard and a replacement during the durable callback must not inherit
+  // the executable handoff (independent review incident, 2026-09-20).
+  const current = getAgent(created, { ...environment, run });
+  if (current.kind !== "found" || current.agent.paneId !== identity.paneId || current.agent.name !== identity.name
+    || current.agent.sessionId !== identity.sessionId || current.agent.terminalId !== identity.terminalId) {
+    const detail = current.kind === "found"
+      ? `found ${current.agent.name ?? "unnamed"} in ${current.agent.paneId}, session ${current.agent.sessionId ?? "missing"}, terminal ${current.agent.terminalId ?? "missing"}`
+      : current.detail;
+    return { ok: false, value: null, problem: `implementor identity changed after pre-handoff persistence: expected ${identity.name} in ${identity.paneId}, session ${identity.sessionId}, terminal ${identity.terminalId}; ${detail}; no handoff was sent` };
+  }
+
+  const prompted = promptAgent({ target: created, text: input.prompt, expectedInputGuard: current.agent.inputGuard }, { ...environment, run });
   if (prompted.outcome !== "accepted") {
     // The prompt carries the whole handoff in one argv entry, and a failing
     // wrapper may echo argv. Never retain output for this call: it would

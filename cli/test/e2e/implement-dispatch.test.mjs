@@ -190,6 +190,27 @@ test("D-04: identity and enrollment persist before handoff, and a failed handoff
   assert.deepEqual(fake.prompts().map((entry) => [entry.target, entry.text]), [["w4G:p13", PACKET]]);
 });
 
+test("B2/B18: an approved Observer handover transfers partial-handoff recovery authority", () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  const failed = dispatch(root, { ...env, HERDR_FAKE_PROMPT_FAIL: "1" });
+  assert.equal(failed.status, 1, failed.text);
+  assert.equal(state(root).pendingDispatch.phase, "started");
+
+  fake.patchAgent("w4G:p12", { name: "observer", agent: "claude", agent_status: "working", pane_id: "w4G:p12", terminal_id: "term_replacement", agent_session: { value: "replacement-session" }, tokens: { activity: "2000" }, state_change_seq: 2 });
+  const replacementEnv = { ...env, CLAUDE_SESSION_ID: "replacement-session" };
+  const handed = sasu(root, ["supervisor", "handover", "--slug", "fixture", "--approval", "user: replacement Observer takes over"], { env: replacementEnv });
+  assert.equal(handed.status, 0, handed.text);
+  assert.equal(state(root).pendingDispatch.observer.sessionId, "replacement-session");
+
+  const resumed = sasu(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff"], { env: replacementEnv, input: PACKET });
+  assert.equal(resumed.status, 0, resumed.text);
+  assert.equal(state(root).pendingDispatch, null);
+  assert.deepEqual(fake.prompts().map((entry) => [entry.target, entry.text]), [["w4G:p13", PACKET]]);
+});
+
 test("D-04: a prepared live agent without a durably captured UUID is refused rather than adopted", () => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));

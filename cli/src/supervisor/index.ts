@@ -201,10 +201,20 @@ export function updateIndex(file: string, mutate: (index: SupervisorIndex) => vo
       // slot to be pruned, then successfully recreate that old slot. It has
       // not joined the current chain in that case. Re-read after link and
       // re-apply the same intent unless this write is still the head.
-      const head = readIndex(file);
+      const headSource = readSource(file);
+      const head = parseSource(headSource.source, headSource.sourceFile);
       if (!head.appliedWrites.includes(operationId)) {
         try { fs.unlinkSync(revisionFile(file, committedRevision)); } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+        // Every committed revision appends one operation id. Within the
+        // bounded history, absence proves this was a stale link into a pruned
+        // slot and replay is safe. At or beyond the retention horizon the
+        // write may instead have committed and aged out while this process was
+        // paused; replaying then can overwrite a newer enrollment. Fail closed
+        // and let the caller retry the whole intent with current authority.
+        if (headSource.revision - committedRevision >= APPLIED_WRITES_CAP) {
+          throw new Error(`supervisor index write crossed its ${APPLIED_WRITES_CAP}-revision operation history before confirmation; refusing to replay an ambiguous successful write`);
         }
         continue;
       }

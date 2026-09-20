@@ -153,6 +153,10 @@ function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.Process
   const at = nowIso();
   supervision.handovers = [...supervision.handovers, { at, from: supervision.observer, to: observer.identity, approval }];
   supervision.observer = observer.identity;
+  // A partial handoff is recovered by the Observer, not by the Implementor.
+  // Move that recovery authority with the explicit human-approved handover so
+  // an interrupted dispatch cannot become permanently wedged (2026-09-20).
+  if (state.pendingDispatch !== undefined && state.pendingDispatch !== null) state.pendingDispatch.observer = observer.identity;
   recordEvent(state, { kind: "handover", actor: "human", subject: null, summary: `Observer handed over to session ${observer.identity.sessionId} in ${observer.identity.paneId}`, at });
   persistState(statePath, state);
   enrollRun(indexPath(env), { statePath, runInstanceId: supervision.runInstanceId, recoveryOwner: supervision.recoveryOwner, at });
