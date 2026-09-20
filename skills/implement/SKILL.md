@@ -135,17 +135,17 @@ High-risk changes require the repository's independent specialist review and exp
 | --- | --- | --- |
 | `intake` | none | any role, read-only |
 | `start` | `--prd` | Observer under Herdr; the implementing session outside Herdr |
-| `dispatch` | `--name`, `--prd` | Observer only by structural Herdr rule; after `start` |
+| `dispatch` | `--name`, `--prd` | Observer only by structural Herdr rule; after `start`; records the Observer and enrolls the run with the supervisor tick |
 | `status` | optional `--state` or `--slug` | any role, read-only |
-| `await` | optional cursor and target | any role, read-only |
 | `artifact` | kind, path, description | implementor, human |
 | `amend` | human approval and reason | human |
 | `escalate` | reason | observer, human |
 | `retire` | active run | implementor, human |
 | `verify` | current run | implementor, human |
 
-`finalize`, `confirm`, and implementation `risk` are retired.
+`finalize`, `confirm`, implementation `risk`, and the one-shot `await` waiter are retired.
 Reviewer judgment is no longer encoded as CLI state.
+Under Herdr the supervisor tick (`sasu supervisor tick`, run by a user LaunchAgent) wakes the recorded Observer; `sasu supervisor status`, `handover`, `install` and `uninstall` are its operator surface.
 
 ## Final Report
 

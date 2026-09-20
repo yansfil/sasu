@@ -112,7 +112,16 @@ function recordPathForSlug(projectRoot: string, slug: string): string {
 }
 
 export function resolveStatePath(projectRoot: string, options: { slug?: string; state?: string } = {}): string {
-  if (options.state !== undefined) return normalizeProjectPath(projectRoot, options.state).absolute;
+  if (options.state !== undefined) {
+    if (path.isAbsolute(options.state)) {
+      const absolute = path.normalize(options.state);
+      if (!absolute.endsWith(`${path.sep}state.json`) || !absolute.includes(`${path.sep}agents${path.sep}runs${path.sep}`)) {
+        throw new Error(`absolute --state must name an agents/runs/<slug>/state.json record: ${options.state}`);
+      }
+      return absolute;
+    }
+    return normalizeProjectPath(projectRoot, options.state).absolute;
+  }
   if (options.slug !== undefined) return recordPathForSlug(projectRoot, options.slug);
   const pointerPath = activePointerReadPath(projectRoot, currentSessionId());
   if (!fs.existsSync(pointerPath)) {
@@ -274,7 +283,73 @@ export function parseImplementState(text: string): ImplementState {
     assertIsoTimestamp(artifact.observedAt, "artifacts[].observedAt");
   }
   ledger(candidate.events, "events");
-  for (const event of candidate.events) enumValue(event.kind, ["amendment", "escalate", "artifact", "verify", "dispatch"], "events[].kind");
+  for (const event of candidate.events) enumValue(event.kind, ["amendment", "escalate", "artifact", "verify", "dispatch", "handover"], "events[].kind");
+  if (candidate.supervision !== undefined && candidate.supervision !== null) {
+    const supervision = candidate.supervision as unknown as Record<string, unknown>;
+    assertRecord(supervision, "supervision");
+    for (const field of ["runInstanceId", "canonicalRepository", "prdPath"] as const) assertString(supervision[field], `supervision.${field}`);
+    assertIsoTimestamp(supervision["dispatchedAt"], "supervision.dispatchedAt");
+    assertNullableString(supervision["dispatchHead"], "supervision.dispatchHead");
+    positiveInteger(supervision["patrolIntervalMs"], "supervision.patrolIntervalMs");
+    enumValue(supervision["recoveryOwner"], ["supervisor", "task-factory"], "supervision.recoveryOwner");
+    const identity = (value: unknown, label: string): void => {
+      assertRecord(value, label);
+      for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(value[field], `${label}.${field}`);
+      assertIsoTimestamp(value["recordedAt"], `${label}.recordedAt`);
+    };
+    identity(supervision["observer"], "supervision.observer");
+    assertRecord(supervision["implementor"], "supervision.implementor");
+    const implementor = supervision["implementor"] as Record<string, unknown>;
+    for (const field of ["paneId", "agent", "sessionId", "terminalId", "hostScope"] as const) assertString(implementor[field], `supervision.implementor.${field}`);
+    assertIsoTimestamp(implementor["recordedAt"], "supervision.implementor.recordedAt");
+    for (const handover of array(supervision["handovers"], "supervision.handovers")) {
+      assertRecord(handover, "supervision.handovers[]");
+      assertIsoTimestamp(handover["at"], "supervision.handovers[].at");
+      assertString(handover["approval"], "supervision.handovers[].approval");
+      identity(handover["from"], "supervision.handovers[].from");
+      identity(handover["to"], "supervision.handovers[].to");
+    }
+  }
+  if (candidate.pendingDispatch !== undefined && candidate.pendingDispatch !== null) {
+    const pending = candidate.pendingDispatch as unknown as Record<string, unknown>;
+    assertRecord(pending, "pendingDispatch");
+    for (const field of ["runInstanceId", "plannedAgent", "canonicalRepository", "prdPath"] as const) assertString(pending[field], `pendingDispatch.${field}`);
+    enumValue(pending["phase"], ["planned", "prepared", "started"], "pendingDispatch.phase");
+    assertIsoTimestamp(pending["dispatchedAt"], "pendingDispatch.dispatchedAt");
+    assertNullableString(pending["dispatchHead"], "pendingDispatch.dispatchHead");
+    positiveInteger(pending["patrolIntervalMs"], "pendingDispatch.patrolIntervalMs");
+    enumValue(pending["recoveryOwner"], ["supervisor", "task-factory"], "pendingDispatch.recoveryOwner");
+    const observer = pending["observer"] as Record<string, unknown>;
+    assertRecord(observer, "pendingDispatch.observer");
+    for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(observer[field], `pendingDispatch.observer.${field}`);
+    assertIsoTimestamp(observer["recordedAt"], "pendingDispatch.observer.recordedAt");
+    if (pending["handovers"] !== undefined) {
+      for (const handover of array(pending["handovers"], "pendingDispatch.handovers")) {
+        assertRecord(handover, "pendingDispatch.handovers[]");
+        assertIsoTimestamp(handover["at"], "pendingDispatch.handovers[].at");
+        assertString(handover["approval"], "pendingDispatch.handovers[].approval");
+        for (const side of ["from", "to"] as const) {
+          const identity = handover[side];
+          assertRecord(identity, `pendingDispatch.handovers[].${side}`);
+          for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(identity[field], `pendingDispatch.handovers[].${side}.${field}`);
+          assertIsoTimestamp(identity["recordedAt"], `pendingDispatch.handovers[].${side}.recordedAt`);
+        }
+      }
+    }
+    if (pending["prepared"] !== null) {
+      const prepared = pending["prepared"];
+      assertRecord(prepared, "pendingDispatch.prepared");
+      for (const field of ["paneId", "workspaceId", "tabId", "cwd", "kind", "hostScope", "parentPaneId"] as const) assertString(prepared[field], `pendingDispatch.prepared.${field}`);
+      enumValue(prepared["placement"], ["workspace", "tab"], "pendingDispatch.prepared.placement");
+      assertIsoTimestamp(prepared["preparedAt"], "pendingDispatch.prepared.preparedAt");
+    } else if (pending["phase"] !== "planned") throw new Error("malformed implement state: prepared or started pendingDispatch has no prepared pane");
+    if (pending["phase"] === "started") {
+      const implementor = pending["implementor"] as Record<string, unknown>;
+      assertRecord(implementor, "pendingDispatch.implementor");
+      for (const field of ["paneId", "agent", "sessionId", "terminalId", "hostScope"] as const) assertString(implementor[field], `pendingDispatch.implementor.${field}`);
+      assertIsoTimestamp(implementor["recordedAt"], "pendingDispatch.implementor.recordedAt");
+    } else if (pending["implementor"] !== null) throw new Error("malformed implement state: unstarted pendingDispatch has an implementor identity");
+  }
   if (candidate.dispatches !== undefined) {
     for (const entry of array(candidate.dispatches, "dispatches")) {
       assertRecord(entry, "dispatches[]");
@@ -547,7 +622,7 @@ export function persistClose(
  */
 const NON_GIT_SNAPSHOT_EXCLUDES = new Set([".git", "node_modules", "dist", "coverage", ".next", ".turbo"]);
 
-function repositoryHead(projectRoot: string): string | null {
+export function repositoryHead(projectRoot: string): string | null {
   // `git rev-parse` covers both a normal checkout (.git directory) and a
   // linked worktree (.git file). Reading .git/HEAD directly made every
   // isolated run look non-git and erased the committed baseline provenance.
@@ -628,8 +703,8 @@ export function captureSourceSnapshot(projectRoot: string): SourceSnapshot {
   return { head, entries, digest: sha256(JSON.stringify({ entries })) };
 }
 
-/** The harness's own namespace is bookkeeping, never a verification input. */
-function snapshotExcluded(relative: string): boolean {
+/** The harness's own namespace is bookkeeping, never a verification input; the digest counts it as outside the delivery boundary. */
+export function snapshotExcluded(relative: string): boolean {
   return relative.split("/")[0] === "agents";
 }
 

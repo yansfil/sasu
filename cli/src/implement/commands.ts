@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { isDeepStrictEqual } from "node:util";
 import { loadConfig } from "../config";
 import { readGateStatus } from "../gates/commands";
 import { prelintPrd } from "../gates/prelint";
@@ -18,13 +19,17 @@ import { recordEvent } from "./events";
 import { AmendmentRejected, applyAmendment } from "./amend";
 import { assertNoActiveVerification, recoverVerification, cancelVerificationExecution, completeVerificationExecution, beginVerification, progressVerification, prepareVerificationExecution, recordVerificationExecution, finishVerification } from "./verification-activity";
 import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEscalation, renderDiagnosis, solverPrompt, validateDiagnosis } from "./solver";
-import { waitForEvent } from "./waiter";
-import { herdrCapabilities, isAgentAlive, readPane, spawnImplementor, type SpawnPlacement } from "./herdr";
+import { closePreparedSpawn, getAgent, herdrCapabilities, isAgentAlive, promptAgent, readPane, spawnImplementor, type SpawnPlacement } from "./herdr";
+import { currentObserverIdentity, newRunInstanceId } from "../supervisor/commands";
+import { captureEnrollmentGeneration, readIndex, reconcileEnrollmentAuthority, recipientAuthorityKey, type SupervisorIndex } from "../supervisor/index";
+import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
+import { buildDigest, renderDigest } from "../supervisor/digest";
+import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
 import { DispatchRejected, assertDispatchablePrd, assertNotImplementor, dispatchImplementor, parseEnvPairs, placementFor } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
-import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, parseImplementState, StateConflictError } from "./store";
-import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type SolverHandoff, type DispatchRecord, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, ESCALATE_LIMIT_PER_RUN, STALL_THRESHOLD_MS } from "./types";
+import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, repositoryHead, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, StateConflictError } from "./store";
+import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type SolverHandoff, type DispatchRecord, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, type PendingDispatch, type SupervisionRecord, ESCALATE_LIMIT_PER_RUN } from "./types";
 
 export interface ImplementArgs {
   positional: string[];
@@ -34,6 +39,13 @@ export interface ImplementArgs {
 }
 
 const ARTIFACT_KINDS = new Set(["screenshot", "image", "browser", "api", "db", "log", "file", "command-log"]);
+
+function herdrEnvironmentForHostScope(hostScope: string): { env: NodeJS.ProcessEnv } {
+  const env = { ...process.env };
+  if (hostScope === "default") delete env["HERDR_SOCKET_PATH"];
+  else env["HERDR_SOCKET_PATH"] = hostScope;
+  return { env };
+}
 
 export const DIRTY_INTAKE_QUESTION = "커밋되지 않은 판정 대상 파일이 있습니다. 이 작업을 어떻게 시작할까요?";
 export const DIRTY_INTAKE_OPTIONS = [
@@ -397,6 +409,17 @@ function assertRunOwnership(statePath: string, state: ImplementState, args: Impl
           `if the user approved taking it over, re-run with --adopt "<the user's verbatim words>"`,
       );
     }
+    // The dispatched pane carries the run instance the dispatch minted, so a
+    // marked pane opened for another run (same slug in another repository,
+    // another worktree, an earlier dispatch) cannot claim this record (D-04).
+    const carried = process.env[RUN_INSTANCE_ENV_KEY]?.trim() ?? "";
+    const expected = state.supervision?.runInstanceId ?? null;
+    if (currentHerdrRole() === "implementor" && expected !== null && carried === "") {
+      throw new Error(`this pane is marked implementor but carries no ${RUN_INSTANCE_ENV_KEY}; it cannot prove it owns run instance ${expected}`);
+    }
+    if (currentHerdrRole() === "implementor" && carried !== "" && expected !== null && carried !== expected) {
+      throw new Error(`this pane was dispatched for run instance ${carried}, but '${state.topicSlug}' is instance ${expected}; it is not this pane's run`);
+    }
     state.ownerSessionId = sessionId;
     return;
   }
@@ -443,8 +466,10 @@ function recordDispatch(
   started: { agent: string; kind: string; paneId: string; workspaceId: string; tabId: string; cwd: string },
   actor: IssuerLabel,
   summary: string,
+  supervision: SupervisionRecord | null,
 ): DispatchRecord {
   const at = nowIso();
+  if (supervision !== null) state.supervision = supervision;
   const record: DispatchRecord = {
     id: (lastDispatch(state)?.id ?? 0) + 1,
     at,
@@ -498,90 +523,16 @@ function retire(projectRoot: string, args: ImplementArgs): ImplementCommandResul
 }
 
 /**
- * Park is for `check:` rows only. Without this the attempt fails as "unknown
- * row S1", which is a refusal but not a reason - and the reason is the
- * point: a suite command has no row to prove later, so the only way to stop
- * running one is to remove it from the sealed list through an amendment.
+ * The repository identity behind a worktree: the realpath of its common git
+ * directory. Two worktrees of one repository share it, two repositories that
+ * happen to use one slug do not, and neither can be confused with the other
+ * in the supervisor's records (B4).
  */
-async function awaitEvent(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
-  const { statePath } = loadState(projectRoot, stateOptions(args));
-  const sinceFlag = flag(args, "since")?.trim();
-  const since = sinceFlag === undefined || sinceFlag === "" ? null : Number(sinceFlag);
-  if (since !== null && (!Number.isInteger(since) || since < 0)) {
-    throw new Error(`--since must be a non-negative integer event id, got ${sinceFlag}`);
-  }
-  const pidFlag = flag(args, "pid")?.trim();
-  const pid = pidFlag === undefined || pidFlag === "" ? null : Number(pidFlag);
-  if (pid !== null && (!Number.isInteger(pid) || pid <= 0)) throw new Error(`--pid must be a positive integer, got ${pidFlag}`);
-  const agent = flag(args, "agent")?.trim() || null;
-  if (agent !== null && pid !== null) throw new Error("--agent and --pid are two answers to the same question; give one");
-  const notifyFlag = flag(args, "notify-after");
-  const notifyAfter = notifyFlag === undefined ? undefined : Number(notifyFlag);
-  if (notifyAfter !== undefined && (!Number.isSafeInteger(notifyAfter) || notifyAfter < 0)) {
-    throw new Error("--notify-after must be a non-negative integer timestamp from the previous re-arm command");
-  }
-
-  // Named targets use a long asynchronous wait; PID callers retain signal 0.
-  // Environment checks do not probe agent list: a list outage must not close wait.
-  const environment = agent === null ? null : (await import("./herdr")).environmentCapabilities({});
-  const probe = pid !== null
-      // signal 0 tests for the process's existence without touching it. ESRCH
-      // is a real answer; any other errno is an observation failure, so it
-      // degrades to null rather than declaring the process dead.
-      ? {
-        probe: "pid",
-        isAlive: () => {
-          try {
-            process.kill(pid, 0);
-            return true;
-          } catch (error) {
-            return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : null;
-          }
-        },
-      }
-      : { probe: agent === null ? "unavailable"
-          : environment?.holes.alive ? "herdr-wait" : `unavailable: ${environment?.reason}`, isAlive: null };
-
-  const outcome = await waitForEvent({
-    loadState: () => parseImplementState(fs.readFileSync(statePath, "utf8")),
-    since,
-    stallMs: STALL_THRESHOLD_MS,
-    notifyAfter,
-    isAlive: probe.isAlive,
-    agent: agent !== null && environment?.holes.alive ? agent : undefined,
-    observationProblem: environment?.reason ?? undefined,
-  });
-
-  // The supervision loop's one unguarded link: the waiter is a one-shot, so a
-  // supervisor that wakes, handles the event, and forgets to re-arm leaves the
-  // implementor working with nobody watching - silently, with no error to
-  // notice. Nothing in the harness can force the re-arm (the waiter is a
-  // detached process the CLI cannot see), so the cheapest real reduction is to
-  // hand the next command back fully assembled, with the cursor already
-  // advanced and the same probe flag carried over, instead of asking the
-  // supervisor to remember and rebuild it. Omitted on `implementor-gone`:
-  // the target must be inspected before deciding how to recover.
-  const rearm = outcome.reason === "implementor-gone"
-    ? null
-    : [
-      "sasu implement await",
-      ...(flag(args, "slug") !== undefined ? [`--slug ${flag(args, "slug")}`] : []),
-      ...(flag(args, "state") !== undefined ? [`--state ${flag(args, "state")}`] : []),
-      `--since ${outcome.cursor}`,
-      ...(outcome.notifyAfter !== undefined ? [`--notify-after ${outcome.notifyAfter}`] : []),
-      ...(agent !== null ? [`--agent ${agent}`] : pid !== null ? [`--pid ${pid}`] : []),
-    ].join(" ");
-
-  const message = `woke on ${outcome.reason}: ${outcome.detail}`;
-  return result("await", true, rearm === null ? message : `${message}; re-arm in the background with: ${rearm}`, {
-    reason: outcome.reason,
-    cursor: outcome.cursor,
-    waitedMs: outcome.waitedMs,
-    events: outcome.events,
-    livenessProbe: outcome.observationProblem === undefined ? probe.probe : `unavailable: ${outcome.observationProblem}`,
-    detail: outcome.detail,
-    rearm,
-  });
+function canonicalRepository(cwd: string): string {
+  const common = spawnSync("git", ["rev-parse", "--git-common-dir"], { cwd, encoding: "utf8", timeout: 15_000 });
+  if (common.error !== undefined || common.status !== 0) return fs.realpathSync(cwd);
+  const resolved = path.resolve(cwd, common.stdout.trim());
+  try { return fs.realpathSync(resolved); } catch { return resolved; }
 }
 
 function readHandoffPacket(): string {
@@ -593,12 +544,243 @@ function readHandoffPacket(): string {
   }
 }
 
+function revalidatePendingHandoff(
+  projectRoot: string,
+  statePath: string,
+  expected: PendingDispatch,
+  changedMessage: string,
+): { state: ImplementState; pending: PendingDispatch } {
+  const loaded = loadState(projectRoot, { state: statePath });
+  assertRunOpenForMutation(loaded.state);
+  if (loaded.state.activeVerification !== undefined) {
+    throw new DispatchRejected(`verification still active: ${loaded.state.activeVerification.attemptId}; no handoff input was sent`);
+  }
+  const pending = loaded.state.pendingDispatch ?? null;
+  if (loaded.statePath !== statePath || pending === null || !isDeepStrictEqual(pending, expected)) {
+    throw new DispatchRejected(`${changedMessage}; no handoff input was sent`);
+  }
+  return { state: loaded.state, pending };
+}
+
+function restoreSupervisionAfterPartialDispatch(state: ImplementState, pending: PendingDispatch): void {
+  const previous = state.supervision ?? null;
+  if (previous === null || previous.runInstanceId === pending.runInstanceId) {
+    if (previous?.runInstanceId === pending.runInstanceId) state.supervision = null;
+    return;
+  }
+}
+
+function desiredEnrollment(state: ImplementState): { runInstanceId: string; recoveryOwner: "supervisor" | "task-factory"; recipientAuthorityKey: string } | null {
+  const pending = state.pendingDispatch ?? null;
+  if (pending !== null) return { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner, recipientAuthorityKey: recipientAuthorityKey(pending.observer) };
+  const supervision = state.supervision ?? null;
+  return supervision === null ? null : { runInstanceId: supervision.runInstanceId, recoveryOwner: supervision.recoveryOwner, recipientAuthorityKey: recipientAuthorityKey(supervision.observer) };
+}
+
+function enrollmentAt(index: SupervisorIndex, statePath: string): SupervisorIndex["entries"][number] | undefined {
+  return index.entries.find((entry) => entry.statePath === statePath);
+}
+
+function enrollmentMatches(index: SupervisorIndex, statePath: string, desired: ReturnType<typeof desiredEnrollment>): boolean {
+  const current = enrollmentAt(index, statePath);
+  return desired === null ? current === undefined : current?.runInstanceId === desired.runInstanceId
+    && current.recoveryOwner === desired.recoveryOwner
+    && current.recipientAuthorityKey === desired.recipientAuthorityKey;
+}
+
+function prerequisiteFingerprint(state: ImplementState): string {
+  return JSON.stringify({
+    status: state.status,
+    activeVerification: state.activeVerification?.token ?? null,
+    ownerSessionId: state.ownerSessionId ?? null,
+    pendingDispatch: state.pendingDispatch ?? null,
+    supervision: state.supervision ?? null,
+  });
+}
+
+export function reconcileCurrentDispatchPrerequisites(projectRoot: string, statePath: string, cause: string, afterAuthoritySnapshot?: () => void): ImplementState {
+  // state.json and the scheduler index are deliberately separate authority
+  // domains. Re-read after reconciliation so a handover between their writes
+  // is applied again instead of losing the newer enrollment, as happened in
+  // the round-two absent-child recovery review. Capture the generation first:
+  // the later review reproduced a replacement with active verification that
+  // otherwise left state on the new run and the index on the stale run.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const expectedEnrollmentId = captureEnrollmentGeneration(indexPath(), statePath);
+    const before = loadState(projectRoot, { state: statePath }).state;
+    assertRunOpenForMutation(before);
+    if (before.activeVerification !== undefined) throw new DispatchRejected(`verification still active: ${before.activeVerification.attemptId}; dispatch prerequisites changed nothing`);
+    const observerSession = before.pendingDispatch?.observer.sessionId
+      ?? before.supervision?.observer.sessionId
+      ?? before.ownerSessionId
+      ?? currentSessionId();
+    afterAuthoritySnapshot?.();
+    writeActivePointer(projectRoot, before, observerSession);
+    const desired = desiredEnrollment(before);
+    const reconciled = reconcileEnrollmentAuthority(indexPath(), {
+      statePath,
+      expectedEnrollmentId,
+      readAuthority: () => desiredEnrollment(loadState(projectRoot, { state: statePath }).state),
+      at: nowIso(),
+      cause,
+    }).index;
+    const after = loadState(projectRoot, { state: statePath }).state;
+    if (prerequisiteFingerprint(after) === prerequisiteFingerprint(before) && enrollmentMatches(reconciled, statePath, desired)) return after;
+  }
+  throw new DispatchRejected("dispatch authority kept changing while navigation and enrollment were reconciled; retry against the current Observer");
+}
+
+export function repairPendingDispatchPrerequisites(projectRoot: string, statePath: string, state: ImplementState, pending: PendingDispatch, afterEnrollmentSnapshot?: () => void): { state: ImplementState; pending: PendingDispatch } {
+  const expectedEnrollmentId = captureEnrollmentGeneration(indexPath(), statePath);
+  // The review reproduced a replacement that landed before generation
+  // capture: stale pending authority then claimed the replacement's token.
+  // Capture the token first and validate the exact pending intent afterward,
+  // so the two snapshots either describe one authority or no write occurs.
+  afterEnrollmentSnapshot?.();
+  const authoritative = revalidatePendingHandoff(projectRoot, statePath, pending, "dispatch authority changed before navigation or enrollment restoration");
+  state = authoritative.state;
+  pending = authoritative.pending;
+  writeActivePointer(projectRoot, state, pending.observer.sessionId);
+  // The child receives no Observer session id. Its bare implement commands
+  // resolve through the sessionless bookmark, which must exist before the
+  // executable handoff can tell the child to use them.
+  writeActivePointer(projectRoot, state, null);
+  const reconciled = reconcileEnrollmentAuthority(indexPath(), {
+    statePath,
+    expectedEnrollmentId,
+    readAuthority: () => desiredEnrollment(loadState(projectRoot, { state: statePath }).state),
+    at: nowIso(),
+    cause: `partial dispatch ${pending.runInstanceId} restored before executable handoff`,
+  }).index;
+  const validated = revalidatePendingHandoff(projectRoot, statePath, pending, "dispatch authority changed while navigation or enrollment was restored");
+  if (!enrollmentMatches(reconciled, statePath, { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner, recipientAuthorityKey: recipientAuthorityKey(pending.observer) })) {
+    throw new DispatchRejected("dispatch enrollment changed while navigation was restored; no handoff input was sent");
+  }
+  return validated;
+}
+
 function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   try {
     assertNotImplementor();
-    const { statePath, state } = loadState(projectRoot, stateOptions(args));
+    const loadedState = loadState(projectRoot, stateOptions(args));
+    const statePath = loadedState.statePath;
+    let state = loadedState.state;
     assertRunOpenForMutation(state);
+    if (args.flags.get("resume-handoff") === true) {
+      let pending = state.pendingDispatch ?? null;
+      const recoverAbsentChild = args.flags.get("recover-absent-child") === true;
+      if (pending === null) {
+        const recordedObserver = state.supervision?.observer.sessionId ?? state.ownerSessionId ?? null;
+        if (recordedObserver !== null && currentSessionId() !== recordedObserver) throw new DispatchRejected(`only recorded Observer ${recordedObserver} may reconcile this handoff`);
+        if (recoverAbsentChild) {
+          reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "idempotent absent-child recovery reconciled the current run");
+          return result("dispatch", true, "no partial dispatch remains; absent-child recovery and its prerequisites are converged", { recovered: "already-clear" });
+        }
+        if (state.supervision !== undefined && state.supervision !== null) {
+          reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "completed handoff prerequisites reconciled on retry");
+          return result("dispatch", true, "no partial dispatch remains; the handoff and its prerequisites are already converged", { recovered: "already-complete" });
+        }
+        throw new DispatchRejected("there is no partial dispatch whose handoff can be resumed");
+      }
+      if (currentSessionId() !== pending.observer.sessionId) throw new DispatchRejected(`only recorded Observer ${pending.observer.sessionId} may resume this handoff`);
+      if (recoverAbsentChild) {
+        if (pending.phase !== "started" || pending.implementor === null) throw new DispatchRejected(`--recover-absent-child requires a started partial dispatch; current phase is ${pending.phase}`);
+        const implementor = pending.implementor;
+        const recoveryHerdr = herdrEnvironmentForHostScope(implementor.hostScope);
+        const looked = getAgent(implementor.paneId, recoveryHerdr);
+        if (looked.kind === "unavailable") throw new DispatchRejected(`cannot prove recorded child ${implementor.sessionId} is absent: ${looked.detail}; recovery changed nothing`);
+        if (looked.kind === "found") throw new DispatchRejected(`recorded child ${implementor.sessionId} is still present in ${implementor.paneId}; use --resume-handoff with the packet instead`);
+        const refreshed = revalidatePendingHandoff(projectRoot, statePath, pending, "the partial dispatch or recovery authority changed while the recorded child was inspected");
+        state = refreshed.state;
+        pending = refreshed.pending;
+        const ready = repairPendingDispatchPrerequisites(projectRoot, statePath, state, pending);
+        state = ready.state;
+        pending = ready.pending;
+        restoreSupervisionAfterPartialDispatch(state, pending);
+        state.pendingDispatch = null;
+        state.ownerSessionId = pending.observer.sessionId;
+        persistState(statePath, state);
+        reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "started partial dispatch recovered after the recorded child was positively absent");
+        return result("dispatch", true, `recorded child ${implementor.sessionId} is absent; partial dispatch ${pending.runInstanceId} was cleared and Observer navigation restored`, { runInstanceId: pending.runInstanceId, recovered: "started-absent", implementor });
+      }
+      if (pending.phase === "planned") {
+        restoreSupervisionAfterPartialDispatch(state, pending);
+        state.pendingDispatch = null;
+        state.ownerSessionId = pending.observer.sessionId;
+        persistState(statePath, state);
+        reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "planned partial dispatch recovered before any agent was started");
+        return result("dispatch", true, `planned partial dispatch ${pending.runInstanceId} was cleared before any agent started; run dispatch again to create a fresh pane`, { runInstanceId: pending.runInstanceId, recovered: "planned", possibleEmptyPane: true });
+      }
+      let resumeHerdr = herdrEnvironmentForHostScope(pending.implementor?.hostScope ?? pending.prepared?.hostScope ?? pending.observer.hostScope);
+      if (pending.phase === "prepared") {
+        const prepared = pending.prepared!;
+        const observed = getAgent(prepared.paneId, resumeHerdr);
+        if (observed.kind === "absent") {
+          const inspected = revalidatePendingHandoff(projectRoot, statePath, pending, "the prepared dispatch or recovery authority changed while its pane was inspected");
+          state = inspected.state;
+          pending = inspected.pending;
+          const cleaned = closePreparedSpawn({ ...prepared, name: pending.plannedAgent }, resumeHerdr);
+          if (!cleaned.ok) return result("dispatch", false, `prepared dispatch could not be cleaned safely: ${cleaned.problem}`, { pendingDispatch: pending });
+          const refreshed = revalidatePendingHandoff(projectRoot, statePath, pending, "the prepared dispatch or recovery authority changed while its empty pane was closed");
+          state = refreshed.state;
+          pending = refreshed.pending;
+          restoreSupervisionAfterPartialDispatch(state, pending);
+          state.pendingDispatch = null;
+          state.ownerSessionId = pending.observer.sessionId;
+          persistState(statePath, state);
+          reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "empty prepared pane cleaned before retry");
+          return result("dispatch", true, `empty prepared pane ${prepared.paneId} was closed and partial dispatch ${pending.runInstanceId} was cleared; run dispatch again`, { runInstanceId: pending.runInstanceId, recovered: "prepared-empty", paneId: prepared.paneId });
+        }
+        if (observed.kind === "unavailable") throw new DispatchRejected(`cannot inspect prepared pane ${prepared.paneId}: ${observed.detail}; no input was sent`);
+        throw new DispatchRejected(`prepared pane ${prepared.paneId} now contains a live agent, but its exact identity was not durably recorded before it started; refusing to adopt it or send input. Inspect and close that pane explicitly, then recover the partial dispatch`);
+      }
+      if (pending.implementor === null) throw new DispatchRejected("partial dispatch has no implementor identity after recovery; no input was sent");
+      // stdin can wait indefinitely for the operator. Acquire the packet
+      // before the final identity lookup, then reload the CLI-owned record so
+      // a handover or replacement during that wait cannot inherit this input.
+      const packet = readHandoffPacket().trim();
+      if (packet === "") throw new DispatchRejected("resume-handoff requires the handoff packet on stdin");
+      const refreshed = revalidatePendingHandoff(projectRoot, statePath, pending, "the partial dispatch changed while the handoff packet was read");
+      state = refreshed.state;
+      pending = refreshed.pending;
+      const implementor = pending.implementor!;
+      resumeHerdr = herdrEnvironmentForHostScope(implementor.hostScope);
+      const looked = getAgent(implementor.paneId, resumeHerdr);
+      if (looked.kind !== "found" || looked.agent.paneId !== implementor.paneId || looked.agent.name !== implementor.agent
+        || looked.agent.sessionId !== implementor.sessionId || looked.agent.terminalId !== implementor.terminalId) {
+        const mismatch = looked.kind === "found"
+          ? `found ${looked.agent.name ?? "unnamed"} in ${looked.agent.paneId}, session ${looked.agent.sessionId ?? "missing"}, terminal ${looked.agent.terminalId ?? "missing"}`
+          : looked.detail;
+        throw new DispatchRejected(`the partial dispatch target no longer has recorded implementor ${implementor.sessionId}: ${mismatch}; no input was sent`);
+      }
+      // The exact agent lookup can also block. Re-read every authority fact
+      // once more after it returns so retirement, verification, handover or
+      // redispatch cannot race ahead of the external prompt.
+      const ready = revalidatePendingHandoff(projectRoot, statePath, pending, "run, recovery authority or implementor identity changed during the final target lookup");
+      state = ready.state;
+      pending = ready.pending;
+      const repaired = repairPendingDispatchPrerequisites(projectRoot, statePath, state, pending);
+      state = repaired.state;
+      pending = repaired.pending;
+      const finalLooked = getAgent(implementor.paneId, resumeHerdr);
+      if (finalLooked.kind !== "found" || finalLooked.agent.paneId !== implementor.paneId || finalLooked.agent.name !== implementor.agent
+        || finalLooked.agent.sessionId !== implementor.sessionId || finalLooked.agent.terminalId !== implementor.terminalId) {
+        throw new DispatchRejected(`the partial dispatch target changed while navigation and enrollment were restored; no input was sent`);
+      }
+      const executable = revalidatePendingHandoff(projectRoot, statePath, pending, "run, recovery authority or implementor identity changed while handoff prerequisites were restored");
+      state = executable.state;
+      pending = executable.pending;
+      const sent = promptAgent({ target: implementor.paneId, text: packet, expectedInputGuard: finalLooked.agent.inputGuard }, resumeHerdr);
+      if (sent.outcome !== "accepted") return result("dispatch", false, `handoff was not confirmed (${sent.outcome}, ${sent.code}): ${sent.detail}; pending dispatch remains for an explicit retry`, { pendingDispatch: pending, prompt: sent });
+      state.pendingDispatch = null;
+      persistState(statePath, state);
+      reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "completed handoff prerequisites reconciled after accepted input");
+      return result("dispatch", true, `handoff resumed to ${pending.plannedAgent} in ${implementor.paneId}; dispatch ${pending.runInstanceId} is complete`, { runInstanceId: pending.runInstanceId, implementor, prompt: sent });
+    }
     assertRunOwnership(statePath, state, args);
+    if (state.pendingDispatch !== undefined && state.pendingDispatch !== null) {
+      throw new DispatchRejected(`run has a ${state.pendingDispatch.phase} partial dispatch for ${state.pendingDispatch.plannedAgent}; re-run with --resume-handoff${state.pendingDispatch.phase === "started" || state.pendingDispatch.phase === "prepared" ? " and the packet on stdin" : " to clear the pre-start intent"}`);
+    }
     const prd = assertDispatchablePrd(projectRoot, requiredFlag(args, "prd"));
     if (prd.relative !== state.prdPath) {
       throw new DispatchRejected(`${prd.relative} is not the PRD run '${state.topicSlug}' started from (${state.prdPath}); pass --slug for the run that PRD belongs to`);
@@ -618,30 +800,105 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     }
     const placed = placementFor(state);
     if (placed.placement === null) throw new DispatchRejected(placed.problem ?? "no placement");
-    const dispatched = dispatchImplementor(projectRoot, {
-      name: requiredFlag(args, "name"),
+    // Supervision inputs are settled before any pane exists (B2): the
+    // Observer's identity from herdr, the patrol interval and the recovery
+    // owner. A pane whose Observer cannot be identified would never receive
+    // a verified wake, so that refusal comes first.
+    const patrolIntervalMs = parsePatrolMinutes(flag(args, "patrol"));
+    const recoveryOwner = parseRecoveryOwner(flag(args, "recovery-owner"));
+    const extraEnv = parseEnvPairs(args.values?.get("env") ?? []);
+    if (RUN_INSTANCE_ENV_KEY in extraEnv) throw new DispatchRejected(`${RUN_INSTANCE_ENV_KEY} is minted by the dispatch; it cannot be passed as --env`);
+    const observer = currentObserverIdentity();
+    if (observer.identity === null) throw new DispatchRejected(`the Observer cannot be recorded: ${observer.problem}`);
+    const runInstanceId = newRunInstanceId();
+    const name = requiredFlag(args, "name");
+    const dispatchedAt = nowIso();
+    let pending: PendingDispatch = {
+      runInstanceId, observer: observer.identity, plannedAgent: name, phase: "planned", prepared: null, implementor: null,
+      canonicalRepository: canonicalRepository(placed.placement.cwd), prdPath: state.prdPath,
+      dispatchHead: repositoryHead(placed.placement.cwd), dispatchedAt, patrolIntervalMs, recoveryOwner, handovers: [],
+    };
+    // The durable intent and enrollment exist before a pane is created. A
+    // tick during this short window reports the partial dispatch rather than
+    // silently missing a child that may already be starting.
+    state.pendingDispatch = pending;
+    persistState(statePath, state);
+    try { reconcileCurrentDispatchPrerequisites(projectRoot, statePath, `planned dispatch ${runInstanceId} enrolled before child start`); }
+    catch (error) {
+      state.pendingDispatch = null;
+      persistState(statePath, state);
+      // An immutable revision is committed before old-revision pruning. The
+      // round-two review injected an EIO after that commit and found the new
+      // enrollment orphaning the previous supervised run even though no child
+      // started. Reconcile from durable state on every error outcome so an
+      // uncertain external write converges instead of repeating its effect.
+      let reconciliationProblem: string | null = null;
+      try { reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "failed pre-start enrollment reconciled to current dispatch authority"); }
+      catch (reconcileError) { reconciliationProblem = reconcileError instanceof Error ? reconcileError.message : String(reconcileError); }
+      const failure = error instanceof Error ? error.message : String(error);
+      throw new DispatchRejected(`supervision enrollment failed before child start: ${failure}${reconciliationProblem === null ? "" : `; current authority reconciliation also failed: ${reconciliationProblem}; retry dispatch to reconcile it`}`);
+    }
+    let recordId: number | null = null;
+    let dispatched;
+    try {
+      dispatched = dispatchImplementor(projectRoot, {
+      name,
       prdPath: prd.relative,
       handoff: readHandoffPacket(),
       placement: placed.placement,
       kind: flag(args, "kind")?.trim() || undefined,
       model: flag(args, "model")?.trim() || undefined,
       effort: flag(args, "effort")?.trim() || undefined,
-      env: parseEnvPairs(args.values?.get("env") ?? []),
-    });
+      env: { ...extraEnv, [RUN_INSTANCE_ENV_KEY]: runInstanceId },
+      afterCreate: (created) => {
+        pending.phase = "prepared";
+        pending.prepared = {
+          paneId: created.paneId, workspaceId: created.workspaceId, tabId: created.tabId, cwd: created.cwd,
+          kind: created.kind, placement: created.placement, hostScope: created.hostScope,
+          parentPaneId: created.parentPaneId, preparedAt: created.preparedAt,
+        };
+        state.pendingDispatch = pending;
+        persistState(statePath, state);
+      },
+      beforeHandoff: (started) => {
+        const implementor = { paneId: started.paneId, agent: started.name, sessionId: started.sessionId, terminalId: started.terminalId, hostScope: started.hostScope, recordedAt: started.recordedAt };
+        pending.phase = "started";
+        pending.implementor = implementor;
+        state.pendingDispatch = pending;
+        const supervision: SupervisionRecord = {
+          runInstanceId, observer: observer.identity!, implementor,
+          canonicalRepository: pending.canonicalRepository, prdPath: pending.prdPath, dispatchHead: pending.dispatchHead,
+          dispatchedAt, patrolIntervalMs, recoveryOwner, handovers: pending.handovers ?? [],
+        };
+        recordId = recordDispatch(projectRoot, statePath, state, { ...started, agent: started.name, cwd: placed.placement!.cwd }, "observer",
+          `implementor ${started.name} (${started.kind}) started in ${started.paneId}; exact identity recorded before handoff`, supervision).id;
+        reconcileCurrentDispatchPrerequisites(projectRoot, statePath, `started dispatch ${runInstanceId} reconciled before executable handoff`);
+      },
+      beforeSubmit: () => {
+        const ready = revalidatePendingHandoff(projectRoot, statePath, pending, "run or dispatch authority changed during the final target lookup");
+        state = ready.state;
+        pending = ready.pending;
+      },
+      });
+    } catch (error) {
+      return result("dispatch", false, `dispatch is incomplete: ${error instanceof Error ? error.message : String(error)}. The durable ${state.pendingDispatch?.phase ?? "planned"} record remains; no unrecorded handoff was submitted.`, { runInstanceId, pendingDispatch: state.pendingDispatch ?? pending });
+    }
+    if (recordId === null) throw new Error("dispatch returned without its pre-handoff record");
+    state.pendingDispatch = null;
+    persistState(statePath, state);
     const where = placed.placement.kind === "workspace"
       ? `a new workspace on ${dispatched.cwd}`
       : `a new tab of workspace ${dispatched.workspaceId} at ${dispatched.cwd}`;
-    const record = recordDispatch(projectRoot, statePath, state, dispatched, "observer",
-      `implementor ${dispatched.agent} (${dispatched.kind}) started in ${dispatched.paneId}, ${where}`);
+    const supervised = `supervised as instance ${runInstanceId} (patrol every ${Math.round(patrolIntervalMs / 60_000)} min, recovery owner ${recoveryOwner})`;
     return result(
       "dispatch",
       true,
-      `implementor ${dispatched.agent} (${dispatched.kind}) started in ${dispatched.paneId}, ${where}, from ${dispatched.prd}`,
-      { ...dispatched, dispatchId: record.id, slug: state.topicSlug },
+      `implementor ${dispatched.agent} (${dispatched.kind}) started in ${dispatched.paneId}, ${where}, from ${dispatched.prd}; ${supervised}`,
+      { ...dispatched, dispatchId: recordId, slug: state.topicSlug, runInstanceId, observer: observer.identity, patrolIntervalMs, recoveryOwner, enrolled: true, enrollProblem: null },
       [
         ...(dispatched.parentLineage === "reported" ? [] : [`Lineage was not recorded: ${dispatched.parentLineage.unreported}`]),
-        `Wake on its events with \`sasu implement await --slug ${state.topicSlug} --agent ${dispatched.agent}\`.`,
-        `Read its pane with \`herdr agent read ${dispatched.agent} --source recent-unwrapped --lines 120\` for diagnosis only.`,
+        `The supervisor tick wakes this session when the implementor settles, blocks, escalates, stalls, disappears or finishes, and on patrol; nothing else needs arming.`,
+        `On a wake, read \`sasu implement status --slug ${state.topicSlug} --digest\` and \`herdr agent read ${dispatched.agent} --source recent-unwrapped --lines 120\` for diagnosis only.`,
       ],
     );
   } catch (error) {
@@ -733,12 +990,7 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
 
   const briefing = buildHandoffBriefing(handoff);
   const replacement = replacementPlacement(state, id);
-  const reset = agent === null
-    ? { ok: false, value: null, problem: "no --agent given; reset the implementor's context yourself and hand it the three artifacts below" }
-    : replacement.placement === null
-      ? { ok: false, value: null, problem: replacement.problem ?? "no placement" }
-      : spawnImplementor({ name: `${agent}-r${id}`, placement: replacement.placement, prompt: briefing });
-
+  const replacementInstanceId = newRunInstanceId();
   const record = recordEscalation(state, {
     at, target, reason, profile,
     model: lane.judge?.model ?? null,
@@ -753,15 +1005,100 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
     kind: "escalate",
     actor: issuer,
     subject: target,
-    summary: `escalation ${record.id} diagnosed${reset.ok ? " and the implementor was reset" : "; the context reset is the supervisor's to perform"}`,
+    summary: `escalation ${record.id} diagnosed${agent === null ? "; the context reset is the supervisor's to perform" : "; replacement dispatch planned"}`,
     at,
   });
   persistState(statePath, state);
-  if (reset.ok && reset.value !== null) {
-    recordDispatch(projectRoot, statePath, state, { ...reset.value, agent: reset.value.name, cwd: replacement.placement!.cwd }, issuer,
-      `replacement implementor ${reset.value.name} started in ${reset.value.paneId} for escalation ${record.id}`);
+
+  let reset: ReturnType<typeof spawnImplementor> = { ok: false, value: null, problem: "no --agent given; reset the implementor's context yourself and hand it the three artifacts below" };
+  let enrollProblem: string | null = null;
+  const previous = state.supervision ?? null;
+  if (agent !== null && replacement.placement === null) {
+    reset = { ok: false, value: null, problem: replacement.problem ?? "no placement" };
+  } else if (agent !== null && previous === null) {
+    reset = { ok: false, value: null, problem: "the run has no supervision record, so a replacement cannot be addressed or recovered safely" };
+  } else if (agent !== null && replacement.placement !== null && previous !== null) {
+    const replacementName = `${agent}-r${id}`;
+    const dispatchedAt = nowIso();
+    let pending: PendingDispatch = {
+      runInstanceId: replacementInstanceId,
+      observer: previous.observer,
+      plannedAgent: replacementName,
+      phase: "planned",
+      prepared: null,
+      implementor: null,
+      canonicalRepository: canonicalRepository(replacement.placement.cwd),
+      prdPath: state.prdPath,
+      dispatchHead: repositoryHead(replacement.placement.cwd),
+      dispatchedAt,
+      patrolIntervalMs: previous.patrolIntervalMs,
+      recoveryOwner: previous.recoveryOwner,
+    };
+    state.pendingDispatch = pending;
+    persistState(statePath, state);
+    try {
+      reconcileCurrentDispatchPrerequisites(projectRoot, statePath, `planned replacement ${replacementInstanceId} enrolled before child start`);
+      reset = spawnImplementor({
+        name: replacementName,
+        placement: replacement.placement,
+        prompt: briefing,
+        env: { [RUN_INSTANCE_ENV_KEY]: replacementInstanceId },
+        afterCreate: (created) => {
+          pending.phase = "prepared";
+          pending.prepared = {
+            paneId: created.paneId, workspaceId: created.workspaceId, tabId: created.tabId, cwd: created.cwd,
+            kind: created.kind, placement: created.placement, hostScope: created.hostScope,
+            parentPaneId: created.parentPaneId, preparedAt: created.preparedAt,
+          };
+          state.pendingDispatch = pending;
+          persistState(statePath, state);
+        },
+        beforePrompt: (started) => {
+          const implementor = { paneId: started.paneId, agent: started.name, sessionId: started.sessionId, terminalId: started.terminalId, hostScope: started.hostScope, recordedAt: started.recordedAt };
+          pending.phase = "started";
+          pending.implementor = implementor;
+          state.pendingDispatch = pending;
+          const refreshed: SupervisionRecord = {
+            ...previous,
+            runInstanceId: replacementInstanceId,
+            implementor,
+            canonicalRepository: pending.canonicalRepository,
+            prdPath: pending.prdPath,
+            dispatchHead: pending.dispatchHead,
+            dispatchedAt,
+          };
+          recordDispatch(projectRoot, statePath, state, { ...started, agent: started.name, cwd: replacement.placement!.cwd }, issuer,
+            `replacement implementor ${started.name} started in ${started.paneId} for escalation ${record.id}; exact identity recorded before handoff`, refreshed);
+          reconcileCurrentDispatchPrerequisites(projectRoot, statePath, `started replacement ${replacementInstanceId} reconciled before executable handoff`);
+        },
+        beforeSubmit: () => {
+          const ready = revalidatePendingHandoff(projectRoot, statePath, pending, "run or replacement authority changed during the final target lookup");
+          state = ready.state;
+          pending = ready.pending;
+        },
+      });
+      if (reset.ok) {
+        state.pendingDispatch = null;
+        persistState(statePath, state);
+      } else if (pending.phase === "planned") {
+        restoreSupervisionAfterPartialDispatch(state, pending);
+        state.pendingDispatch = null;
+        persistState(statePath, state);
+        reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "replacement dispatch failed before a pane was created");
+      }
+    } catch (error) {
+      enrollProblem = error instanceof Error ? error.message : String(error);
+      if (pending.phase === "planned") {
+        try { restoreSupervisionAfterPartialDispatch(state, pending); }
+        catch (restoreError) { enrollProblem = `${enrollProblem}; prior supervision restore failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`; }
+        state.pendingDispatch = null;
+        persistState(statePath, state);
+        reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "replacement enrollment failed before a pane was created");
+      }
+      reset = { ok: false, value: null, problem: enrollProblem };
+    }
   }
-  return result("escalate", true, `escalation ${record.id} diagnosed: ${diagnosis.summary}. ${reset.ok ? "A replacement implementor was started with the three handoff artifacts." : `Context reset not performed automatically (${reset.problem}).`}`, {
+  return result("escalate", true, `escalation ${record.id} diagnosed: ${diagnosis.summary}. ${reset.ok ? "A replacement implementor was started with the three handoff artifacts." : `Context reset not performed automatically (${reset.problem}).`}${state.pendingDispatch === undefined || state.pendingDispatch === null ? "" : ` A durable ${state.pendingDispatch.phase} replacement record remains for dispatch --resume-handoff.`}${enrollProblem === null ? "" : ` Supervision setup failed (${enrollProblem}).`}`, {
     escalation: record,
     handoff,
     briefing,
@@ -1081,6 +1418,7 @@ function publicState(state: ImplementState, currentSourceDigest?: string, curren
     workingRoot: state.worktree?.path ?? state.projectRoot,
     worktree: state.worktree ?? null,
     implementor: lastDispatch(state),
+    supervision: state.supervision ?? null,
     reviewProfile: state.prd.reviewProfile,
     escalations: { used: state.escalations.length, limit: ESCALATE_LIMIT_PER_RUN, remaining: ESCALATE_LIMIT_PER_RUN - state.escalations.length },
     requirementCount: state.requirements.length,
@@ -1104,7 +1442,34 @@ function currentInputs(state: ImplementState) {
   return { source, held, contract, context, intentInput, fingerprint };
 }
 
+/**
+ * `status --digest`: the deterministic facts an Observer reads on a wake
+ * (B16). Addressed to the run's recorded Observer alone: a wake that lands in
+ * another session stops here with an ownership refusal and no state change
+ * (B10). Everything else about `status` stays open and unchanged.
+ */
+function digest(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { state } = loadState(projectRoot, stateOptions(args));
+  const supervision = state.supervision ?? null;
+  if (supervision === null) throw new Error(`run ${state.topicSlug} has no digest: it was never dispatched under Herdr`);
+  const expectedInstance = flag(args, "instance");
+  if (expectedInstance !== undefined && expectedInstance !== supervision.runInstanceId) {
+    throw new Error(`digest refused: expected run instance ${expectedInstance}, but the record is ${supervision.runInstanceId}`);
+  }
+  const expectedObserver = flag(args, "observer");
+  if (expectedObserver !== undefined && expectedObserver !== supervision.observer.sessionId) {
+    throw new Error(`digest refused: expected Observer ${expectedObserver}, but the record names ${supervision.observer.sessionId}`);
+  }
+  const session = currentSessionId();
+  if (session !== supervision.observer.sessionId) {
+    throw new Error(`digest refused: run '${state.topicSlug}' is observed by session ${supervision.observer.sessionId}, and this session is ${session ?? "unidentified"}; nothing was changed. \`sasu implement status --json\` remains readable`);
+  }
+  const built = buildDigest(state, supervision);
+  return result("status", true, `${state.topicSlug}: digest since dispatch`, { digest: built }, renderDigest(built));
+}
+
 function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  if (args.flags.get("digest") === true) return digest(projectRoot, args);
   const { state } = loadState(projectRoot, stateOptions(args));
   const herdr = herdrCapabilities();
   let sourceDigest: string | undefined, fingerprint: string | undefined;
@@ -1435,13 +1800,12 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "start") return start(projectRoot, args);
     if (subcommand === "dispatch") return dispatch(projectRoot, args);
     if (subcommand === "status") return status(projectRoot, args);
-    if (subcommand === "await") return await awaitEvent(projectRoot, args);
     if (subcommand === "artifact") return artifact(projectRoot, args);
     if (subcommand === "amend") return amend(projectRoot, args);
     if (subcommand === "escalate") return await escalate(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "verify") return await verify(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, dispatch, status, await, artifact, amend, escalate, retire, or verify" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, dispatch, status, artifact, amend, escalate, retire, or verify" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const check = error instanceof VerbRejected || error instanceof AmendmentRejected || error instanceof EscalateRejected ? error.check : "transition";

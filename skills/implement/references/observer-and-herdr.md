@@ -134,34 +134,60 @@ The handoff must state a routing contract that forbids the Implementor from invo
 The Implementor has no direct user channel: when blocked, it emits `OBSERVER_BLOCK` as final text and ends the turn so the Observer can decide or escalate.
 
 Dispatch does not focus the new pane.
-The Observer then arms exactly one background waiter and lets go of the turn:
+It records this pane's session UUID, terminal and pane as the run's Observer, mints a run instance id the new pane carries as `SASU_RUN_INSTANCE_ID`, and enrolls the run's `state.json` with the supervisor tick.
+From that moment the run is watched; the Observer arms nothing and simply ends its turn.
+Do not run a background command to wait on the run: a finished background command does not create an agent turn by itself, and the one-shot waiter this replaced left runs silently unwatched whenever the re-arm was forgotten (2026-09-18).
 
-```sh
-sasu implement await --since <last-event-id> [--pid <implementor-pid>]
+## The Supervisor Tick
+
+One user LaunchAgent runs `sasu supervisor tick` every 30 seconds for every run on the machine.
+It is level-triggered: each tick re-reads the index of watched `state.json` paths, each run's record, and herdr's `agent get` for the Implementor and the Observer, and reaches its verdict from those facts alone.
+It writes no run state and holds no cursor, so a tick killed at any point, or a machine rebooted, reaches the same verdict on the next tick; the only cost is one interval of delay.
+
+It wakes the recorded Observer for exactly these reasons:
+
+| Reason | Fact behind it |
+| --- | --- |
+| `settled` | the Implementor has been idle or done for at least one tick interval; the wake says it may be transient |
+| `blocked` | herdr reports the Implementor blocked |
+| `escalate` | an `escalate` event was recorded |
+| `stall` | no `state.json` event AND no herdr lifecycle activity for 10 minutes; a working Implementor is activity |
+| `implementor-gone` | the Implementor's pane is empty or holds another agent |
+| `terminal` | the run was retired; it leaves the index after this wake |
+| `patrol` | the Implementor is working and the Observer has not looked for the run's patrol interval (default 15 minutes, `dispatch --patrol <minutes>`) |
+
+Artifact, verify, dispatch and amendment events do not wake; they only reset the stall clock.
+Each condition is answered once per episode; a working Observer is not interrupted and receives the same condition on the next tick it is idle; several runs watched by one Observer arrive in one wake.
+
+Before every wake the tick compares `agent get` on the recorded Observer pane with the recorded session UUID and terminal.
+A different session in the same pane, with the same name and cwd, receives nothing: the run shows `observer-gone` in `sasu supervisor status` until a person hands it over with `sasu supervisor handover --slug <slug> --approval "<verbatim user words>"` from the new Observer's pane.
+A herdr server restart rotates terminal ids and reads the same way; the handover is the recovery there too.
+`sasu supervisor status` and `status --digest` name each run's recovery owner (`supervisor` or `task-factory`, set by `dispatch --recovery-owner`).
+The owner says which loop may replace a vanished Observer; the supervisor never replaces one and wakes only the recorded Observer either way.
+When herdr returns an `input_guard` for the Observer the wake is sent with `--expected-input-guard`, and a guard the server then refuses is a routing failure, never a plain resend.
+
+## Handling A Wake
+
+The wake is an identity note, not an instruction:
+
+```text
+SASU_WAKE
+observer: <this session's UUID>
+run: <slug> instance <run instance id>
+reason: <reasons>
+  <reason>: <fact>
+inspect: sasu implement status --slug <slug> --digest
 ```
 
-The run's record is `agents/runs/<slug>/state.json` in the tree where `sasu implement start` ran, which is the Observer's tree, even when the run is isolated into a worktree (`start --json` reports the judged tree as `worktree.path`); `await` and `status` take `--slug <slug>` from any worktree of the same repository and resolve that record, and they refuse by name when two trees carry it.
-The bare form without `--slug` follows the session that started the run, so an Observer that did not start it passes `--slug`; the dispatch output prints the exact `await` command.
-
-Arm it as a background task, never in the foreground.
-Under Claude Code that is the Bash tool's `run_in_background`; under Codex it is that runtime's own detached-command form.
-A foreground wait holds the turn, so the user cannot reach the Observer for as long as the run lasts, which is the one thing the Observer exists to stay available for.
-A background waiter outlives the turn and re-invokes the Observer when it exits.
-
-The waiter is a one-shot, so the loop is arm, wake, inspect, arm again.
-Re-arm after every wake except `implementor-gone`, which means the watched target can no longer be followed - it may have died, but a moved pane or a changed identity reports identically, so inspect it before deciding on any recovery and never start a replacement on that signal alone.
-`await` prints the next command with the cursor already advanced and the probe flag carried over; run that, rather than rebuilding it from memory.
-Failing to re-arm does not raise an error: the implementor keeps working and nobody is watching.
-
-It returns for exactly one reason - a new event, no progress past the
-no-progress bound, or the watched target no longer being followable - and prints which.
-Progress is decided by the event log alone, never by pane text: pane output is
-not a semantic unit and cannot say what happened.
-A named target is additionally watched by one bounded `herdr agent wait` child, which can only bring the stall forward once per silence interval and can never resolve a finding or declare progress.
-After that early inspection is spent, no per-second target-loss detection remains until a new event; the wake says so in its own detail rather than leaving the gap unstated.
-This replaces raw `herdr agent get`, hand-run `herdr agent wait`, `herdr agent list --json`, transcript-keyword polling, and home-grown shell loops.
-On a stall wake, `herdr agent read <implementor-name> --source recent-unwrapped --lines 120` is a diagnosis tool only; when herdr is absent, `sasu implement status` names which of `spawn`, `read`, `alive` is unavailable and the run continues without pane diagnosis.
+Read the digest first.
+It reports deterministic facts since dispatch - elapsed time, the Implementor's herdr state and last activity, commits and recent subjects, changed files and lines, per-file churn, paths outside the delivery boundary, verify attempts and repeatedly failing suites, uncommitted changes and their age - and no judgment.
+It answers only the recorded Observer session; another session that receives a stray wake is refused and nothing changes.
+Then read the pane tail with `herdr agent read <implementor-name> --source recent-unwrapped --lines 120`, for diagnosis only.
+From those two, choose one of three: it is fine and the turn ends; one line of direction to the Implementor; or stop.
 Use Sasu state, not transcript keywords, as the source of truth.
+
+The Observer's Stop hook confirms the handover when a turn ends normally: it exits 0 in every case, never blocks a stop, and only asks launchd for an immediate tick when this session is the recorded Observer of an indexed run.
+It is not what watches the run; the tick has been watching since dispatch.
 
 ## Exception-Only Intervention
 

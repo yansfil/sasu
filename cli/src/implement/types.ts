@@ -112,7 +112,7 @@ export interface VerificationReportIdentity {
   reportSha256: string;
 }
 export type IssuerLabel = "implementor" | "observer" | "human";
-export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify" | "dispatch";
+export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify" | "dispatch" | "handover";
 export interface ImplementEvent {
   id: number; at: string; kind: ImplementEventKind; actor: IssuerLabel;
   subject: string | null; summary: string;
@@ -237,6 +237,89 @@ export interface DispatchRecord {
   fromSessionId: string | null;
 }
 
+/**
+ * The identity a wake is addressed to. A wake is sent only when `agent get`
+ * on the recorded pane still answers with this session UUID and terminal
+ * (D-06); the same name, pane, cwd or PID in a new session is a stranger.
+ * Measured 2026-09-18: a herdr server restart keeps pane ids and session
+ * UUIDs but rotates terminal ids, so after a restart every run reads as
+ * `observer-gone` until an explicit handover re-records the identity. That
+ * is the contract's chosen failure direction: silence over a misrouted wake.
+ */
+export interface ObserverIdentity {
+  /** Agent kind herdr reports for the pane (claude, codex). */
+  runtime: string;
+  /** The runtime's own session UUID (`agent_session.value`). */
+  sessionId: string;
+  terminalId: string;
+  paneId: string;
+  /** The herdr socket the identity was read from; two servers never share ids. */
+  hostScope: string;
+  recordedAt: string;
+}
+
+/**
+ * Explicit re-recording of the Observer after the original session is gone
+ * (B18). Verbatim user words, like every other takeover the harness accepts.
+ */
+export interface ObserverHandover {
+  at: string;
+  from: ObserverIdentity;
+  to: ObserverIdentity;
+  approval: string;
+}
+
+/**
+ * What the supervisor tick and `status --digest` read about a dispatched
+ * run (D-04). Written by `dispatch`, refreshed by an escalation's replacement
+ * and by a handover; never written by the tick, which only reads (D-02).
+ */
+export interface SupervisionRecord {
+  /** Random per dispatch; the child pane carries it as SASU_RUN_INSTANCE_ID. */
+  runInstanceId: string;
+  observer: ObserverIdentity;
+  /** Exact identity captured after start and before the handoff is submitted. */
+  implementor: { paneId: string; agent: string; sessionId: string; terminalId: string; hostScope: string; recordedAt: string };
+  /** Realpath of the repository's common git dir, so two worktrees of one repository and two repositories with one slug never collide. */
+  canonicalRepository: string;
+  prdPath: string;
+  /** HEAD of the judged tree when the implementor was dispatched; the digest measures from here. */
+  dispatchHead: string | null;
+  dispatchedAt: string;
+  patrolIntervalMs: number;
+  /** Who replaces a dead Observer: only one loop may input into a session (D-15). */
+  recoveryOwner: "supervisor" | "task-factory";
+  handovers: ObserverHandover[];
+}
+
+export interface PendingDispatch {
+  runInstanceId: string;
+  observer: ObserverIdentity;
+  plannedAgent: string;
+  phase: "planned" | "prepared" | "started";
+  /** Exact pane created before an agent is started, so crash recovery owns it. */
+  prepared: {
+    paneId: string;
+    workspaceId: string;
+    tabId: string;
+    cwd: string;
+    kind: string;
+    placement: "workspace" | "tab";
+    hostScope: string;
+    parentPaneId: string;
+    preparedAt: string;
+  } | null;
+  implementor: SupervisionRecord["implementor"] | null;
+  canonicalRepository: string;
+  prdPath: string;
+  dispatchHead: string | null;
+  dispatchedAt: string;
+  patrolIntervalMs: number;
+  recoveryOwner: "supervisor" | "task-factory";
+  /** Human-approved recovery-authority transfers before supervision exists. */
+  handovers?: ObserverHandover[];
+}
+
 export type PrdJudgeRecord =
   | { required: true; skippedReason: null; gapAudit: string; spec: string }
   | { required: false; skippedReason: string; gapAudit: null; spec: null };
@@ -277,6 +360,10 @@ export interface ImplementState {
   adoptions?: { at: string; fromSessionId: string; evidence: string }[];
   /** Absent on records written before dispatch recorded itself; read as none. */
   dispatches?: DispatchRecord[];
+  /** Absent until a Herdr dispatch enrolls the run for supervision; read as none. */
+  supervision?: SupervisionRecord | null;
+  /** Durable dispatch intent, cleared only after the handoff submission succeeds. */
+  pendingDispatch?: PendingDispatch | null;
   requirements: BehaviorRequirement[];
   activeVerification?: ActiveVerification;
   artifacts: RegisteredArtifact[];
@@ -338,7 +425,9 @@ export interface ImplementCommandResult {
 }
 
 /**
- * Wake the observer when the implementor has produced no event for this long.
+ * A run has stalled when BOTH its event log and the implementor's Herdr
+ * activity have been silent this long (D-08). Herdr working counts as
+ * activity, so an implementor that only codes and commits never trips it.
  *
  * NOT a measured value - an agent's initial default (D-18). The incident it
  * is sized against is the 2026-08-28 herdr-ide session, where an implementor

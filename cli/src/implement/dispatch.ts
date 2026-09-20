@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { spawnImplementor, type SpawnPlacement } from "./herdr";
+import { spawnImplementor, type PreparedSpawn, type SpawnPlacement, type SpawnResult } from "./herdr";
 import { normalizeProjectPath } from "./store";
 import type { ImplementState } from "./types";
 
@@ -34,6 +34,9 @@ export interface DispatchInput {
   effort?: string;
   /** Extra `KEY=VALUE` variables for the Implementor's pane, already parsed. */
   env?: Record<string, string>;
+  afterCreate?: (prepared: PreparedSpawn) => void;
+  beforeHandoff?: (started: SpawnResult) => void;
+  beforeSubmit?: (started: SpawnResult) => void;
 }
 
 /**
@@ -156,6 +159,10 @@ export interface DispatchResult {
    * show as a root, so a supervisor looking for its child knows why.
    */
   parentLineage: "reported" | { unreported: string };
+  sessionId: string;
+  terminalId: string;
+  hostScope: string;
+  recordedAt: string;
 }
 
 export function dispatchImplementor(
@@ -170,7 +177,7 @@ export function dispatchImplementor(
   const prd = assertDispatchablePrd(projectRoot, input.prdPath);
 
   const spawned = spawnImplementor(
-    { name, placement: input.placement, prompt: handoff, kind: input.kind, model: input.model, effort: input.effort, env: input.env },
+    { name, placement: input.placement, prompt: handoff, kind: input.kind, model: input.model, effort: input.effort, env: input.env, afterCreate: input.afterCreate, beforePrompt: input.beforeHandoff, beforeSubmit: input.beforeSubmit },
     { env },
   );
   if (!spawned.ok || spawned.value === null) throw new DispatchRejected(spawned.problem ?? "dispatch failed for an unreported reason");
@@ -184,5 +191,9 @@ export function dispatchImplementor(
     kind: spawned.value.kind,
     prd: prd.relative,
     parentLineage: spawned.value.lineage.problem === null ? "reported" : { unreported: spawned.value.lineage.problem },
+    sessionId: spawned.value.sessionId,
+    terminalId: spawned.value.terminalId,
+    hostScope: spawned.value.hostScope,
+    recordedAt: spawned.value.recordedAt,
   };
 }

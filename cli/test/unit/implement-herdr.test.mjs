@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { herdrCapabilities, isAgentAlive, readPane, spawnImplementor } from "../../dist/implement/herdr.js";
+import { closePreparedSpawn, herdrCapabilities, isAgentAlive, readPane, spawnImplementor } from "../../dist/implement/herdr.js";
 import { parseEnvPairs } from "../../dist/implement/dispatch.js";
 
 const ok = (stdout = "") => () => ({ status: 0, stdout, stderr: "" });
@@ -16,6 +16,7 @@ const dispatcher = { agent: "claude", agent_status: "working", pane_id: "w4G:p12
 /** herdr 0.9.0-preview's creation shape: the workspace, its first tab and the root pane the agent starts in. */
 const workspaceOk = JSON.stringify({ result: { workspace: { workspace_id: "w7Z" }, tab: { tab_id: "w7Z:t1" }, root_pane: { pane_id: "w7Z:p1" }, type: "workspace_created" } });
 const tabOk = JSON.stringify({ result: { tab: { tab_id: "w4G:t9" }, root_pane: { pane_id: "w4G:p13" }, type: "tab_created" } });
+const implementorInfo = (paneId, fields = {}) => JSON.stringify({ result: { type: "agent_info", agent: { name: "impl", agent: "claude", agent_status: "working", pane_id: paneId, terminal_id: "term_impl", agent_session: { value: "impl-session" }, tokens: { activity: "1000" }, state_change_seq: 1, ...fields } } });
 /** A run isolated into a worktree: the implementor gets a workspace of its own on it. */
 const WS = { kind: "workspace", cwd: "/repo.worktrees/fixture", label: "fixture" };
 /** An in-place run: the implementor gets a tab in the workspace the Observer sits in. */
@@ -34,6 +35,7 @@ function recorder(overrides = {}) {
     if (key === "agent list") return { status: 0, stdout: listing(dispatcher), stderr: "" };
     if (key === "workspace create") return { status: 0, stdout: workspaceOk, stderr: "" };
     if (key === "tab create") return { status: 0, stdout: tabOk, stderr: "" };
+    if (key === "agent get") return { status: 0, stdout: implementorInfo(args[2]), stderr: "" };
     return { status: 0, stdout: "{}", stderr: "" };
   };
   const matching = (key) => argv.filter((args) => args.slice(0, 2).join(" ") === key);
@@ -130,7 +132,7 @@ test("all three holes work when herdr answers", () => {
   const { run } = recorder();
   const spawned = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run });
   assert.equal(spawned.ok, true);
-  assert.deepEqual(spawned.value, { paneId: "w7Z:p1", workspaceId: "w7Z", tabId: "w7Z:t1", name: "impl", kind: "claude", lineage: { parentPaneId: "w4G:p12", problem: null } });
+  assert.deepEqual({ ...spawned.value, recordedAt: "<timestamp>" }, { paneId: "w7Z:p1", workspaceId: "w7Z", tabId: "w7Z:t1", name: "impl", kind: "claude", lineage: { parentPaneId: "w4G:p12", problem: null }, sessionId: "impl-session", terminalId: "term_impl", hostScope: "default", recordedAt: "<timestamp>" });
   assert.equal(readPane({ name: "impl" }, { env: LIVE, run: ok("pane text") }).value, "pane text");
 });
 
@@ -168,7 +170,115 @@ test("a dispatch injects the implementor marker when the pane is created", () =>
   spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run });
   assert.deepEqual(of("workspace create"), ["workspace", "create", "--cwd", "/repo.worktrees/fixture", "--label", "fixture", "--env", "SASU_HERDR_ROLE=implementor", "--no-focus"]);
   assert.deepEqual(of("agent start").slice(0, 7), ["agent", "start", "impl", "--kind", "claude", "--pane", "w7Z:p1"]);
-  assert.deepEqual(of("agent prompt"), ["agent", "prompt", "impl", "p"]);
+  assert.deepEqual(of("agent prompt"), ["agent", "prompt", "w7Z:p1", "p"]);
+});
+
+test("D-04/D-06: initial handoff resolves and prompts the exact created pane with its guard", () => {
+  const guarded = recorder({
+    "agent get": (args) => ({ status: 0, stdout: implementorInfo(args[2], { input_guard: "guard-7" }), stderr: "" }),
+    "agent prompt": { status: 0, stdout: JSON.stringify({ result: { outcome: "submitted" } }), stderr: "" },
+  });
+  const sent = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run: guarded.run });
+  assert.equal(sent.ok, true, sent.problem);
+  assert.deepEqual(guarded.of("agent get"), ["agent", "get", "w7Z:p1"]);
+  assert.deepEqual(guarded.of("agent prompt"), ["agent", "prompt", "w7Z:p1", "p", "--expected-input-guard", "guard-7"]);
+
+  const wrong = recorder({ "agent get": { status: 0, stdout: implementorInfo("w9:p9"), stderr: "" } });
+  const refused = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run: wrong.run });
+  assert.equal(refused.ok, false);
+  assert.match(refused.problem, /expected impl in w7Z:p1, found impl in w9:p9/);
+  assert.equal(wrong.count("agent prompt"), 0);
+});
+
+test("D-04/D-06: initial handoff rechecks exact identity after durable persistence", () => {
+  for (const guarded of [false, true]) {
+    let persisted = false;
+    const recorded = recorder({
+      "agent get": (args) => ({
+        status: 0,
+        stdout: implementorInfo(args[2], {
+          agent_session: { value: persisted ? "replacement-session" : "impl-session" },
+          ...(guarded ? { input_guard: persisted ? "replacement-guard" : "original-guard" } : {}),
+        }),
+        stderr: "",
+      }),
+    });
+    const outcome = spawnImplementor({
+      name: "impl", placement: WS, prompt: "executable handoff",
+      beforePrompt: () => { persisted = true; },
+    }, { env: LIVE, run: recorded.run });
+    assert.equal(outcome.ok, false, `replacement during persistence must fail closed (${guarded ? "guarded" : "unguarded"})`);
+    assert.match(outcome.problem, /identity changed after pre-handoff persistence/);
+    assert.equal(recorded.count("agent get"), 2, "persistence is followed by one fresh exact-identity lookup");
+    assert.equal(recorded.count("agent prompt"), 0, "neither guarded nor unguarded input reaches the replacement");
+  }
+});
+
+test("D-04: final authority validation runs after the last identity lookup and before handoff submission", () => {
+  let lookups = 0;
+  const recorded = recorder({
+    "agent get": (args) => {
+      lookups += 1;
+      return { status: 0, stdout: implementorInfo(args[2]), stderr: "" };
+    },
+  });
+  const outcome = spawnImplementor({
+    name: "impl", placement: WS, prompt: "executable handoff",
+    beforeSubmit: () => {
+      assert.equal(lookups, 2, "authority is checked only after the post-persistence identity lookup");
+      throw new Error("run was retired");
+    },
+  }, { env: LIVE, run: recorded.run });
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.problem, /final handoff authority validation failed.*run was retired/);
+  assert.equal(recorded.count("agent prompt"), 0);
+});
+
+test("D-04: the exact created pane is persisted before agent start", () => {
+  const { argv, run } = recorder();
+  let atCallback = [];
+  let prepared = null;
+  const outcome = spawnImplementor({
+    name: "impl", placement: WS, prompt: "p",
+    afterCreate: (value) => { prepared = value; atCallback = argv.map((args) => args.slice(0, 2).join(" ")); },
+  }, { env: LIVE, run });
+  assert.equal(outcome.ok, true, outcome.problem);
+  assert.deepEqual(atCallback, ["agent list", "workspace create"], "no agent process exists when the durable callback runs");
+  assert.deepEqual({ ...prepared, preparedAt: "<timestamp>" }, {
+    paneId: "w7Z:p1", workspaceId: "w7Z", tabId: "w7Z:t1", cwd: "/repo.worktrees/fixture",
+    name: "impl", kind: "claude", placement: "workspace", hostScope: "default", parentPaneId: "w4G:p12", preparedAt: "<timestamp>",
+  });
+});
+
+test("D-04: failed pre-start persistence closes the exact empty pane and starts no agent", () => {
+  const recorded = recorder();
+  const outcome = spawnImplementor({
+    name: "impl", placement: WS, prompt: "p",
+    afterCreate: () => { throw new Error("disk full"); },
+  }, { env: LIVE, run: recorded.run });
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.problem, /disk full.*empty pane was closed/);
+  assert.deepEqual(recorded.of("pane close"), ["pane", "close", "w7Z:p1"]);
+  assert.equal(recorded.count("workspace close"), 0);
+  assert.equal(recorded.count("agent start"), 0);
+});
+
+test("D-04: prepared recovery closes only its exact proven-empty pane", () => {
+  const absent = JSON.stringify({ error: { code: "agent_not_found", message: "empty" } });
+  const recorded = recorder({
+    "agent get": { status: 1, stdout: "", stderr: absent },
+    "pane process-info": { status: 0, stderr: "", stdout: JSON.stringify({ result: { process_info: {
+      pane_id: "w7Z:p1", shell_pid: 42, foreground_process_group_id: 42, foreground_processes: [{ pid: 42 }],
+    } } }) },
+  });
+  const closed = closePreparedSpawn({
+    paneId: "w7Z:p1", workspaceId: "w7Z", tabId: "w7Z:t1", cwd: WS.cwd, name: "impl", kind: "claude",
+    placement: "workspace", hostScope: "default", parentPaneId: "w4G:p12", preparedAt: "2026-09-18T00:00:00.000Z",
+  }, { env: LIVE, run: recorded.run });
+  assert.equal(closed.ok, true, closed.problem);
+  assert.deepEqual(recorded.of("pane close"), ["pane", "close", "w7Z:p1"]);
+  assert.equal(recorded.count("workspace close"), 0);
+  assert.equal(recorded.count("tab close"), 0);
 });
 
 // The pane is never a split of the supervisor's: hide lists a pane under the
@@ -185,7 +295,7 @@ test("a worktree run gets a workspace of its own and an in-place run gets a tab,
   const spawned = spawnImplementor({ name: "impl", placement: TAB, prompt: "p" }, { env: LIVE, run: tab.run });
   assert.equal(spawned.ok, true, spawned.problem);
   assert.deepEqual(tab.of("tab create"), ["tab", "create", "--workspace", "w4G", "--cwd", "/repo", "--label", "fixture", "--env", "SASU_HERDR_ROLE=implementor", "--no-focus"]);
-  assert.deepEqual(spawned.value, { paneId: "w4G:p13", workspaceId: "w4G", tabId: "w4G:t9", name: "impl", kind: "claude", lineage: { parentPaneId: "w4G:p12", problem: null } });
+  assert.deepEqual({ ...spawned.value, recordedAt: "<timestamp>" }, { paneId: "w4G:p13", workspaceId: "w4G", tabId: "w4G:t9", name: "impl", kind: "claude", lineage: { parentPaneId: "w4G:p12", problem: null }, sessionId: "impl-session", terminalId: "term_impl", hostScope: "default", recordedAt: "<timestamp>" });
   assert.equal(tab.count("pane split"), 0);
   assert.equal(tab.count("workspace create"), 0);
   assert.deepEqual(tab.of("agent start").slice(5, 7), ["--pane", "w4G:p13"]);
@@ -289,13 +399,14 @@ test("a failed agent start closes only the empty pane it created", () => {
   const outcome = spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run: workspace.run });
   assert.equal(outcome.ok, false);
   assert.match(outcome.problem, /no shell prompt/);
-  assert.deepEqual(workspace.of("workspace close"), ["workspace", "close", "w7Z"], "the workspace the dispatch made, not the supervisor's");
-  assert.equal(workspace.count("pane close"), 0);
+  assert.deepEqual(workspace.of("pane close"), ["pane", "close", "w7Z:p1"], "only the exact empty pane is owned by this dispatch");
+  assert.equal(workspace.count("workspace close"), 0);
   assert.match(outcome.problem, /the empty pane was closed/);
 
   const tab = recorder({ "agent start": { status: 1, stdout: "", stderr: "no shell prompt" }, "pane process-info": emptyShell("w4G:p13") });
   spawnImplementor({ name: "impl", placement: TAB, prompt: "p" }, { env: LIVE, run: tab.run });
-  assert.deepEqual(tab.of("tab close"), ["tab", "close", "w4G:t9"], "the tab the dispatch made, never the supervisor's workspace");
+  assert.deepEqual(tab.of("pane close"), ["pane", "close", "w4G:p13"], "only the exact empty pane is owned by this dispatch");
+  assert.equal(tab.count("tab close"), 0);
   assert.equal(tab.count("workspace close"), 0);
 });
 
@@ -411,12 +522,17 @@ const herdrHelp = (args) => {
 
 const binaryProbe = spawnSync("herdr", ["--version"], { encoding: "utf8", timeout: 15_000 });
 const noHerdr = binaryProbe.error?.code === "ENOENT";
+// The `--help` contract needs only the binary. The probes below it need a
+// reachable server: under `sasu implement verify` the suite runs with a
+// scrubbed HOME and no HERDR_SOCKET_PATH, so herdr derives a socket path
+// under the deep suite-runtime HOME and fails on sun_path before it can
+// answer (measured 2026-09-18, run sasu-observer-supervisor). That is the
+// "no live desktop" case, not a contract change, so those probes skip with
+// the reason instead of failing the sealed suite.
+const serverProbe = noHerdr ? null : spawnSync("herdr", ["agent", "list"], { encoding: "utf8", timeout: 15_000 });
+const noServer = noHerdr ? "herdr is not installed" : serverProbe.status !== 0 ? `herdr server not reachable: ${(serverProbe.stderr || serverProbe.stdout).trim().slice(0, 160)}` : false;
 
 test("the argv this adapter sends matches the installed herdr's own contract", { skip: noHerdr ? "herdr is not installed" : false }, () => {
-  const listing = spawnSync("herdr", ["agent", "list"], { encoding: "utf8", timeout: 15_000 });
-  assert.equal(listing.status, 0, "the capability probe's argv must succeed against the installed herdr");
-  assert.doesNotThrow(() => JSON.parse(listing.stdout), "`agent list` is expected to print JSON with no --json flag");
-
   for (const [args, flags] of [
     [["workspace", "create"], ["--cwd", "--label", "--env", "--no-focus"]],
     [["tab", "create"], ["--workspace", "--cwd", "--label", "--env", "--no-focus"]],
@@ -433,6 +549,11 @@ test("the argv this adapter sends matches the installed herdr's own contract", {
       assert.ok(help.includes(flag), `herdr ${args.join(" ")} no longer accepts ${flag}; this adapter still sends it`);
     }
   }
+});
+
+test("the installed herdr answers `agent list` with JSON and no --json flag", { skip: noServer }, () => {
+  assert.equal(serverProbe.status, 0, "the capability probe's argv must succeed against the installed herdr");
+  assert.doesNotThrow(() => JSON.parse(serverProbe.stdout), "`agent list` is expected to print JSON with no --json flag");
 });
 
 
@@ -472,7 +593,7 @@ test("failed startup retains unready, live, and unobservable panes without sendi
   }
 });
 
-test("installed CLI errors use stderr and retain unknown liveness on connection failure", { skip: noHerdr ? "herdr is not installed" : false }, () => {
+test("installed CLI errors use stderr and retain unknown liveness on connection failure", { skip: noServer }, () => {
   const missing = `missing-${process.pid}-${Date.now()}`;
   const read = spawnSync("herdr", ["agent", "read", missing, "--source", "recent-unwrapped", "--lines", "1"], { encoding: "utf8", timeout: 15_000 });
   assert.equal(read.status, 1);

@@ -1167,11 +1167,15 @@ test("every failed judge call records what it was observed reading", async () =>
     `printf '%s\\n' '${event("rg -n value src/allowed.txt", "1:value")}'`,
     `printf '%s\\n' '${event("sed -n '1,40p' src/allowed.txt", "value")}'`,
   ];
-  const timedOut = { ...config, judge: { ...config.judge, timeoutMs: 900 } };
+  // The complete repository suite runs many process-heavy files in parallel.
+  // A 900 ms deadline expired before these two immediate events were consumed
+  // under that load on 2026-09-20, testing scheduler contention instead of
+  // the intended boundary: observed reads followed by a timeout.
+  const timedOut = { ...config, judge: { ...config.judge, timeoutMs: 5_000 } };
 
   // 1. Timeout after real reads: the record must show reads that ended early,
   //    which is what separates this from a call killed by read volume.
-  await withFakeCodex(fakeCodexProgram([...reads, "/bin/sleep 5"]), async (source) => {
+  await withFakeCodex(fakeCodexProgram([...reads, "/bin/sleep 30"]), async (source) => {
     fs.mkdirSync(path.join(source, "src"));
     fs.writeFileSync(path.join(source, "src/allowed.txt"), "value\n");
     await assert.rejects(runJudge(timedOut, "observed:timeout", "routine", "review", validateGapVerdict, {
