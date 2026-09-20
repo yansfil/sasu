@@ -92,6 +92,8 @@ function installedHerdr(run: NonNullable<HerdrEnvironment["run"]>): string {
   return `${version === "" ? "an unreported version" : version}, protocol ${protocol}`;
 }
 
+export const HERDR_TIMEOUT_KILL_SIGNAL = "SIGKILL";
+
 export interface HerdrCapabilities {
   available: boolean;
   /** Per-hole availability, so status can name what specifically is missing. */
@@ -122,7 +124,7 @@ function defaultRun(args: string[], cwd?: string, env: NodeJS.ProcessEnv = proce
     encoding: "utf8",
     shell: false,
     timeout: Math.max(1, Math.min(15_000, Math.floor(timeoutMs))),
-    killSignal: "SIGKILL",
+    killSignal: HERDR_TIMEOUT_KILL_SIGNAL,
   });
   if (executed.error !== undefined) return { status: null, stdout: "", stderr: String(executed.error), errorCode: (executed.error as NodeJS.ErrnoException).code };
   return { status: executed.status, stdout: executed.stdout ?? "", stderr: executed.stderr ?? "" };

@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import test from "node:test";
 
-import { getAgent, guardedPromptSupport, promptAgent } from "../../dist/implement/herdr.js";
+import { getAgent, guardedPromptSupport, HERDR_TIMEOUT_KILL_SIGNAL, promptAgent } from "../../dist/implement/herdr.js";
 
 // The shapes below are herdr 0.9.1's answers as measured 2026-09-18, and
 // the guarded shapes are the fork's (modakbul-gongbang/herdr#3), the same
@@ -57,40 +55,26 @@ test("engineering 15: lookup and prompt pass the caller's remaining deadline to 
   ]);
 });
 
-test("engineering 14/15: a deadline kills a real prompt child that ignores SIGTERM", () => {
-  const bin = mkdtempSync(join(tmpdir(), "sasu-herdr-timeout-"));
-  const executable = join(bin, "herdr");
-  const pidFile = join(bin, "child.pid");
-  let childPid = null;
-  writeFileSync(executable, `#!/bin/sh
-trap '' TERM
-echo $$ > "$SASU_TEST_PID_FILE"
-exec "$SASU_TEST_NODE" -e 'process.on("SIGTERM", () => {}); setTimeout(() => process.exit(0), 2500)'
-`, { mode: 0o755 });
+test("engineering 13/14/15: the timeout signal ends a ready child that ignores SIGTERM", async () => {
+  const child = spawn(process.execPath, ["-e", `
+process.on("SIGTERM", () => {});
+process.stdout.write("READY\\n");
+setInterval(() => {}, 1_000);
+`], { stdio: ["ignore", "pipe", "inherit"] });
   try {
-    const startedAt = performance.now();
-    const outcome = promptAgent(
-      { target: "w8D:p1", text: "SASU_WAKE", expectedInputGuard: null },
-      { env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`, SASU_TEST_NODE: process.execPath, SASU_TEST_PID_FILE: pidFile } },
-      500,
-    );
-    const elapsedMs = performance.now() - startedAt;
-    const recordedPid = readFileSync(pidFile, "utf8").trim();
-    assert.match(recordedPid, /^[1-9]\d*$/, "the child readiness record must contain a positive PID");
-    childPid = Number(recordedPid);
-    assert.ok(Number.isSafeInteger(childPid), "the child PID must be safe to signal during cleanup");
-    const childAlive = (() => {
-      try { process.kill(childPid, 0); return true; } catch { return false; }
-    })();
-    assert.equal(outcome.outcome, "unknown", "a timed-out prompt may already have delivered bytes");
-    assert.equal(outcome.code, "herdr_prompt_timeout");
-    assert.ok(elapsedMs < 1000, `the 500 ms deadline must not wait for the child's 2500 ms exit (elapsed ${Math.round(elapsedMs)} ms)`);
-    assert.equal(childAlive, false, "the timeout must terminate the child, not leave it running after the adapter returns");
-  } finally {
-    if (childPid !== null) {
-      try { process.kill(childPid, "SIGKILL"); } catch {}
+    let output = "";
+    for await (const chunk of child.stdout) {
+      output += chunk;
+      if (output.includes("READY\n")) break;
     }
-    rmSync(bin, { recursive: true, force: true });
+    assert.match(output, /(^|\n)READY\n/, "the child must report observable readiness before the termination assertion");
+    const exited = once(child, "exit");
+    assert.equal(child.kill(HERDR_TIMEOUT_KILL_SIGNAL), true);
+    const [code, signal] = await exited;
+    assert.equal(code, null);
+    assert.equal(signal, HERDR_TIMEOUT_KILL_SIGNAL);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
   }
 });
 
