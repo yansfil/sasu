@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { appendLog, LOG_CAP_BYTES, LOG_EVENT_CAP_BYTES, MAX_UNKNOWN_WAKE_ATTEMPTS, MAX_WAKE_BYTES, processIncarnation, rotateLog, runTick, TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP, TICK_DEADLINE_MS } from "../../dist/supervisor/tick.js";
@@ -146,6 +147,28 @@ test("engineering 11/14: a timezone change cannot steal a live executor and subm
   }
 });
 
+test("engineering 1/11/14: a live unversioned process identity fails closed across an upgrade", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  const now = Date.now();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: new Date(now).toISOString() });
+  const legacy = spawnSync("/bin/ps", ["-o", "lstart=", "-p", String(process.pid)], { encoding: "utf8", env: { ...process.env, LANG: "C", LC_ALL: "C", TZ: "America/Los_Angeles" } });
+  assert.equal(legacy.status, 0);
+  updateIndex(index, (held) => {
+    held.tickExecutor = {
+      operationId: "unversioned-live-executor",
+      pid: process.pid,
+      processIncarnation: `${process.platform}:${legacy.stdout.trim().replace(/\s+/g, " ")}`,
+      startedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + MIN).toISOString(),
+    };
+  });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
+  const result = tick(index, herdr, now);
+  assert.equal(result.executor, "already-running");
+  assert.equal(herdr.prompts.length, 0, "an encoding transition is not positive PID-reuse evidence");
+});
+
 test("B3/engineering 14: a reused PID does not preserve a dead executor lease", () => {
   const index = indexFile();
   updateIndex(index, (held) => {
@@ -175,6 +198,59 @@ test("B3/engineering 1/14: a legacy prior-boot lease recognizes positive PID reu
   const result = tick(index, fakeTickHerdr(), T0);
   assert.equal(result.executor, "ran", "the schema transition cannot strand a pre-incarnation lease after reboot");
   assert.equal(readIndex(index).tickExecutor, null);
+});
+
+test("engineering 1/11/14: a caller timezone cannot steal a live legacy executor", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  const now = Date.now();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: new Date(now).toISOString() });
+  updateIndex(index, (held) => {
+    held.tickExecutor = {
+      operationId: "legacy-live-executor",
+      pid: process.pid,
+      processIncarnation: null,
+      startedAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + MIN).toISOString(),
+    };
+  });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
+  const previous = process.env.TZ;
+  try {
+    process.env.TZ = "America/Los_Angeles";
+    const result = tick(index, herdr, now);
+    assert.equal(result.executor, "already-running");
+    assert.equal(herdr.prompts.length, 0, "the schema transition must preserve one live delivery executor");
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+});
+
+test("engineering 1/11/14: a caller timezone still recovers a positively reused legacy PID", () => {
+  const observed = spawnSync("/bin/ps", ["-o", "lstart=", "-p", String(process.pid)], { encoding: "utf8", env: { ...process.env, LANG: "C", LC_ALL: "C", TZ: "UTC" } });
+  assert.equal(observed.status, 0);
+  const processStartedAt = Date.parse(`${observed.stdout.trim().replace(/\s+/g, " ")} UTC`);
+  assert.equal(Number.isFinite(processStartedAt), true);
+  const index = indexFile();
+  updateIndex(index, (held) => {
+    held.tickExecutor = {
+      operationId: "legacy-reused-executor",
+      pid: process.pid,
+      processIncarnation: null,
+      startedAt: new Date(processStartedAt - MIN).toISOString(),
+      expiresAt: new Date(processStartedAt).toISOString(),
+    };
+  });
+  const previous = process.env.TZ;
+  try {
+    process.env.TZ = "Asia/Seoul";
+    const result = tick(index, fakeTickHerdr(), processStartedAt + MIN);
+    assert.equal(result.executor, "ran", "positive PID reuse evidence cannot be hidden by the caller timezone");
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
 });
 
 test("engineering 10/15: slow external probes persist continuation instead of rescanning forever", () => {

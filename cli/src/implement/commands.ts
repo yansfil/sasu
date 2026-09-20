@@ -596,12 +596,15 @@ function prerequisiteFingerprint(state: ImplementState): string {
   });
 }
 
-function reconcileCurrentDispatchPrerequisites(projectRoot: string, statePath: string, cause: string): ImplementState {
+export function reconcileCurrentDispatchPrerequisites(projectRoot: string, statePath: string, cause: string, afterAuthoritySnapshot?: () => void): ImplementState {
   // state.json and the scheduler index are deliberately separate authority
   // domains. Re-read after reconciliation so a handover between their writes
   // is applied again instead of losing the newer enrollment, as happened in
-  // the round-two absent-child recovery review.
+  // the round-two absent-child recovery review. Capture the generation first:
+  // the later review reproduced a replacement with active verification that
+  // otherwise left state on the new run and the index on the stale run.
   for (let attempt = 0; attempt < 4; attempt += 1) {
+    const expectedEnrollmentId = enrollmentAt(readIndex(indexPath()), statePath)?.enrollmentId ?? null;
     const before = loadState(projectRoot, { state: statePath }).state;
     assertRunOpenForMutation(before);
     if (before.activeVerification !== undefined) throw new DispatchRejected(`verification still active: ${before.activeVerification.attemptId}; dispatch prerequisites changed nothing`);
@@ -609,7 +612,7 @@ function reconcileCurrentDispatchPrerequisites(projectRoot: string, statePath: s
       ?? before.supervision?.observer.sessionId
       ?? before.ownerSessionId
       ?? currentSessionId();
-    const expectedEnrollmentId = enrollmentAt(readIndex(indexPath()), statePath)?.enrollmentId ?? null;
+    afterAuthoritySnapshot?.();
     writeActivePointer(projectRoot, before, observerSession);
     const desired = desiredEnrollment(before);
     const reconciled = reconcileRunEnrollment(indexPath(), { statePath, desired, expectedEnrollmentId, at: nowIso(), cause });

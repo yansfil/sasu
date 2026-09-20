@@ -10,7 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { CLI, git, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
 import { installFakeHerdr } from "../helpers/fake-herdr.mjs";
 import { attemptFixture } from "../helpers/implement-state.mjs";
-import { repairPendingDispatchPrerequisites } from "../../dist/implement/commands.js";
+import { reconcileCurrentDispatchPrerequisites, repairPendingDispatchPrerequisites } from "../../dist/implement/commands.js";
 import { enrollRun, readIndex, unenrollRun } from "../../dist/supervisor/index.js";
 
 const OBSERVER = "observer-session";
@@ -349,6 +349,48 @@ test("D-04/engineering 11: prerequisite repair binds enrollment generation to fr
   }
   assert.equal(state(root).pendingDispatch.runInstanceId, "replacement-instance");
   assert.deepEqual(readIndex(index).entries.map((entry) => entry.runInstanceId), ["replacement-instance"], "stale recovery cannot claim a generation created for newer authority");
+});
+
+test("D-04/engineering 11: current prerequisite reconciliation binds generation before a later refusal", () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, home } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  assert.equal(dispatch(root, { ...env, HERDR_FAKE_PROMPT_FAIL: "1" }).status, 1);
+  const index = path.join(home, ".sasu", "supervisor", "index.json");
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    assert.throws(() => reconcileCurrentDispatchPrerequisites(root, path.join(root, STATE_PATH), "test reconciliation", () => {
+      const replacement = state(root);
+      replacement.pendingDispatch.runInstanceId = "replacement-current-instance";
+      const attempt = attemptFixture({ id: "replacement-verification" });
+      replacement.verificationAttempts.push(attempt);
+      replacement.activeVerification = {
+        token: "replacement-verification-token",
+        attemptId: attempt.id,
+        pid: process.pid,
+        hostname: "test-host",
+        startedAt: attempt.startedAt,
+        inputFingerprint: attempt.inputFingerprint,
+        prdSha256: attempt.prdSha256,
+        executionPids: [],
+        pendingSpawns: 0,
+      };
+      fs.writeFileSync(path.join(root, STATE_PATH), `${JSON.stringify(replacement, null, 2)}\n`);
+      enrollRun(index, {
+        statePath: path.join(root, STATE_PATH),
+        runInstanceId: replacement.pendingDispatch.runInstanceId,
+        recoveryOwner: replacement.pendingDispatch.recoveryOwner,
+        at: new Date().toISOString(),
+      });
+    }), /verification still active/);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+  }
+  assert.equal(state(root).pendingDispatch.runInstanceId, "replacement-current-instance");
+  assert.deepEqual(readIndex(index).entries.map((entry) => entry.runInstanceId), ["replacement-current-instance"], "a later actionable refusal cannot leave the replacement enrollment overwritten");
 });
 
 test("D-04/engineering 10: navigation failure leaves absent recovery retryable", () => {

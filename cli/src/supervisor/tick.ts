@@ -87,6 +87,15 @@ function processStartDescription(pid: number): string | null {
   return null;
 }
 
+function legacyProcessStartEpochMs(pid: number): number {
+  const description = processStartDescription(pid);
+  if (description === null) return Number.NaN;
+  // processStartDescription deliberately asks ps for UTC text. Date.parse
+  // otherwise interprets that timezone-less legacy format in the caller's
+  // timezone and can both steal live leases and preserve reused PIDs.
+  return Date.parse(`${description} UTC`);
+}
+
 /**
  * Identify one OS process incarnation, not merely its reusable numeric PID.
  * The round-two review reproduced a prior-boot lease blocking every tick for
@@ -101,14 +110,26 @@ export function processIncarnation(pid: number): string | null {
       const closing = stat.lastIndexOf(")");
       const fields = closing === -1 ? [] : stat.slice(closing + 1).trim().split(/\s+/);
       const startTicks = fields[19];
-      if (boot !== "" && startTicks !== undefined) return `linux:${boot}:${startTicks}`;
+      if (boot !== "" && startTicks !== undefined) return `linux:proc:${boot}:${startTicks}`;
     } catch {}
     // A ps fallback uses a different identity scheme. Treat a temporarily
     // unreadable procfs identity as unknown so a live owner fails closed.
     return null;
   }
   const started = processStartDescription(pid);
-  return started === null ? null : `${process.platform}:${started}`;
+  return started === null ? null : `${process.platform}:ps-utc:${started}`;
+}
+
+function storedProcessIncarnation(value: string | null): { kind: "legacy" } | { kind: "exact"; value: string } {
+  if (value === null) return { kind: "legacy" };
+  if (value.startsWith("linux:proc:") || value.startsWith(`${process.platform}:ps-utc:`)) return { kind: "exact", value };
+  const priorLinuxProc = /^linux:([0-9a-f-]{16,}):(\d+)$/i.exec(value);
+  if (priorLinuxProc !== null) return { kind: "exact", value: `linux:proc:${priorLinuxProc[1]}:${priorLinuxProc[2]}` };
+  // Earlier builds stored timezone-dependent ps text without a scheme.
+  // Its bytes cannot prove identity, but the process start can still prove
+  // positive PID reuse relative to the durable lease.
+  if (value.startsWith(`${process.platform}:`)) return { kind: "legacy" };
+  return { kind: "exact", value };
 }
 
 export function rotateLog(file: string): void {
@@ -593,15 +614,16 @@ export function runTick(options: TickOptions): TickResult {
   const currentProcessIncarnation = processIncarnation(process.pid);
   const claimed = updateIndex(options.indexFile, (index) => {
     const lease = index.tickExecutor;
+    const storedIncarnation = storedProcessIncarnation(lease?.processIncarnation ?? null);
     let ownerAlive = false;
     if (lease !== null) {
       try { process.kill(lease.pid, 0); ownerAlive = true; } catch (error) { ownerAlive = (error as NodeJS.ErrnoException).code === "EPERM"; }
     }
-    const observedIncarnation = lease !== null && ownerAlive && lease.processIncarnation !== null
+    const observedIncarnation = lease !== null && ownerAlive && storedIncarnation.kind === "exact"
       ? processIncarnation(lease.pid)
       : null;
-    const legacyProcessStartedAt = lease !== null && ownerAlive && lease.processIncarnation === null
-      ? Date.parse(processStartDescription(lease.pid) ?? "")
+    const legacyProcessStartedAt = lease !== null && ownerAlive && storedIncarnation.kind === "legacy"
+      ? legacyProcessStartEpochMs(lease.pid)
       : Number.NaN;
     // A paused owner may outlive the nominal deadline while still inside a
     // synchronous external call. Stealing from that exact process creates two
@@ -609,10 +631,10 @@ export function runTick(options: TickOptions): TickResult {
     // Legacy leases retain exclusion when that PID predates the lease, but a
     // process started after the durable lease is positive PID-reuse evidence.
     // Unobservable incarnations fail closed until the PID is absent.
-    const legacyOwnerCouldMatch = lease !== null && lease.processIncarnation === null
+    const legacyOwnerCouldMatch = lease !== null && storedIncarnation.kind === "legacy"
       && (!Number.isFinite(legacyProcessStartedAt) || legacyProcessStartedAt <= Date.parse(lease.startedAt) + 1_000);
     const exactOwnerAlive = lease !== null && ownerAlive
-      && (legacyOwnerCouldMatch || (lease.processIncarnation !== null && (observedIncarnation === null || observedIncarnation === lease.processIncarnation)));
+      && (legacyOwnerCouldMatch || (storedIncarnation.kind === "exact" && (observedIncarnation === null || observedIncarnation === storedIncarnation.value)));
     if (exactOwnerAlive) return;
     index.tickExecutor = { operationId, pid: process.pid, processIncarnation: currentProcessIncarnation, startedAt: new Date(started).toISOString(), expiresAt: new Date(started + TICK_EXECUTOR_LEASE_MS).toISOString() };
   });
