@@ -18,7 +18,8 @@ const GAP_JSON_CONTRACT = `Reply with ONLY a JSON object, no prose, no code fenc
       "severity": "P0" | "P1" | "P2",
       "missing": "<one sentence: the concrete gap>",
       "recommendation": "<one sentence: how to close it>",
-      "requiresHuman": true | false
+      "requiresHuman": true | false,
+      "disposition": "agent_fix" | "delegated_assumption" | "human_authority"
     }
   ]
 }
@@ -42,12 +43,21 @@ Rules:
   duration, lifecycle, compatibility, security, cost, or launch effect - report the unsupported part.
   Treat invented consent as P0 because it corrupts the canonical PRD source, including on a re-run.
 - PASS may carry P2 notes only.
-- requiresHuman is true whenever closure needs explicit user intent or approval, including product
-  behavior, scope, data lifecycle, public or provider contracts, compatibility or deprecation,
-  auth or security, cost, launch, and taste judgments.
-- requiresHuman: false does not authorize the agent to invent or silently resolve a policy. Use false
-  only when exact repository evidence settles the gap or the remaining choice is a reversible internal
-  P2 engineering detail; otherwise recommend explicit confirmation or deferral.
+- Classify resolution separately from severity using disposition:
+  agent_fix: the author can repair fidelity, contradictions, unclear wording, missing observable
+  outcomes, or unsupported claims using existing intent and evidence. requiresHuman must be false.
+  delegated_assumption: a reversible choice within the stated intent, including important or
+  user-visible behavior, UX, layout and taste. requiresHuman must be true; a recorded delegation
+  lets the harness retain it as a vetoable agent-owned assumption without asking the user.
+  human_authority: genuinely missing credentials, money/cost approval, production-data authority,
+  destructive/irreversible effects, security/privacy/auth policy, public contract/migration, or an
+  unresolvable core-intent contradiction. requiresHuman must be true. Delegation never supplies it.
+- P0/P1/P2 describes impact, not who may decide. Importance or visibility alone does not require
+  human authority. Never label an ordinary reversible choice P0 to force a question.
+- A recorded agent-owned assumption is not invented consent. Falsely calling it user-approved is
+  an author-fixable fidelity defect; preserve the assumption label instead of requesting approval.
+- Without delegation, reversible choices still require a gap-audit decision or explicit deferral.
+- requiresHuman: false does not authorize invented consent or expansion beyond the established intent.
 - Never output a numeric score of any kind.`;
 
 /** An open finding carried into a rerun, by its harness id. */
@@ -313,6 +323,10 @@ This is a pre-implementation spec gate. Judge whether the PRD states clear obser
 product decisions. Do not require completed runtime evidence, production execution, exact DOM selectors,
 exact command lines, exact file names, or low-level implementation choices that a competent implementer
 can derive safely from the repository. Those belong to implementation and verify, not PRD approval.
+Spec NEVER asks the user and never presents NEEDS_HUMAN.
+Return author-fixable fidelity and self-containment defects as agent_fix for PRD repair.
+If genuinely new missing product authority remains, classify it human_authority; the harness routes
+it back through gap-audit, the single user-facing decision boundary. Do not invent an answer.
 
 ${axes}
 

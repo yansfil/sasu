@@ -156,6 +156,13 @@ Never treat an agent inference as user intent.
 
 ## Decision Register
 
+Gap-audit is the single user-facing decision boundary for the PRD gates, including new authority referred back by spec.
+In a delegated `$please` run, record the verbatim invocation with `sasu gate delegate` before auditing.
+That authority permits reversible choices within the intent to be recorded as vetoable agent-owned assumptions even when important or user-visible.
+P0/P1/P2 describes impact, not authority; a resolved material assumption is permitted under recorded delegation when the choice is reversible.
+Credentials, money/cost, production data, destructive/irreversible effects, security/privacy/auth policy, public contract/migration, and an unresolvable core-intent contradiction still require real authority.
+The ordinary silent-default rules below apply when no delegation exists and never broaden these hard boundaries.
+
 Maintain one compact Decision Register in qa-log.md.
 Create nodes only for material facts, decisions, assumptions, risks, and verification boundaries.
 Do not create generic filler nodes.
@@ -180,8 +187,10 @@ Use Status only for lifecycle state; a permitted P2 adopted default is Kind `ass
 
 Only silently adopt a default when it is reversible, does not change user-visible behavior, scope, public or provider contract, data shape, auth, security, cost, or launch criteria, and has an explicit verification path.
 Classify every silently adopted default as P2.
-Never mark a P0 or P1 assumption resolved: ask for explicit user agreement and record it as a decision, convert exact repository evidence into a fact, or defer the assumption with an owner and revisit trigger.
-Request explicit confirmation whenever a proposed resolution selects user-visible behavior, data lifecycle, a public or provider contract, compatibility or deprecation, auth or security, cost, or launch intent.
+Without recorded delegation, resolve a P0/P1 choice by explicit user agreement recorded as a decision, exact repository evidence recorded as a fact, or deferral with an owner and revisit trigger.
+Without recorded delegation, request explicit confirmation when a proposed resolution selects user-visible behavior or taste.
+Always obtain missing authority for credentials, money/cost, production data, destructive/irreversible effects, security/privacy/auth policy, public contract/migration, or an unresolvable core-intent contradiction.
+Local reversible lifecycle and compatibility details within the intent remain delegable assumptions.
 Record every adopted default as Kind assumption with its source and revisit trigger.
 Treat a short affirmative answer such as `yes`, `응`, or `그렇게 하자` as acceptance only when it unambiguously refers to the immediately preceding explicit recommendation.
 Record that source as a user-accepted recommendation in the relevant Q# rather than as an agent default.
@@ -417,11 +426,16 @@ judge and never consume the retry budget.
   - `PASS`: the cycle is sealed.
 - A gap finding is not an answer; treat it only as evidence that a decision or source is missing.
 - `requiresHuman: false` does not authorize resolution.
-  Close such a finding only with an explicit user answer, exact repository evidence recorded as a fact, or a reversible P2 internal default that satisfies the silent-default rule.
+  Close such a finding with an explicit user answer, exact repository evidence recorded as a fact, a reversible choice under recorded delegation, or a P2 internal default that satisfies the ordinary silent-default rule.
   Otherwise ask one focused question or defer it with an owner and revisit trigger, then re-run.
 - Never promote a judge recommendation into a user decision or strengthen its scope, duration, lifecycle, compatibility, security, cost, or launch policy beyond the cited answer.
 - Prefer `--json` when consuming the result programmatically: it returns a structured object (top-level `contractVersion`, a `prelint` key separate from judge findings, verdict/attempt state) instead of scraping text.
-- A finding marked `needs human decision` must go to the user; never invent the answer.
+- A gap-audit finding still marked `needs human decision` must go to the user; never invent the answer.
+  A `delegated_assumption` finding under recorded delegation becomes a visible vetoable assumption without a user round trip; the original severity and source remain in the gate record.
+  Record already chosen defaults before the audit and carry recorded assumptions into the PRD Decisions table; do not edit a sealed document solely to chase advisory notes.
+- A spec `nextGate: gap-audit` referral is an explicit CLI-owned exception to ordinary seal admission.
+  Run gap-audit on the same qa-log; it reviews the new authority referral and existing open set, and only it may issue `NEEDS_HUMAN`.
+  Answer there, update the PRD, and resume spec; never fabricate user approval to reopen a gate.
 - Only a later explicit user change request may open another cycle with
   `sasu gate reopen --slug <topic-slug> --gate gap-audit --evidence "<the user's words>"`; it works on a sealed log too.
   Reopen evidence stays in the gate ledger and is supplied directly to the judge; reopening does not create a Raw Q&A answer or invalidate the sibling gate by itself.

@@ -560,13 +560,13 @@ test("gate reopen --json and gate answer --json say what they did beside the NOT
   assert.equal(parsed.status.verdict, null);
   assert.equal(parsed.status.reviewCycle, 2);
 
-  const asked = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"], {
+  const asked = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md", "--json"], {
     stub: stubFile(dir, BLOCK_RESPONSE),
   });
   assert.equal(JSON.parse(asked.stdout).status.effective, "NEEDS_HUMAN", asked.stdout + asked.stderr);
-  const answered = JSON.parse(runCli(dir, ["gate", "answer", "--slug", "fixture", "--gate", "spec", "--evidence", "Retain for 30 days.", "--json"], {}).stdout);
+  const answered = JSON.parse(runCli(dir, ["gate", "answer", "--slug", "fixture", "--gate", "gap-audit", "--evidence", "Retain for 30 days.", "--json"], {}).stdout);
   assert.equal(answered.answered, true);
-  assert.equal(answered.gate, "spec");
+  assert.equal(answered.gate, "gap-audit");
   assert.equal(answered.status.effective, "PASS");
 });
 
@@ -605,7 +605,7 @@ test("the standalone semantic verify gate is explicitly retired", () => {
   assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "fixture")), false);
 });
 
-test("delegated run: --assume-human-findings converts non-P0 human findings to a recorded ledger and proceeds", () => {
+test("delegated run: --assume-human-findings records explicitly reversible choices and proceeds", () => {
   const dir = makeProject();
   const humanBlock = {
     verdict: "BLOCK",
@@ -616,6 +616,7 @@ test("delegated run: --assume-human-findings converts non-P0 human findings to a
         missing: "delivery scope (receipt-only vs PR) unconfirmed",
         recommendation: "confirm the delivery scope with the user",
         requiresHuman: true,
+        disposition: "delegated_assumption",
       },
     ],
   };
@@ -634,7 +635,7 @@ test("delegated run: --assume-human-findings converts non-P0 human findings to a
   assert.equal(record.humanAssumptions[0].findings[0].missing, "delivery scope (receipt-only vs PR) unconfirmed");
   assert.equal(record.humanAssumptions[0].findings[0].severity, "P1", "the ledger keeps the judged severity");
   assert.deepEqual(record.findings, [], "nothing stays open");
-  assert.equal(record.warnings[0].severity, "P2", "the recorded finding is the demoted advisory");
+  assert.equal(record.warnings[0].severity, "P1", "authority disposition preserves original impact");
 
   // The substitution stays loud on every status read.
   const status = runCli(dir, ["gate", "status", "--slug", "fixture"], {});
@@ -656,6 +657,7 @@ test("delegated run: a stored `gate delegate` record applies without the per-cal
         missing: "delivery scope unconfirmed",
         recommendation: "confirm with the user",
         requiresHuman: true,
+        disposition: "delegated_assumption",
       },
     ],
   };
@@ -701,19 +703,19 @@ test("delegated run: the stored invocation cannot be replaced by a per-call plac
 // changed after this gate passed" for gap-audit, which then refused
 // `implement start`. An unanchored turn backs no decision yet; the seal moves
 // when the answer is normalized into the register, not when it is written.
-test("a sibling gate's recorded answer does not stale a sealed gate; an anchored answer still does", () => {
+test("gap-audit's unanchored answer does not stale sealed spec; an anchored answer still does", () => {
   const dir = makeProject();
-  const passed = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md", "--json"], {
+  const passed = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"], {
     stub: stubFile(dir, { verdict: "PASS", findings: [] }),
   });
   assert.equal(passed.status, 0, passed.stdout + passed.stderr);
-  const asked = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"], {
+  const asked = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "qa-log.md", "--json"], {
     stub: stubFile(dir, BLOCK_RESPONSE),
   });
   assert.equal(JSON.parse(asked.stdout).status.effective, "NEEDS_HUMAN", asked.stdout + asked.stderr);
-  const answered = runCli(dir, ["gate", "answer", "--slug", "fixture", "--gate", "spec", "--evidence", "Deleted tasks are retained for 30 days, then purged.", "--json"], {});
+  const answered = runCli(dir, ["gate", "answer", "--slug", "fixture", "--gate", "gap-audit", "--evidence", "Deleted tasks are retained for 30 days, then purged.", "--json"], {});
   assert.equal(answered.status, 0, answered.stdout + answered.stderr);
-  assert.match(fs.readFileSync(path.join(dir, "qa-log.md"), "utf8"), /### Q3: spec human decision bundle[\s\S]*- decision_ids: none/, "the answer landed as an unanchored turn");
+  assert.match(fs.readFileSync(path.join(dir, "qa-log.md"), "utf8"), /### Q3: gap-audit human decision bundle[\s\S]*- decision_ids: none/, "the answer landed as an unanchored turn");
 
   const status = JSON.parse(runCli(dir, ["gate", "status", "--slug", "fixture", "--json"], {}).stdout);
   assert.equal(status["gap-audit"].effective, "PASS", JSON.stringify(status["gap-audit"]));

@@ -329,6 +329,8 @@ export interface Finding {
   missing: string;
   recommendation: string;
   requiresHuman: boolean;
+  /** Resolution authority is independent of impact. Missing on legacy replies: fail closed. */
+  disposition?: "agent_fix" | "delegated_assumption" | "human_authority";
 }
 
 export interface GapVerdict {
@@ -363,12 +365,17 @@ export function validateGapVerdict(value: unknown): GapVerdict | string {
     const id = asString(f["id"]);
     const requiresHuman = f["requiresHuman"];
     if (typeof requiresHuman !== "boolean") return `findings[${i}].requiresHuman must be a boolean`;
+    const disposition = f["disposition"];
+    if (disposition !== undefined && disposition !== "agent_fix" && disposition !== "delegated_assumption" && disposition !== "human_authority") {
+      return `findings[${i}].disposition must be agent_fix|delegated_assumption|human_authority`;
+    }
     findings.push({
       area,
       severity,
       missing,
       recommendation: asString(f["recommendation"]) ?? "",
       requiresHuman,
+      ...(disposition !== undefined ? { disposition } : {}),
       ...(id !== null && id.trim() !== "" ? { id: id.trim() } : {}),
     });
   }

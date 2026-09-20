@@ -46,13 +46,33 @@ test("merge: P2-only findings across lanes stay a PASS with advisories", () => {
   assert.equal(merged.findings.length, 2);
 });
 
-test("merge: a human-required P2 is promoted to P1 and blocks", () => {
+test("merge: human authority blocks independently of P2 severity", () => {
   const merged = mergeLaneFindings([
     { laneId: "a", findings: [finding({ severity: "P2", requiresHuman: true })] },
   ]);
   assert.equal(merged.verdict, "BLOCK");
-  assert.equal(merged.findings[0].severity, "P1");
+  assert.equal(merged.findings[0].severity, "P2");
   assert.equal(merged.findings[0].requiresHuman, true);
+});
+
+test("duplicate lane disagreement cannot delegate away an author defect or hard authority", () => {
+  const choices = [
+    finding({ severity: "P0", disposition: "agent_fix", requiresHuman: false }),
+    finding({ severity: "P1", disposition: "delegated_assumption", requiresHuman: true }),
+  ];
+  for (const ordered of [choices, [...choices].reverse()]) {
+    const outcome = applyOpenSetContract({ gate: "spec", prior: [], rerun: false, assumeEvidence: "$please", lanes: ordered.map((value, i) => ({ laneId: String(i), blocking: true, decisionsChanged: false, findings: [value] })) });
+    assert.equal(outcome.verdict, "BLOCK");
+    assert.equal(outcome.findings[0].disposition, "agent_fix");
+    assert.equal(outcome.findings[0].severity, "P0");
+    assert.deepEqual(outcome.assumed, []);
+    const merged = mergeLaneFindings([
+      ...ordered.map((value, i) => ({ laneId: String(i), findings: [value] })),
+      { laneId: "authority", findings: [finding({ severity: "P2", disposition: "human_authority", requiresHuman: true })] },
+    ]);
+    assert.equal(merged.findings[0].disposition, "human_authority");
+    assert.equal(merged.findings[0].requiresHuman, true);
+  }
 });
 
 test("merge: normalized-equal findings dedupe keeping the higher severity", () => {

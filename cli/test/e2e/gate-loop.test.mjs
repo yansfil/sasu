@@ -69,6 +69,97 @@ function lastArtifact(dir) {
 
 const PASS = { verdict: "PASS", findings: [] };
 
+test("spec authority returns through sealed gap-audit, the user answers there, and spec resumes", () => {
+  const dir = makeProject();
+  const specArgs = ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"];
+  assert.equal(gapAudit(dir, PASS).status, 0);
+  const hard = finding("fidelity", "P1", "missing production-data authority", true, { disposition: "human_authority" });
+  const blocked = runCli(dir, specArgs, { stub: stubFile(dir, { byPurpose: { "lane:fidelity": { verdict: "BLOCK", findings: [hard] }, default: PASS } }) });
+  assert.equal(blocked.status, 1, blocked.stdout + blocked.stderr);
+  const spec = JSON.parse(blocked.stdout).status;
+  assert.equal(spec.verdict, "BLOCK");
+  assert.equal(gatesState(dir).gates.spec.verdict, "BLOCK", "new spec records must not create legacy NEEDS_HUMAN state");
+  assert.equal(spec.requiresHuman, false);
+  assert.equal(spec.nextGate, "gap-audit");
+  const shown = runCli(dir, ["gate", "status", "--slug", "fixture"]);
+  assert.match(shown.stdout, /NEXT GATE: gap-audit/);
+  assert.doesNotMatch(shown.stdout, /\[gate:spec\] NEEDS_HUMAN|ask the user/);
+  const calls = gatesState(dir).judgeCalls.length;
+  const premature = runCli(dir, specArgs, { stub: stubFile(dir, PASS) });
+  assert.equal(JSON.parse(premature.stdout).error.code, "gap-audit-required");
+  assert.equal(gatesState(dir).judgeCalls.length, calls);
+  const wrongAnswer = runCli(dir, ["gate", "answer", "--slug", "fixture", "--gate", "spec", "--evidence", "go ahead"]);
+  assert.notEqual(wrongAnswer.status, 0);
+  assert.match(wrongAnswer.stderr, /retired/);
+  const audited = gapAudit(dir, { byPurpose: { "lane:risk-ops-verification": { verdict: "BLOCK", findings: [hard] }, default: PASS } });
+  assert.equal(JSON.parse(audited.stdout).status.verdict, "NEEDS_HUMAN", audited.stdout + audited.stderr);
+  assert.equal(gatesState(dir).gates["gap-audit"].reviewReopens?.length ?? 0, 0, "no fabricated user reopen");
+  assert.match(gatesState(dir).gates["gap-audit"].reviewedSpecReferral, /^[a-f0-9]{64}$/);
+  assert.equal(lastArtifact(dir).specReferral.findings[0].missing, hard.missing, "the reviewed referral remains auditable after spec closes");
+  const qaPath = path.join(dir, "qa-log.md");
+  fs.writeFileSync(qaPath, fs.readFileSync(qaPath, "utf8").replace(
+    "## Raw Q&A",
+    "| D-05 | decision | data | use synthetic local data only; no production data | P1 | user: synthetic local data only | resolved | Risks |\n\n## Raw Q&A",
+  ));
+  const answered = runCli(dir, ["gate", "answer", "--slug", "fixture", "--gate", "gap-audit", "--evidence", "Use synthetic local data only; production data remains out of scope.", "--json"]);
+  assert.equal(answered.status, 0, answered.stdout + answered.stderr);
+  const prdPath = path.join(dir, "prd.md");
+  fs.writeFileSync(prdPath, fs.readFileSync(prdPath, "utf8").replace("## Risks", "## Risks\n\nUse synthetic local data only; production-data use is excluded."));
+  const resumed = runCli(dir, specArgs, { stub: stubFile(dir, PASS) });
+  assert.equal(resumed.status, 0, resumed.stdout + resumed.stderr);
+  assert.equal(JSON.parse(resumed.stdout).status.verdict, "PASS");
+  const count = gatesState(dir).judgeCalls.length;
+  assert.equal(gapAudit(dir, PASS).status, 0);
+  assert.equal(gatesState(dir).judgeCalls.length, count, "resolved referral does not reopen again");
+});
+
+test("spec author-fixable P0 stays BLOCK without becoming a user question", () => {
+  const dir = makeProject();
+  const defect = finding("fidelity", "P0", "PRD contradicts the recorded accepted behavior", false, { disposition: "agent_fix" });
+  const result = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"], {
+    stub: stubFile(dir, { byPurpose: { "lane:fidelity": { verdict: "BLOCK", findings: [defect] }, default: PASS } }),
+  });
+  const status = JSON.parse(result.stdout).status;
+  assert.equal(status.verdict, "BLOCK");
+  assert.equal(status.requiresHuman, false);
+  assert.equal(status.nextGate, undefined);
+});
+
+for (const priority of ["P0", "P1"]) test(`a recorded delegated ${priority} assumption passes prelint without relabeling it as consent`, () => {
+  const dir = makeProject();
+  const log = path.join(dir, "qa-log.md");
+  fs.writeFileSync(log, QA_FIXTURE.replace(
+    "| D-03 | fact | data | tasks persist to local storage as JSON | P2 | repo: src/store.js | resolved | R3 |",
+    `| D-03 | assumption | ux | use an overflow menu for crowded tabs | ${priority} | agent default; reversible; user may veto | resolved | R3; revisit on user veto |`,
+  ));
+  const unapproved = gapAudit(dir, PASS);
+  assert.equal(JSON.parse(unapproved.stdout).prelint.findings.some((f) => f.rule === "qa-resolved-material-assumption"), true);
+  assert.equal(runCli(dir, ["gate", "delegate", "--slug", "fixture", "--evidence", "$please choose reversible details within the intent"]).status, 0);
+  const approved = gapAudit(dir, PASS);
+  assert.equal(approved.status, 0, approved.stdout + approved.stderr);
+  assert.equal(JSON.parse(approved.stdout).prelint.ok, true);
+  assert.match(fs.readFileSync(log, "utf8"), /\| assumption \| ux \| use an overflow menu/);
+});
+
+for (const severity of ["P0", "P1"]) test(`delegated user-visible ${severity} choice is assumed while P2 hard authority still asks`, () => {
+  const dir = makeProject();
+  assert.equal(runCli(dir, ["gate", "delegate", "--slug", "fixture", "--evidence", "$please choose reversible details within the intent"]).status, 0);
+  const reversible = finding("ux", severity, "choose overflow navigation behavior", true, { disposition: "delegated_assumption" });
+  const first = gapAudit(dir, { byPurpose: { "lane:ux-behavior": { verdict: "BLOCK", findings: [reversible] }, default: PASS } });
+  assert.equal(first.status, 0, first.stdout + first.stderr);
+  const record = gatesState(dir).gates["gap-audit"];
+  assert.equal(record.humanAssumptions[0].findings[0].severity, severity);
+  assert.equal(record.warnings[0].severity, severity);
+  assert.equal(record.warnings[0].requiresHuman, false);
+  const hard = finding("fidelity", "P2", "missing privacy policy authority", true, { disposition: "human_authority" });
+  const result = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"], {
+    stub: stubFile(dir, { byPurpose: { "lane:fidelity": { verdict: "PASS", findings: [hard] }, default: PASS } }),
+  });
+  assert.equal(JSON.parse(result.stdout).status.nextGate, "gap-audit");
+  const audited = gapAudit(dir, { byPurpose: { "lane:risk-ops-verification": { verdict: "PASS", findings: [hard] }, default: PASS } });
+  assert.equal(JSON.parse(audited.stdout).status.verdict, "NEEDS_HUMAN");
+});
+
 function finding(area, severity, missing, requiresHuman, extra = {}) {
   return { area, severity, missing, recommendation: `decide: ${missing}`, requiresHuman, ...extra };
 }
@@ -318,7 +409,7 @@ test("AC6: a data-tech lane requiresHuman finding joins the human bundle and is 
   assert.deepEqual(status.warnings, []);
 });
 
-test("AC6: a data-tech lane P2 marked requiresHuman is promoted into the bundle rather than warned away", () => {
+test("AC6: a data-tech lane P2 needing authority joins the bundle without severity promotion", () => {
   const dir = makeProject();
   const result = gapAudit(dir, {
     byPurpose: {
@@ -329,7 +420,7 @@ test("AC6: a data-tech lane P2 marked requiresHuman is promoted into the bundle 
   assert.equal(result.status, 1, result.stdout + result.stderr);
   const status = JSON.parse(result.stdout).status;
   assert.equal(status.verdict, "NEEDS_HUMAN");
-  assert.equal(status.findings[0].severity, "P1");
+  assert.equal(status.findings[0].severity, "P2");
 });
 
 function sealPass(dir) {

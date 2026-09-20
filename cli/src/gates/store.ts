@@ -131,12 +131,14 @@ export interface VouchedTreeFingerprint {
 
 
 export interface GateRecord {
+  /** Gap-audit alone owns questions; this pins the spec referral actually reviewed. */
+  reviewedSpecReferral?: string;
   /**
    * PRD gates (gap-audit/spec) end a judged round in one of three states
    * derived from the open findings set alone: PASS (empty, sealed),
-   * NEEDS_HUMAN (every open finding requires a human decision - the bundle
-   * goes to the user and `gate answer` seals it without another judge call),
-   * or BLOCK (at least one agent-fixable finding is open). There is no round
+   * NEEDS_HUMAN (gap-audit only: every open finding requires a decision),
+   * or BLOCK (author repair, or spec authority routed through gap-audit).
+   * Legacy spec NEEDS_HUMAN records are routed the same way. There is no round
    * budget: the set can only shrink between reruns (see priorFindingsFor /
    * applyOpenSetContract in commands.ts), so the loop is bounded by the
    * document, not by a counter. Verify keeps PASS/FAIL. ERROR is a judge
@@ -606,6 +608,8 @@ export interface GateStatusView {
    */
   cycleExhausted: boolean;
   requiresHuman: boolean;
+  /** Actionable routing, never a spec-owned question bundle. */
+  nextGate?: "gap-audit";
   /** PRD gates: the open findings set (see GateRecord.findings). */
   findings: Finding[];
   /** PRD gates: recorded advisories that do not block (see GateRecord.warnings). */
@@ -634,6 +638,25 @@ export function isSealed(record: GateRecord): boolean {
   return record.verdict === "PASS";
 }
 
+/** Derive a bounded referral from the existing open set, including legacy human findings. */
+export function specReferral(state: GatesState): { sha256: string; findings: Finding[] } | null {
+  const record = state.gates.spec;
+  if (!record || record.verdict === "PASS" || record.overridden) return null;
+  const findings = record.findings.filter((finding) => finding.requiresHuman);
+  return findings.length === 0 ? null : { sha256: sha256Of(JSON.stringify(findings)), findings };
+}
+
+/** Caller holds gap-audit's run lock. A spec referral earns one targeted delta, not a user reopen. */
+export function admitSpecReferral(store: GateStore, sha256: string): GatesState {
+  return store.update((state) => {
+    const record = state.gates["gap-audit"];
+    if (record && record.reviewedSpecReferral !== sha256 && isSealed(record)) {
+      record.verdict = null;
+      record.overridden = false;
+    }
+  });
+}
+
 /**
  * Freshness check: a PASS earned on an input document that has since changed
  * is not a live PASS. Compares the current file content against the hashes
@@ -660,6 +683,8 @@ export function gateStatus(
   inFlight = false,
 ): GateStatusView {
   const record = state.gates[gate] ?? { ...EMPTY_GATE };
+  const referral = specReferral(state);
+  const referralPending = referral !== null && state.gates["gap-audit"]?.reviewedSpecReferral !== referral.sha256;
   const passed = record.verdict === "PASS" || record.overridden;
   // Freshness is reported for any judged verdict, not just a PASS. A quick run
   // that ends on a requiresHuman finding is still handed to a person with its
@@ -672,6 +697,7 @@ export function gateStatus(
         // inputs; on a blocked gate it is noise, not a warning.
         staleInputsFor(projectRoot, record).filter((input) => passed || input.reason !== "unverifiable")
       : [];
+  if (gate === "gap-audit" && referralPending && passed) staleInputs.push({ path: "<spec-authority-referral>", reason: "changed" });
   // A delegated invocation is a semantic PRD-gate input even though it is
   // stored in gates.json rather than a project document. The first live
   // Observer drive (2026-08-23) proved why: spec rejected an explicit
@@ -762,12 +788,12 @@ export function gateStatus(
   return {
     gate,
     topic: state.topic,
-    verdict: record.verdict,
+    verdict: gate === "spec" && record.verdict === "NEEDS_HUMAN" ? "BLOCK" : record.verdict,
     effective: passed
       ? (stale ? "STALE" : "PASS")
       : record.verdict === null
         ? "NOT_RUN"
-        : record.verdict === "NEEDS_HUMAN"
+        : gate !== "spec" && record.verdict === "NEEDS_HUMAN"
           ? "NEEDS_HUMAN"
           : "BLOCKED",
     stale,
@@ -789,14 +815,15 @@ export function gateStatus(
     roundsSinceGrant: prdGate ? null : roundsSinceGrant,
     cycleCap: prdGate ? null : cycleCap,
     cycleExhausted: !prdGate && budget > 0 && record.verdict !== null && roundsSinceGrant >= cycleCap,
-    requiresHuman: record.findings.some((f) => f.requiresHuman),
+    requiresHuman: gate !== "spec" && record.findings.some((f) => f.requiresHuman),
+    ...((gate === "spec" && referral !== null && (referralPending || state.gates["gap-audit"]?.verdict !== "PASS")) || (gate === "gap-audit" && referralPending) ? { nextGate: "gap-audit" as const } : {}),
     findings: record.findings,
     warnings: record.warnings ?? [],
     grants: record.budgetGrants?.length ?? 0,
     assumedHumanFindings: (record.humanAssumptions ?? []).reduce((sum, entry) => sum + entry.findings.length, 0),
     reviewCycle: prdGate ? reviewCycleOf(record) : null,
     sealed,
-    reopenRequired: sealed && stale,
+    reopenRequired: sealed && stale && !(gate === "gap-audit" && referralPending),
     inFlight,
   };
 }
@@ -935,6 +962,7 @@ export function recordGateResult(
         inputs?: GateInput[];
         /** PRD-gate semantic source pin; omitted when no delegation was present. */
         delegationSha256?: string;
+        reviewedSpecReferral?: string;
         /** New records only carry the vouched shape; legacy shapes exist solely in already-written files. */
         judgedDiffSha256?: string | null;
         /** Verify gate only: stage behind a non-PASS verdict (ignored on PASS). */
@@ -980,6 +1008,7 @@ export function recordGateResult(
     let summary: GateRunSummary;
     if (outcome.kind === "verdict") {
     record.verdict = outcome.verdict;
+    if (gate === "gap-audit" && outcome.reviewedSpecReferral !== undefined) record.reviewedSpecReferral = outcome.reviewedSpecReferral;
     if (prdGate) {
       // Harness-assigned finding ids: a rerun judge echoes them to say "still
       // open", so they must be stable and never reused on this gate. Findings
@@ -1129,6 +1158,7 @@ export function answerPrdGate(
   inputs: GateInput[],
   question: string,
 ): GatesState {
+  if (gate === "spec") throw new Error("Only gap-audit may accept a user decision bundle; resolve the spec referral there first");
   const trimmed = evidence.trim();
   if (trimmed === "") throw new Error("gate answer requires the user's verbatim answer to the open human questions");
   const release = store.tryAcquireRunLock(gate);
