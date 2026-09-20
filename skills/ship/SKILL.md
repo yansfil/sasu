@@ -66,6 +66,7 @@ For high-risk work, repository review rules and explicit human approval require 
 ```sh
 node ~/.codex/skills/ship/scripts/prd_ship.js preflight --state agents/runs/<topic-slug>/state.json
 node ~/.codex/skills/ship/scripts/prd_ship.js body --state agents/runs/<topic-slug>/state.json
+node ~/.codex/skills/ship/scripts/prd_ship.js screenshots --state agents/runs/<topic-slug>/state.json --file <image> --caption "<one line>" [--file ... --caption ...] [--assets-repo <owner/name>]
 node ~/.codex/skills/ship/scripts/prd_ship.js local --state agents/runs/<topic-slug>/state.json
 node ~/.codex/skills/ship/scripts/prd_ship.js ship --state agents/runs/<topic-slug>/state.json --title "<title>"
 node ~/.codex/skills/ship/scripts/prd_ship.js watch-ci --state agents/runs/<topic-slug>/state.json [--timeout <seconds>]
@@ -79,6 +80,10 @@ The Claude installation substitutes its own skill root.
 When the repository keeps a pull request template (`.github/pull_request_template.md` and the other places GitHub looks), the draft is that template with a `Related:` line above `Summary` and a folded `Verification record` block at the end; otherwise it is the house shape below.
 Fill every `AGENT-FILL` marker and delete every template comment, working from the deterministic report, actual evidence, and visible reviewer responses; keep the folded record.
 It refuses to overwrite existing prose without `--force`.
+
+`screenshots` uploads two or three cropped images to the public assets repository (`--assets-repo`, or `delivery.assetsRepo` in `agents/config.json`) under `<repository>/<topic-slug>/<head-sha7>/`, then writes `![caption](url)` lines under `Summary` in the body draft.
+A path that already exists is left alone, so rerunning it for the same head is free, and nothing in that repository is ever deleted.
+Crop every image to the product surface it shows: the repository is public, and a whole-screen capture carries the user name, host name, or another project.
 
 `local` validates freshness and records the already committed, verified implementation head.
 It does not push or create a PR.
@@ -97,7 +102,7 @@ The command checks the local head, PR head, base freshness, mergeability, CI, an
 The body is written in the order a reviewer reads, and the prose above the fold stays under about 40 lines with one fact per bullet:
 
 1. `Related:` - the issues it closes, the PRs it depends on or follows, the PRD path; one line above `Summary`, deleted when empty.
-2. `Summary` - 3-5 bullets on the problem and what changed, followed by 2-3 inline screenshots with one caption each whenever anything a user sees changed.
+2. `Summary` - 3-5 bullets on the problem and what changed, followed by 2-3 inline screenshots with one caption each whenever anything a user sees changed; `screenshots` uploads and places them.
 3. `Review` - what needs a human's judgment, which files to watch and why (the risk named in a word or two), and specific questions.
 4. `Evidence` - what was confirmed, how many, under which conditions and by what method; what was not confirmed and why; large generated diffs named in one line.
 5. `Breaking change` - only when something breaks, with what the operator must do.
@@ -110,7 +115,7 @@ Do not claim an unavailable review passed.
 Do not hide CI failure behind successful PR creation.
 Do not expand product scope merely to clear an advisory.
 
-For screenshots, use GitHub user attachments or committed stable paths that reviewers can open, and crop out a workstation's user or host name.
+For screenshots, use `screenshots` (the assets repository) or GitHub user attachments, and crop out a workstation's user or host name.
 Do not use `/Users/...`, `file://...`, or an unpushed run artifact as the only evidence.
 
 ## CI Failure

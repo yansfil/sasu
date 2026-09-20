@@ -44,6 +44,7 @@ function main() {
     if (options["allow-stale"]) throw new Error("--allow-stale is retired; delivery requires a current deterministic verification report");
     if (command === "preflight") return cmdPreflight(options);
     if (command === "body") return cmdBody(options);
+    if (command === "screenshots") return cmdScreenshots(options);
     if (command === "local") return cmdLocal(options);
     if (command === "ship") return cmdShip(options);
     if (command === "watch-ci") return cmdWatchCi(options);
@@ -60,6 +61,7 @@ function usage(exitCode) {
   process.stderr.write(`Usage:
   node prd_ship.js preflight [--state <state.json>]
   node prd_ship.js body [--state <state.json>] [--output <file>] [--force]
+  node prd_ship.js screenshots [--state <state.json>] --file <image> [--caption <text>] ... [--assets-repo <owner/name>] [--body <file>]
   node prd_ship.js local [--state <state.json>] [--commit-message <message>] [--no-gpg-sign] [--include <path>] [--skip-rules --reason <why>]
   node prd_ship.js ship [--state <state.json>] [--title <title>] [--body <file>] [--branch <branch>] [--base <base>] [--draft] [--no-watch] [--no-gpg-sign] [--include <path>] [--override-mode --reason <why>] [--allow-stale-base --reason <why>] [--skip-rules --reason <why>]
   node prd_ship.js watch-ci [--state <state.json>] [--pr <number-or-url>] [--timeout <seconds>] [--interval <seconds>]
@@ -590,6 +592,141 @@ function buildBodyDraft(context) {
     ? body.replace(VERIFICATION_RECORD_PATTERN, record)
     : `${body.trimEnd()}\n\n${record}\n`;
   return body;
+}
+
+// --- PR screenshots -----------------------------------------------------
+//
+// `gh` cannot upload user attachments, so screenshots go to a public assets
+// repository through the Contents API and the body links them with ?raw=true.
+// The path carries the head SHA: a new head never overwrites an image GitHub's
+// proxy has cached, and nothing under the repository is ever deleted.
+
+const MAX_SCREENSHOTS = 6;
+const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
+const SCREENSHOT_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+
+function rawList(value) {
+  if (value === undefined || value === null || value === true || value === false) return [];
+  return (Array.isArray(value) ? value : [value]).map(item => String(item));
+}
+
+function assetsRepo(context, options) {
+  const project = projectDeliveryConfig(context);
+  const repo = String(options["assets-repo"] || project.assetsRepo || "").trim();
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {
+    throw new Error("screenshots need --assets-repo <owner>/<name>, or delivery.assetsRepo in agents/config.json");
+  }
+  return repo;
+}
+
+function sourceRepoName(repoRoot) {
+  const url = run("git", ["remote", "get-url", "origin"], { cwd: repoRoot, allowFailure: true }).stdout.trim();
+  const match = url.match(/[/:]([^/:]+?)(?:\.git)?\/?$/);
+  if (!match) throw new Error(`cannot name this repository from its origin '${url || "(none)"}'`);
+  return match[1];
+}
+
+function screenshotEntries(context, options) {
+  const files = rawList(options.file);
+  const captions = rawList(options.caption);
+  if (!files.length) throw new Error("screenshots need at least one --file <image>");
+  if (files.length > MAX_SCREENSHOTS) throw new Error(`screenshots take at most ${MAX_SCREENSHOTS} files; a PR body shows two or three`);
+  if (captions.length && captions.length !== files.length) throw new Error("pass one --caption per --file in the same order, or none");
+  return files.map((file, index) => {
+    const local = resolveInput(file, context.repoRoot);
+    if (!fs.existsSync(local)) throw new Error(`screenshot not found: ${local}`);
+    const extension = path.extname(local).toLowerCase();
+    if (!SCREENSHOT_EXTENSIONS.has(extension)) throw new Error(`not an image: ${local}`);
+    const bytes = fs.statSync(local).size;
+    if (bytes > MAX_SCREENSHOT_BYTES) throw new Error(`${local} is ${bytes} bytes; crop or downscale it under ${MAX_SCREENSHOT_BYTES}`);
+    const stem = path.basename(local, extension);
+    return {
+      local,
+      name: `${stem.replace(/[^A-Za-z0-9._-]+/g, "-")}${extension}`,
+      caption: captions[index] || stem.replace(/[-_]+/g, " ").trim(),
+    };
+  });
+}
+
+function assetExists(repo, assetPath) {
+  const result = run("gh", ["api", `repos/${repo}/contents/${assetPath}`, "--jq", ".sha"], { allowFailure: true });
+  return result.status === 0 && result.stdout.trim().length > 0;
+}
+
+function uploadAsset(repo, assetPath, local, message) {
+  const payload = path.join(os.tmpdir(), `sasu-asset-${crypto.randomBytes(6).toString("hex")}.json`);
+  try {
+    fs.writeFileSync(payload, JSON.stringify({ message, content: fs.readFileSync(local).toString("base64") }));
+    run("gh", ["api", "-X", "PUT", `repos/${repo}/contents/${assetPath}`, "--input", payload], { maxBuffer: 20 * 1024 * 1024 });
+  } finally {
+    fs.rmSync(payload, { force: true });
+  }
+}
+
+function assetUrl(repo, assetPath) {
+  return `https://github.com/${repo}/blob/main/${assetPath.split("/").map(encodeURIComponent).join("/")}?raw=true`;
+}
+
+// The images sit right under Summary, before the next heading: a reviewer
+// reads three bullets and then looks. Images the body already links are left
+// where they are.
+function insertScreenshots(text, lines) {
+  const missing = lines.filter(line => !text.includes(line));
+  if (!missing.length) return text;
+  const bodyLines = text.split("\n");
+  const headings = bodyLines.map((line, index) => (/^## /.test(line) ? index : -1)).filter(index => index !== -1);
+  let at;
+  if (headings.length >= 2) {
+    at = headings[1];
+    while (at > 0 && bodyLines[at - 1].trim() === "") at -= 1;
+  } else {
+    at = bodyLines.findIndex(line => /^<details>/.test(line));
+    if (at === -1) at = bodyLines.length;
+  }
+  bodyLines.splice(at, 0, "", ...missing.flatMap(line => [line, ""]));
+  return bodyLines.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+function cmdScreenshots(options) {
+  const context = resolveState(options);
+  assertCurrentVerification(context);
+  const repo = assetsRepo(context, options);
+  const entries = screenshotEntries(context, options);
+  const head = short(context.report.headSha);
+  const prefix = `${sourceRepoName(context.repoRoot)}/${context.state.topicSlug || "work"}/${head}`;
+  const results = entries.map(entry => {
+    const assetPath = `${prefix}/${entry.name}`;
+    const existed = assetExists(repo, assetPath);
+    if (!existed) uploadAsset(repo, assetPath, entry.local, `${context.state.topicSlug || "work"} ${head}: ${entry.name}`);
+    const url = assetUrl(repo, assetPath);
+    return { file: entry.local, path: assetPath, url, caption: entry.caption, uploaded: !existed, markdown: `![${entry.caption}](${url})` };
+  });
+  const bodyPath = options.body ? resolveInput(options.body, context.repoRoot) : defaultBodyPath(context);
+  let bodyUpdated = false;
+  if (fs.existsSync(bodyPath)) {
+    const before = fs.readFileSync(bodyPath, "utf8");
+    const after = insertScreenshots(before, results.map(result => result.markdown));
+    if (after !== before) {
+      writeFile(bodyPath, after);
+      bodyUpdated = true;
+    }
+  }
+  appendJsonl(shipLogPath(context), {
+    ts: new Date().toISOString(),
+    event: "screenshots",
+    repo,
+    head: context.report.headSha,
+    uploaded: results.filter(result => result.uploaded).map(result => result.path),
+  });
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    repo,
+    screenshots: results,
+    body: { path: toRepoRelative(bodyPath, context.repoRoot), updated: bodyUpdated, exists: fs.existsSync(bodyPath) },
+    next: bodyUpdated
+      ? "The image lines sit under Summary; give each its one-line caption if the file name was not enough, then run ship."
+      : "Paste the markdown lines under Summary in the PR body, then run ship.",
+  }, null, 2) + "\n");
 }
 
 function defaultBodyPath(context) {

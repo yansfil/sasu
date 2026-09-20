@@ -197,6 +197,78 @@ test("PR body draft takes the repository's own template and adds only the folded
   assert.doesNotMatch(body, /## Breaking change/, "no house sections are added to a repository template");
 });
 
+function fakeGh(root) {
+  // Outside the fixture repository, so the fake never shows as an uncommitted change.
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-ship-gh-"));
+  const bin = path.join(outside, "bin");
+  const store = path.join(outside, "store");
+  fs.mkdirSync(store, { recursive: true });
+  write(path.join(bin, "gh"), `#!/usr/bin/env node
+const fs = require("fs"); const path = require("path");
+const args = process.argv.slice(2);
+const store = ${JSON.stringify(store)};
+fs.appendFileSync(path.join(store, "calls.log"), JSON.stringify(args) + "\\n");
+if (args[0] !== "api") { process.stdout.write("{}"); process.exit(0); }
+const put = args.includes("PUT");
+const target = args.find(arg => arg.startsWith("repos/"));
+const marker = path.join(store, encodeURIComponent(target));
+if (put) {
+  const input = JSON.parse(fs.readFileSync(args[args.indexOf("--input") + 1], "utf8"));
+  if (!input.message || !input.content) { process.stderr.write("bad payload"); process.exit(1); }
+  fs.writeFileSync(marker, input.content.length.toString());
+  process.stdout.write(JSON.stringify({ content: { sha: "deadbeef" } }));
+  process.exit(0);
+}
+if (fs.existsSync(marker)) { process.stdout.write("deadbeef\\n"); process.exit(0); }
+process.stderr.write("HTTP 404: Not Found"); process.exit(1);
+`, 0o755);
+  return { bin, store };
+}
+
+test("screenshots upload once per head into the assets repo and land under Summary", () => {
+  const current = fixture();
+  run("git", ["remote", "add", "origin", "https://github.com/example/product.git"], { cwd: current.root });
+  const gh = fakeGh(current.root);
+  const env = { ...current.env, PATH: `${gh.bin}:${current.env.PATH}` };
+  const png = Buffer.from("89504e470d0a1a0a", "hex");
+  write(path.join(current.root, "agents", "runs", "fixture", "artifacts", "01 overview.png"), png);
+  write(path.join(current.root, "agents", "runs", "fixture", "artifacts", "02-empty-state.png"), png);
+  const bodyPath = path.join(current.root, "agents", "runs", "fixture", "delivery", "pr-body.md");
+  write(bodyPath, "Related: #1\n\n## Summary\n\n- one\n- two\n\n## Review\n\n- judge\n\n<details><summary>Verification record</summary>\n\n- x\n\n</details>\n");
+  const args = [shipScript, "screenshots", "--state", current.statePath, "--assets-repo", "someone/pr-assets",
+    "--file", "agents/runs/fixture/artifacts/01 overview.png", "--caption", "Overview, grouped by worktree",
+    "--file", "agents/runs/fixture/artifacts/02-empty-state.png", "--caption", "02 empty state"];
+  let output = JSON.parse(run(process.execPath, args, { cwd: current.root, env }).stdout);
+  const head = current.report.headSha.slice(0, 7);
+  assert.equal(output.screenshots.length, 2);
+  assert.equal(output.screenshots[0].path, `product/fixture/${head}/01-overview.png`);
+  assert.equal(output.screenshots[0].url, `https://github.com/someone/pr-assets/blob/main/product/fixture/${head}/01-overview.png?raw=true`);
+  assert.equal(output.screenshots[0].caption, "Overview, grouped by worktree");
+  assert.equal(output.screenshots[1].caption, "02 empty state");
+  assert.ok(output.screenshots.every(item => item.uploaded));
+  assert.equal(output.body.updated, true);
+  const body = fs.readFileSync(bodyPath, "utf8");
+  const summaryAt = body.indexOf("## Summary");
+  const imageAt = body.indexOf("![Overview, grouped by worktree](");
+  const reviewAt = body.indexOf("## Review");
+  assert.ok(summaryAt < imageAt && imageAt < reviewAt, `images sit between Summary and Review:\n${body}`);
+  assert.match(body, /- two\n\n!\[Overview, grouped by worktree\]\(.*\)\n\n!\[02 empty state\]\(.*\)\n\n## Review/);
+
+  output = JSON.parse(run(process.execPath, args, { cwd: current.root, env }).stdout);
+  assert.ok(output.screenshots.every(item => item.uploaded === false), "a second run uploads nothing");
+  assert.equal(output.body.updated, false);
+  assert.equal(fs.readFileSync(bodyPath, "utf8"), body, "a second run leaves the body as it was");
+  const puts = fs.readFileSync(path.join(gh.store, "calls.log"), "utf8").split("\n").filter(line => line.includes("\"PUT\""));
+  assert.equal(puts.length, 2);
+
+  const bad = run(process.execPath, [shipScript, "screenshots", "--state", current.statePath, "--file", "agents/runs/fixture/artifacts/02-empty-state.png"], { cwd: current.root, env, allowFailure: true });
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /--assets-repo/);
+  const uneven = run(process.execPath, [...args, "--caption", "one too many"], { cwd: current.root, env, allowFailure: true });
+  assert.notEqual(uneven.status, 0);
+  assert.match(uneven.stderr, /one --caption per --file/);
+});
+
 test("ship refuses a body that still carries template comments or lacks the record", () => {
   const current = fixture();
   const bodyPath = path.join(current.root, "agents", "runs", "fixture", "delivery", "pr-body.md");
