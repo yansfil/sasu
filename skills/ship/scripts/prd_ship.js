@@ -411,126 +411,185 @@ function requireReason(options, flag) {
 
 // --- PR body draft ------------------------------------------------------
 
-function cell(text) {
-  return String(text || "").replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
-}
-
-function summarizeVerification(report) {
-  return [
-    `- Deterministic verification: ${report.status}`,
-    `- PRD SHA: ${report.prdSha256}`,
-    `- Base SHA: ${report.baseSha || "unavailable"}`,
-    `- Head SHA: ${report.headSha || "unavailable"}`,
-    `- Source fingerprint: ${report.sourceFingerprint}`,
-    `- Generated: ${report.generatedAt}`,
-    "- Agent reviews are visible advisory notes produced by native runtime subagents.",
-  ].join("\n");
-}
-
 function summarizeEvidence(report) {
-  if (!report.evidence.length) return "- No separately registered runtime evidence.";
-  return report.evidence.map(artifact => `- ${artifact.path} (${artifact.kind}, observed ${artifact.observedAt}, sha256 ${artifact.sha256}): ${artifact.provenance}`).join("\n");
+  if (!report.evidence.length) return "- Evidence: none registered separately.";
+  const byKind = new Map();
+  for (const artifact of report.evidence) byKind.set(artifact.kind, (byKind.get(artifact.kind) || 0) + 1);
+  const kinds = [...byKind.entries()].map(([kind, count]) => `${count} ${kind}`).join(", ");
+  const listing = report.evidence.map(artifact => `  - ${artifact.path}`).join("\n");
+  return `- Evidence: ${report.evidence.length} registered (${kinds}); paths are local to the run directory\n${listing}`;
 }
 
 function summarizeTests(report) {
   const commands = report.requiredCommands;
-  if (!commands.length) return "- No required project suites are configured or detected.";
-  return commands.map(command => command.excluded
-    ? `- ${command.id}: EXCLUDED - \`${command.command}\``
-    : `- ${command.id}: ${command.result?.status || "UNRUN"} - \`${command.command}\`${command.result ? ` (cwd: ${command.cwd}, exit ${command.result.exitCode})` : ""}`).join("\n");
+  if (!commands.length) return "- Suites: none configured or detected.";
+  const lines = commands.map(command => command.excluded
+    ? `  - ${command.id}: EXCLUDED \`${command.command}\``
+    : `  - ${command.id}: ${command.result?.status || "UNRUN"} \`${command.command}\`${command.result ? ` (exit ${command.result.exitCode})` : ""}`);
+  return `- Suites:\n${lines.join("\n")}`;
 }
 
+// A count, not a listing: the PR's Files tab already lists the paths, and a
+// forty-line copy of it is what made the old body unreadable.
 function summarizeChangedFiles(context) {
+  let paths;
   try {
-    const plan = verifiedPathPlan(context, deliveryConfig(context));
-    return plan.changed.length ? plan.changed.map(item => `- ${item}`).join("\n") : "- No changed product paths recorded";
+    paths = verifiedPathPlan(context, deliveryConfig(context)).changed;
   } catch {
-    const status = gitStatusPaths(context.repoRoot).filter(item => !item.includes("/artifacts/"));
-    return status.length ? status.map(item => `- ${item}`).join("\n") : "- No pending file paths found";
+    paths = gitStatusPaths(context.repoRoot).filter(item => !item.includes("/artifacts/"));
   }
+  return `- Changed paths: ${paths.length} (see Files changed)`;
 }
 
 function deliverySummary(context) {
   const delivery = context.state.delivery || {};
-  const staging = delivery.staging || {};
-  const include = optionList(staging.include);
-  const exclude = optionList(staging.exclude);
-  return [
-    `- Mode: ${delivery.mode || "unknown"}`,
-    `- Branch: ${delivery.branch || "unknown"}`,
-    `- Base: ${delivery.baseBranch || "main"}`,
-    `- Staging include: ${include.length ? include.join(", ") : "default allowlist"}`,
-    `- Staging exclude: ${exclude.length ? exclude.join(", ") : "default volatile paths"}`,
-  ].join("\n");
+  const parts = [];
+  if (delivery.mode) parts.push(`mode ${delivery.mode}`);
+  if (delivery.branch) parts.push(`branch \`${delivery.branch}\``);
+  if (delivery.baseBranch) parts.push(`base \`${delivery.baseBranch}\``);
+  return parts.length ? `- Delivery: ${parts.join(", ")}` : null;
 }
 
 function agentFill(instructions) {
   return `<!-- AGENT-FILL: ${instructions} Ground it in verification-report.md and the visible native-agent review notes. Delete this comment after writing. -->`;
 }
 
-function buildBodyDraft(context) {
+// The record is what the machine knows: identity, suites, evidence, paths.
+// It is folded so it never competes with the prose a reviewer reads first,
+// and it is the only place the SHAs and hashes appear.
+const VERIFICATION_RECORD_SUMMARY = "Verification record";
+const VERIFICATION_RECORD_PATTERN = /<details>\s*<summary>\s*Verification record\s*<\/summary>[\s\S]*?<\/details>/i;
+
+function short(sha) {
+  return typeof sha === "string" && sha.length >= 7 ? sha.slice(0, 7) : sha || "unavailable";
+}
+
+// Records live in the record tree, which is not the judged worktree when the
+// run is isolated; relative to that tree the path is portable, absolute it
+// names the workstation.
+function recordRelative(absPath, context) {
+  const roots = [context.repoRoot, context.state.projectRoot, path.dirname(path.dirname(path.dirname(context.statePath)))].filter(Boolean);
+  for (const root of roots) {
+    const rel = toRepoRelative(absPath, root);
+    if (rel !== absPath) return rel;
+  }
+  return path.basename(absPath);
+}
+
+function verificationRecord(context) {
   const state = context.state;
   const report = context.report;
-  const resultRel = fs.existsSync(context.resultPath) ? toRepoRelative(context.resultPath, context.repoRoot) : null;
-  const implementationState = toRepoRelative(context.statePath, context.repoRoot);
-  const reportPath = toRepoRelative(context.reportPath, context.repoRoot);
+  const reportPath = recordRelative(context.reportPath, context);
+  const resultRel = fs.existsSync(context.resultPath) ? recordRelative(context.resultPath, context) : null;
   const lines = [
-    "## Summary",
+    `<details><summary>${VERIFICATION_RECORD_SUMMARY}</summary>`,
     "",
-    agentFill("Write 3-6 bullets describing what actually changed in this PR for a reviewer who has not read the PRD."),
-    "",
-    "## Result",
-    "",
-    agentFill("State the user-visible or developer-visible outcome, what the reviewer can now confirm, and what is explicitly not included."),
-    "",
-    "## Screenshots / Demo",
-    "",
-    agentFill("If this PR changes a visual UI, browser, mobile, desktop, chart, document, slide, or generated image surface, include inline Markdown images for the key current screenshots. Prefer `![Alt](https://github.com/user-attachments/assets/<id>)` or committed screenshot URLs like `![Alt](https://github.com/<owner>/<repo>/blob/<commit-or-branch>/<path>.png?raw=true)`. Do not use `raw.githubusercontent.com` image URLs for private repos. If no visual surface changed, write `N/A - no visual surface changed`."),
-    "",
-    "## Human Review Focus",
-    "",
-    agentFill("Separate what the recorded evidence already proves from what still needs reviewer judgment: product interpretation, UX/copy, risky files or flows, data/auth/security, deployment or rollback, and specific reviewer questions."),
-    "",
-    "## Product And Scope Result",
-    "",
-    `- PRD: ${state.prdPath || "unknown"}`,
-    `- Implementation state: ${implementationState}`,
-    `- Verification report: ${reportPath} (status: ${report.status})`,
-    resultRel ? `- Verification summary: ${resultRel}` : "- Verification summary: not found",
-    "",
-    "## Actual Tests",
-    "",
+    `- PRD: \`${state.prdPath || "unknown"}\` (sha256 ${report.prdSha256})`,
+    `- Base ${short(report.baseSha)} → head ${short(report.headSha)}, verified ${report.generatedAt}: ${report.status}`,
+    `- Verification report: \`${reportPath}\`${resultRel ? ` and \`${resultRel}\`` : ""}; source fingerprint ${report.sourceFingerprint}`,
     summarizeTests(report),
-    "",
-    "## Actual Observations",
-    "",
+    `- Reviews: ${agentFill("One line per native reviewer (Fidelity, Code, Security when run): the head it reviewed, each Fix now finding and how it was fixed or why it stands, Follow-up improvements, or REVIEW_UNAVAILABLE with its cause. Reviews are advisory.")}`,
     summarizeEvidence(report),
-    "",
-    "## Deterministic Verification",
-    "",
-    summarizeVerification(report),
-    "",
-    "## Agent Review: Fix Now",
-    "",
-    agentFill("Summarize concrete bugs found by Fidelity, Code, or Security reviewers that belong to the current behavior and touched flow. Record how each was fixed, or explain the unresolved concern for human judgment. Write `None` when no such finding remains."),
-    "",
-    "## Agent Review: Follow-up Improvements",
-    "",
-    agentFill("List useful cleanup, refactoring, polish, or product expansion that is outside the current contract. These are advisory and do not block this pull request. Write `None` when there are no follow-ups."),
-    "",
-    "## Delivery Staging",
-    "",
+    summarizeChangedFiles(context),
     deliverySummary(context),
     "",
-    "## Changed Paths Planned For This PR",
-    "",
-    summarizeChangedFiles(context),
-    "",
-    "## Risks, Rollback, And Human Review",
-    "",
-    agentFill("List known risks, the rollback or mitigation path, remaining human verification, and follow-ups. Mark unrun or blocked checks explicitly."),
-  ];
+    "</details>",
+  ].filter(line => line !== null);
   return lines.join("\n");
+}
+
+// Repository PR templates, in the order GitHub and the house rules look for
+// them. A repository that keeps one has decided how its reviewers read, so the
+// draft takes that shape and adds only the folded record.
+const PR_TEMPLATE_CANDIDATES = [
+  ".github/pull_request_template.md",
+  ".github/PULL_REQUEST_TEMPLATE.md",
+  ".github/PULL_REQUEST_TEMPLATE",
+  "docs/pull_request_template.md",
+  "docs/PULL_REQUEST_TEMPLATE.md",
+  "pull_request_template.md",
+  "PULL_REQUEST_TEMPLATE.md",
+];
+
+function repoPrTemplate(repoRoot) {
+  for (const candidate of PR_TEMPLATE_CANDIDATES) {
+    const full = path.join(repoRoot, candidate);
+    if (!fs.existsSync(full)) continue;
+    if (fs.statSync(full).isDirectory()) {
+      const first = fs.readdirSync(full).filter(name => name.toLowerCase().endsWith(".md")).sort()[0];
+      if (!first) continue;
+      return { path: path.join(candidate, first), text: fs.readFileSync(path.join(full, first), "utf8") };
+    }
+    return { path: candidate, text: fs.readFileSync(full, "utf8") };
+  }
+  return null;
+}
+
+function relatedLine(context) {
+  const prd = context.state.prdPath ? `PRD \`${context.state.prdPath}\`` : null;
+  const fill = agentFill("Add the issues this PR closes and the PRs it depends on or follows, as `#123`; keep the PRD reference; delete the line if there is nothing to relate.");
+  return `Related: ${prd ? `${prd} · ` : ""}${fill}`;
+}
+
+// The house shape when the repository has no template of its own: what
+// changed, what needs a human, what is proven, what breaks, then the record.
+function fallbackTemplate(context) {
+  return [
+    relatedLine(context),
+    "",
+    "## Summary",
+    "",
+    agentFill("3-5 bullets, one fact per line, for a reviewer who has not read the PRD: the problem and what changed. If the PR changes anything a user sees, follow the bullets with 2-3 inline screenshots, one caption line each (`![caption](https://github.com/user-attachments/assets/<id>)`; never a local path or raw.githubusercontent.com)."),
+    "",
+    "## Review",
+    "",
+    `- **Needs judgment**: ${agentFill("Product interpretation, copy, trade-offs, decisions that are hard to undo. One per line; only what tests cannot prove.")}`,
+    `- **Files to watch**: ${agentFill("`path` - why, one line each; name the risk (locking, wire format, ownership, external contract, failure path, hot path).")}`,
+    `- **Questions**: ${agentFill("Specific questions for the reviewer; delete the line when there are none.")}`,
+    "",
+    "## Evidence",
+    "",
+    `- **Confirmed**: ${agentFill("What was observed, how many, under which conditions, by what method. Not 'tests pass'.")}`,
+    `- **Not confirmed**: ${agentFill("What was not exercised and why. Never leave this empty.")}`,
+    `- **Generated**: ${agentFill("Large generated diffs (design canvases, lockfiles, snapshots) named in one line with where to look instead; delete the line when there are none.")}`,
+    "",
+    "## Breaking change",
+    "",
+    agentFill("What breaks for an installed copy, stored state, saved settings or a public contract, and what the operator must do. Delete the section when nothing breaks."),
+    "",
+    `**AI tooling**: ${agentFill("How the change was written (by hand / partly with AI tooling / mostly with AI tooling) and, for the latter two, what was checked by hand. A review input, not attribution.")}`,
+    "",
+    verificationRecord(context),
+  ].join("\n");
+}
+
+function insertRelated(text, context) {
+  const lines = text.split("\n");
+  const existing = lines.findIndex(line => /^Related:/.test(line));
+  if (existing !== -1) {
+    lines[existing] = relatedLine(context);
+    return lines.join("\n");
+  }
+  // Skip a leading HTML comment: the guidance stays on top, Related comes right after it.
+  let index = 0;
+  while (index < lines.length && lines[index].trim() === "") index += 1;
+  if (lines[index] && lines[index].trimStart().startsWith("<!--")) {
+    while (index < lines.length && !lines[index].includes("-->")) index += 1;
+    index += 1;
+  }
+  lines.splice(index, 0, "", relatedLine(context), "");
+  return lines.join("\n");
+}
+
+function buildBodyDraft(context) {
+  const template = repoPrTemplate(context.repoRoot);
+  if (!template) return fallbackTemplate(context);
+  const record = verificationRecord(context);
+  let body = insertRelated(template.text, context);
+  body = VERIFICATION_RECORD_PATTERN.test(body)
+    ? body.replace(VERIFICATION_RECORD_PATTERN, record)
+    : `${body.trimEnd()}\n\n${record}\n`;
+  return body;
 }
 
 function defaultBodyPath(context) {
@@ -541,14 +600,16 @@ function validateBodyText(text, bodyPath) {
   const problems = [];
   if (AGENT_FILL_PATTERN.test(text)) {
     problems.push("body still contains AGENT-FILL placeholders; write the prose sections from the verification report and visible review notes first");
+  } else if (/<!--/.test(text)) {
+    problems.push("body still contains template comments; delete each <!-- --> guidance comment after writing its section");
   }
   for (const pattern of ATTRIBUTION_PATTERNS) {
     if (pattern.test(text)) {
       problems.push(`body contains AI agent attribution matching ${pattern}; PR metadata must be written as project work`);
     }
   }
-  if (!/verification report/i.test(text)) {
-    problems.push("body does not reference the deterministic verification report");
+  if (!VERIFICATION_RECORD_PATTERN.test(text)) {
+    problems.push("body has no folded 'Verification record' block; regenerate with 'body' and keep the <details> block the draft placed at the end");
   }
   if (/!\[[^\]]*\]\(\s*https:\/\/raw\.githubusercontent\.com\//i.test(text)) {
     problems.push("body embeds raw.githubusercontent.com images; use GitHub user-attachments or github.com/<owner>/<repo>/blob/<commit-or-branch>/<path>?raw=true so private repo screenshots render for reviewers");
@@ -563,7 +624,7 @@ function resolveBodyPath(context, options) {
   if (!fs.existsSync(bodyPath)) {
     throw new Error([
       `PR body not found: ${bodyPath}`,
-      "Run 'body' to generate the draft, fill the AGENT-FILL sections from the verification report and visible review notes, then rerun ship.",
+      "Run 'body' to generate the draft, fill the AGENT-FILL markers and delete the template comments from the verification report and visible review notes, then rerun ship.",
     ].join("\n"));
   }
   validateBodyText(fs.readFileSync(bodyPath, "utf8"), bodyPath);
@@ -952,11 +1013,13 @@ function cmdBody(options) {
     throw new Error(`PR body already exists: ${output}. Edit it in place, or pass --force to regenerate the draft (this discards its content).`);
   }
   writeFile(output, buildBodyDraft(context));
+  const templateUsed = repoPrTemplate(context.repoRoot)?.path || null;
   process.stdout.write(JSON.stringify({
     ok: true,
     bodyPath: toRepoRelative(output, context.repoRoot),
     resultReport: fs.existsSync(context.resultPath) ? toRepoRelative(context.resultPath, context.repoRoot) : null,
-    next: "Fill every AGENT-FILL section from verification-report.md and the visible native-agent review notes, then run ship.",
+    template: templateUsed,
+    next: "Fill every AGENT-FILL marker and delete every template comment, working from verification-report.md and the visible native-agent review notes; keep the folded Verification record block; then run ship.",
   }, null, 2) + "\n");
 }
 

@@ -53,7 +53,7 @@ The script blocks when:
 - the report HEAD differs from the current Git HEAD or Git-visible changes remain uncommitted;
 - the branch is behind the configured base without an explicit approved exception;
 - the verified commit includes paths outside the delivery allowlist;
-- the PR body still contains placeholders or agent attribution;
+- the PR body still contains placeholders, template comments, or agent attribution, or lacks the folded verification record;
 - required learned-rule checks fail;
 - merge lacks explicit user approval, current head identity, mergeability, or passing CI.
 
@@ -76,7 +76,8 @@ node ~/.codex/skills/ship/scripts/prd_ship.js status --state agents/runs/<topic-
 The Claude installation substitutes its own skill root.
 
 `body` creates `agents/runs/<topic-slug>/delivery/pr-body.md`.
-Fill every `AGENT-FILL` section from the deterministic report, actual evidence, and visible reviewer responses.
+When the repository keeps a pull request template (`.github/pull_request_template.md` and the other places GitHub looks), the draft is that template with a `Related:` line above `Summary` and a folded `Verification record` block at the end; otherwise it is the house shape below.
+Fill every `AGENT-FILL` marker and delete every template comment, working from the deterministic report, actual evidence, and visible reviewer responses; keep the folded record.
 It refuses to overwrite existing prose without `--force`.
 
 `local` validates freshness and records the already committed, verified implementation head.
@@ -93,23 +94,23 @@ The command checks the local head, PR head, base freshness, mergeability, CI, an
 
 ## PR Body
 
-Include:
+The body is written in the order a reviewer reads, and the prose above the fold stays under about 40 lines with one fact per bullet:
 
-- summary and current outcome;
-- PRD path and current base/head;
-- deterministic verification report;
-- actual tests and runtime observations;
-- screenshots or recordings for visual changes;
-- Fidelity, Code, and optional Security review availability;
-- every Fix now finding and its disposition;
-- Follow-up improvements that do not belong in the current contract;
-- remaining human review focus, risk, rollback, and deployment notes.
+1. `Related:` - the issues it closes, the PRs it depends on or follows, the PRD path; one line above `Summary`, deleted when empty.
+2. `Summary` - 3-5 bullets on the problem and what changed, followed by 2-3 inline screenshots with one caption each whenever anything a user sees changed.
+3. `Review` - what needs a human's judgment, which files to watch and why (the risk named in a word or two), and specific questions.
+4. `Evidence` - what was confirmed, how many, under which conditions and by what method; what was not confirmed and why; large generated diffs named in one line.
+5. `Breaking change` - only when something breaks, with what the operator must do.
+6. A one-line `AI tooling` review input, never an attribution.
+7. `<details><summary>Verification record</summary>` - PRD and its hash, base and head, verification time and status, report paths, suites with exit codes, one line per native reviewer (head reviewed, Fix now findings and their disposition, Follow-up improvements, or `REVIEW_UNAVAILABLE` with its cause), registered evidence, changed-path count. `body` generates everything here except the reviewer lines. SHAs, hashes and fingerprints appear only in this block.
+
+A repository template decides the section names; the house shape above is what `body` writes when there is none.
 
 Do not claim an unavailable review passed.
 Do not hide CI failure behind successful PR creation.
 Do not expand product scope merely to clear an advisory.
 
-For screenshots, prefer GitHub user attachments or committed stable paths that reviewers can open.
+For screenshots, use GitHub user attachments or committed stable paths that reviewers can open, and crop out a workstation's user or host name.
 Do not use `/Users/...`, `file://...`, or an unpushed run artifact as the only evidence.
 
 ## CI Failure
