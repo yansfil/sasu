@@ -73,7 +73,14 @@ class TickLimitReached extends Error {}
 
 function processStartDescription(pid: number): string | null {
   for (const binary of ["/bin/ps", "/usr/bin/ps"]) {
-    const observed = spawnSync(binary, ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 2_000 });
+    const observed = spawnSync(binary, ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+      timeout: 2_000,
+      // Scheduled and manual ticks can inherit different locale and timezone
+      // settings. The round-two review observed one live PID change identity
+      // across those callers, so process identity must be canonical here.
+      env: { ...process.env, LANG: "C", LC_ALL: "C", TZ: "UTC" },
+    });
     const started = observed.status === 0 ? observed.stdout.trim().replace(/\s+/g, " ") : "";
     if (started !== "") return started;
   }
@@ -96,6 +103,9 @@ export function processIncarnation(pid: number): string | null {
       const startTicks = fields[19];
       if (boot !== "" && startTicks !== undefined) return `linux:${boot}:${startTicks}`;
     } catch {}
+    // A ps fallback uses a different identity scheme. Treat a temporarily
+    // unreadable procfs identity as unknown so a live owner fails closed.
+    return null;
   }
   const started = processStartDescription(pid);
   return started === null ? null : `${process.platform}:${started}`;
@@ -161,11 +171,7 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
   // Oldest-processed-first and the later decision budget give every enrollment
   // fair continuation. The 20-entry cap also bounds local state reads and
   // result persistence independently of the 128-call external cap.
-  const priority = (entry: IndexEntry): number => Math.max(
-    Date.parse(entry.addedAt),
-    entry.lastObservation === null ? Number.NEGATIVE_INFINITY : Date.parse(entry.lastObservation.at),
-    entry.lastFailure === null ? Number.NEGATIVE_INFINITY : Date.parse(entry.lastFailure.at),
-  );
+  const priority = (entry: IndexEntry): number => Date.parse(entry.lastProcessedAt ?? entry.addedAt);
   const scheduledEntries = [...index.entries]
     .sort((a, b) => priority(a) - priority(b))
     .slice(0, MAX_RUNS_PER_TICK);
@@ -265,6 +271,10 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
       recordLimit(scheduledEntries.slice(scheduledIndex), `tick decision budget ${TICK_DECISION_BUDGET_MS}ms reached; remaining runs are deferred to the next tick`);
       break;
     }
+    // lastFailure is also used to explain entries that were never reached.
+    // A separate scheduler timestamp prevents those deferrals from tying
+    // with processed entries and restoring the same slow prefix forever.
+    addUpdate(entry, (held) => { held.lastProcessedAt = at; });
     const loaded = loadEntry(entry);
     if (loaded.missing) {
       const count = entry.missingTicks + 1;

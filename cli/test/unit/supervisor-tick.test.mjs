@@ -104,6 +104,48 @@ test("engineering 14: a live executor is not stolen merely because its lease tim
   assert.equal(readIndex(index).tickExecutor.operationId, "live-but-delayed");
 });
 
+test("engineering 11/14: process incarnation is stable across caller timezone changes", () => {
+  const previous = process.env.TZ;
+  try {
+    process.env.TZ = "UTC";
+    const utc = processIncarnation(process.pid);
+    process.env.TZ = "Asia/Seoul";
+    const seoul = processIncarnation(process.pid);
+    assert.notEqual(utc, null);
+    assert.equal(seoul, utc, "scheduled and manual ticks must agree on the exact live owner");
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+});
+
+test("engineering 11/14: a timezone change cannot steal a live executor and submit", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: new Date(T0).toISOString() });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
+  const previous = process.env.TZ;
+  try {
+    process.env.TZ = "UTC";
+    updateIndex(index, (held) => {
+      held.tickExecutor = {
+        operationId: "utc-executor",
+        pid: process.pid,
+        processIncarnation: processIncarnation(process.pid),
+        startedAt: new Date(T0 - MIN).toISOString(),
+        expiresAt: new Date(T0 + MIN).toISOString(),
+      };
+    });
+    process.env.TZ = "Asia/Seoul";
+    const result = tick(index, herdr, T0);
+    assert.equal(result.executor, "already-running");
+    assert.equal(herdr.prompts.length, 0, "a caller environment change cannot create a second delivery executor");
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+});
+
 test("B3/engineering 14: a reused PID does not preserve a dead executor lease", () => {
   const index = indexFile();
   updateIndex(index, (held) => {
@@ -165,8 +207,12 @@ test("engineering 10/15: slow external probes persist continuation instead of re
   assert.equal(readIndex(index).lastTickAt, limited.at, "elapsed work is durable progress rather than a repeated prefix");
   assert.equal(readIndex(index).entries.some((entry) => entry.lastFailure?.detail.includes("budget")), true);
 
-  tick(index, fake, clock + MIN);
-  assert.equal(fake.prompts.length, 20, "a later healthy tick resumes every deferred enrollment");
+  for (let pass = 1; pass <= 19; pass += 1) {
+    const continued = runTick({ indexFile: index, herdr: slowHerdr, now: () => clock, log: silent });
+    assert.equal(continued.executor, "ran");
+  }
+  assert.equal(fake.prompts.length, 20, "persistent latency still rotates through every deferred enrollment");
+  assert.equal(new Set(fake.prompts.map((prompt) => prompt.target)).size, 20);
 });
 
 test("engineering 10/15: a fair bounded batch eventually delivers every ready run", () => {

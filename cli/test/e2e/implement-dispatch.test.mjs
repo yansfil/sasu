@@ -10,7 +10,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { CLI, git, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
 import { installFakeHerdr } from "../helpers/fake-herdr.mjs";
 import { attemptFixture } from "../helpers/implement-state.mjs";
-import { readIndex, unenrollRun } from "../../dist/supervisor/index.js";
+import { repairPendingDispatchPrerequisites } from "../../dist/implement/commands.js";
+import { enrollRun, readIndex, unenrollRun } from "../../dist/supervisor/index.js";
 
 const OBSERVER = "observer-session";
 const IMPLEMENTOR = "implementor-session";
@@ -316,6 +317,38 @@ test("D-04: absent-child recovery revalidates handover before changing enrollmen
   const entries = readIndex(path.join(home, ".sasu", "supervisor", "index.json")).entries;
   assert.equal(entries.length, 1, "stale recovery cannot remove the replacement Observer's enrollment");
   assert.equal(entries[0].runInstanceId, state(root).pendingDispatch.runInstanceId);
+});
+
+test("D-04/engineering 11: prerequisite repair binds enrollment generation to freshly validated dispatch authority", () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, home } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  assert.equal(dispatch(root, { ...env, HERDR_FAKE_PROMPT_FAIL: "1" }).status, 1);
+  const staleState = state(root);
+  const stalePending = structuredClone(staleState.pendingDispatch);
+  const index = path.join(home, ".sasu", "supervisor", "index.json");
+  const previousHome = process.env.HOME;
+  process.env.HOME = home;
+  try {
+    assert.throws(() => repairPendingDispatchPrerequisites(root, path.join(root, STATE_PATH), staleState, stalePending, () => {
+      const replacement = state(root);
+      replacement.pendingDispatch.runInstanceId = "replacement-instance";
+      replacement.pendingDispatch.observer.sessionId = "replacement-observer";
+      fs.writeFileSync(path.join(root, STATE_PATH), `${JSON.stringify(replacement, null, 2)}\n`);
+      enrollRun(index, {
+        statePath: path.join(root, STATE_PATH),
+        runInstanceId: replacement.pendingDispatch.runInstanceId,
+        recoveryOwner: replacement.pendingDispatch.recoveryOwner,
+        at: new Date().toISOString(),
+      });
+    }), /dispatch authority changed/);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+  }
+  assert.equal(state(root).pendingDispatch.runInstanceId, "replacement-instance");
+  assert.deepEqual(readIndex(index).entries.map((entry) => entry.runInstanceId), ["replacement-instance"], "stale recovery cannot claim a generation created for newer authority");
 });
 
 test("D-04/engineering 10: navigation failure leaves absent recovery retryable", () => {

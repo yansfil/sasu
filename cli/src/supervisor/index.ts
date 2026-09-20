@@ -32,6 +32,8 @@ export interface IndexEntry {
   lastAcknowledgedAt: string | null;
   /** Unknown delivery is retried a bounded number of times, never treated as accepted. */
   pendingWake: { episode: string; attempts: number; at: string; operationId: string | null; status: "reserved" | "unknown" } | null;
+  /** Last tick that actually began evaluating this enrollment. */
+  lastProcessedAt: string | null;
   lastFailure: { at: string; detail: string } | null;
   lastObservation: { at: string; observer: string; implementor: string; guardedPrompt: boolean } | null;
 }
@@ -112,6 +114,7 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
       terminalFailureTicks: Number(terminalFailureTicks),
       lastWake: (record["lastWake"] ?? null) as WakeRecord | null,
       acknowledgements, lastAcknowledgedAt: optionalTimestamp(record["lastAcknowledgedAt"], "lastAcknowledgedAt", file), pendingWake,
+      lastProcessedAt: optionalTimestamp(record["lastProcessedAt"], "lastProcessedAt", file),
       lastFailure: (record["lastFailure"] ?? null) as IndexEntry["lastFailure"], lastObservation: (record["lastObservation"] ?? null) as IndexEntry["lastObservation"],
     };
   });
@@ -301,7 +304,7 @@ export function enrollRun(file: string, entry: { statePath: string; runInstanceI
     index.entries.push({
       statePath: entry.statePath, runInstanceId: entry.runInstanceId, enrollmentId, recoveryOwner: entry.recoveryOwner,
       addedAt: entry.at, missingTicks: 0, terminalFailureTicks: 0, lastWake: null, acknowledgements: {}, lastAcknowledgedAt: null, pendingWake: null,
-      lastFailure: null, lastObservation: null,
+      lastProcessedAt: null, lastFailure: null, lastObservation: null,
     });
   });
 }
@@ -365,6 +368,7 @@ export function reconcileRunEnrollment(file: string, input: {
       acknowledgements: {},
       lastAcknowledgedAt: null,
       pendingWake: null,
+      lastProcessedAt: null,
       lastFailure: null,
       lastObservation: null,
     });

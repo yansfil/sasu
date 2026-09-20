@@ -619,8 +619,16 @@ function reconcileCurrentDispatchPrerequisites(projectRoot: string, statePath: s
   throw new DispatchRejected("dispatch authority kept changing while navigation and enrollment were reconciled; retry against the current Observer");
 }
 
-function repairPendingDispatchPrerequisites(projectRoot: string, statePath: string, state: ImplementState, pending: PendingDispatch): { state: ImplementState; pending: PendingDispatch } {
+export function repairPendingDispatchPrerequisites(projectRoot: string, statePath: string, state: ImplementState, pending: PendingDispatch, afterEnrollmentSnapshot?: () => void): { state: ImplementState; pending: PendingDispatch } {
   const expectedEnrollmentId = enrollmentAt(readIndex(indexPath()), statePath)?.enrollmentId ?? null;
+  // The review reproduced a replacement that landed before generation
+  // capture: stale pending authority then claimed the replacement's token.
+  // Capture the token first and validate the exact pending intent afterward,
+  // so the two snapshots either describe one authority or no write occurs.
+  afterEnrollmentSnapshot?.();
+  const authoritative = revalidatePendingHandoff(projectRoot, statePath, pending, "dispatch authority changed before navigation or enrollment restoration");
+  state = authoritative.state;
+  pending = authoritative.pending;
   writeActivePointer(projectRoot, state, pending.observer.sessionId);
   // The child receives no Observer session id. Its bare implement commands
   // resolve through the sessionless bookmark, which must exist before the
