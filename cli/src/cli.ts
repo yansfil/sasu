@@ -42,7 +42,7 @@ Usage:
   sasu gate status    --slug <topic> [--json]
   sasu gate delegate  --slug <topic> --evidence "<verbatim delegating user message>" [--json]
   sasu gate reopen    --slug <topic> --gate <gap-audit|spec> --evidence "<verbatim user change request>" [--json]
-  sasu gate answer    --slug <topic> --gate <gap-audit|spec> --evidence "<verbatim user answer to the NEEDS_HUMAN bundle>" [--json]
+  sasu gate answer    --slug <topic> --gate gap-audit --evidence "<verbatim user answer to the NEEDS_HUMAN bundle>" [--json]
   sasu gate override  --slug <topic> --gate <gap-audit|spec> --reason "<why>" [--json]
   sasu implement intake   [--json]
   sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--dirty-attribution <pre-existing|run-owned|JSON-path-map>] [--json]
@@ -118,10 +118,12 @@ blocks at $0 with [prelint] findings - no judge call, no retry-budget attempt.
 Gap-audit and spec keep an open findings set, not a round budget. A rerun
 judges only the findings still open (plus new ones in a lane whose Decision
 Register rows changed), so the set can only shrink: BLOCK means an
-agent-fixable finding is open (fix it, re-run), NEEDS_HUMAN means every open
+agent-fixable finding is open (fix it, re-run). Only gap-audit emits NEEDS_HUMAN: every open
 finding needs a human decision (hand the bundle to the user, record their
 words with 'gate answer', which seals PASS without another judge call), and
-PASS seals the cycle. A sealed input change stops at $0 until the user
+PASS seals the cycle. Spec authority findings stay BLOCK with nextGate=gap-audit;
+one targeted gap-audit delta admits that referral without a fabricated user reopen.
+Spec never asks the user or accepts gate answer. Ordinary sealed input changes stop at $0 until the user
 explicitly opens a new cycle with 'gate reopen'. --grant-budget only retries a
 judge backend that failed three times in a row with the same structured cause
 and no verdict. Implementation verification is deterministic and has no
@@ -234,7 +236,9 @@ function printStatusView(view: GateStatusView): void {
   // attempts left" while every one of them is a broken backend call. The flag has
   // to say so here, or `sasu gate status` is the one surface that hides the
   // terminal cause the verification report and the Stop hook both report.
-  const terminal = view.effective === "NEEDS_HUMAN"
+  const terminal = view.nextGate === "gap-audit"
+    ? ` - NEXT GATE: gap-audit; run sasu gate gap-audit --slug ${view.topic} --qa-log <qa-log-path>. Spec never asks the user; resolve authority there, then repair the PRD and resume spec.`
+    : view.effective === "NEEDS_HUMAN"
     ? ` - NEEDS HUMAN: every open finding needs a human decision; ask the user the ${view.findings.length} question(s) below as one bundle, then record their words with: sasu gate answer --slug ${view.topic} --gate ${view.gate} --evidence "<the user's words>"`
     : view.reopenRequired
       ? ` - REOPEN REQUIRED: this sealed review's input changed; restore it or record the user's change request with gate reopen`
@@ -261,7 +265,7 @@ function printStatusView(view: GateStatusView): void {
     process.stdout.write(`  stale: ${input.path} ${input.reason} after this gate passed - restore it or explicitly reopen the review cycle\n`);
   }
   for (const finding of view.findings) {
-    const human = finding.requiresHuman ? " [needs human decision]" : "";
+    const human = finding.requiresHuman ? (view.gate === "spec" ? " [route to gap-audit]" : " [needs human decision]") : "";
     const id = finding.id !== undefined ? `${finding.id} ` : "";
     process.stdout.write(`  - ${id}${finding.severity} ${finding.area}: ${finding.missing}${human}\n`);
     if (finding.recommendation) process.stdout.write(`    fix: ${finding.recommendation}\n`);

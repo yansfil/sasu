@@ -31,8 +31,7 @@ agents/interview/<topic-slug>/qa-log.md
 
 If no context path is provided, inspect `agents/interview/` first for the matching
 or most recent qa-log. If no complete interview source
-exists and major ambiguity remains, ask one blocking question or recommend
-`$interview-me`.
+exists and major ambiguity remains, use `$interview-me` to establish the canonical source and route missing product authority through gap-audit.
 
 When qa-log.md is the source, read the complete file.
 Treat its Current Understanding as a navigation aid, not a substitute for the Decision Register, material Raw Q&A (Decision Packet content lives in each entry's `immediate_notes`), UX Scenario Cards, objections, evidence, and audit findings.
@@ -191,7 +190,8 @@ decision that shapes scope, UX, data, architecture, verification, delivery, or
 non-goals, every accepted proposal, and every rejected or deferred option.
 Treat a short affirmative response as acceptance of a recommendation only when its referent is unambiguous in the source conversation or qa-log.
 Silence, lack of objection, a topic change, or continued participation is not approval.
-If that distinction would materially change scope or behavior, ask one contract-breaking question instead of inventing consent.
+If that distinction needs new product authority, return it through gap-audit instead of inventing consent or asking directly from spec.
+With recorded delegation, reversible important or user-visible choices stay vetoable agent-owned assumptions, never user-approved decisions.
 
 This table is what both independent Fidelity and Code reviewers compare the implementation against at the end of `implement`.
 For a conversation-only PRD it is the only record of the conversation the harness can read.
@@ -233,8 +233,8 @@ structure boundary.
 Bullets for what could go wrong and what bounds it, open decisions with who
 owns them, and the safety boundary for any live proof. Work only the user can
 do before implementation (credentials, accounts, purchases, owner-identity
-steps) is one line here; the harness does not read it, so state it plainly and
-ask for it once. If nothing is needed from the user, say so.
+steps) is one line here; state it plainly and route missing authority through gap-audit once.
+If nothing is needed from the user, say so.
 
 ### Inline Self-Check Before Ready
 
@@ -295,21 +295,19 @@ An independent judge checks source fidelity, clear observable requirements, scop
 It checks every material Decision Register entry is represented without distortion.
 Deterministic prelint handles structural defects before that semantic review.
 
-- The gate keeps an open findings set, not a round budget. Every judged run
-  ends in one of three states:
-  - `BLOCK`: at least one open finding is agent-fixable.
-    Fix every such finding in the PRD, then re-run; the rerun judges only the
-    findings still open (by their `F<n>` id) and may add a finding only when
-    the qa-log's Decision Register rows changed, so the set can only shrink.
-  - `NEEDS_HUMAN`: every open finding needs a human decision.
-    Ask the user the whole bundle in one message, apply their decisions to the
-    PRD (and the qa-log Decision Register when a decision is new), then record
-    their words with
-    `sasu gate answer --slug <topic-slug> --gate spec --evidence "<the user's words>"`.
-    That seals PASS without another judge call.
+- The gate keeps an open findings set, not a round budget. Every judged run ends in `BLOCK` or `PASS`:
+  - `BLOCK`: unresolved fidelity or self-containment defects return to the author.
+    Fix every such finding in the PRD, then re-run; the rerun judges findings still open by their `F<n>` id and ordinarily admits new findings only where Decision Register rows or reopen evidence changed.
+    The explicit safety exception admits genuinely fresh `human_authority` findings at any severity and new P0 defects even when the register is unchanged; ordinary reversible choices do not qualify.
+    If the result includes `nextGate: gap-audit`, run `sasu gate gap-audit --slug <topic-slug> --qa-log agents/interview/<topic-slug>/qa-log.md`.
+    The CLI admits a targeted review of the spec authority referral without fabricating a user reopen, including after a gap-audit PASS.
+    Only gap-audit presents a `NEEDS_HUMAN` bundle and accepts `gate answer --gate gap-audit`.
+    Apply that outcome to the PRD, then resume spec's independent fidelity review.
   - `PASS`: the cycle is sealed.
-- A finding marked `needs human decision` goes to the user; do not resolve it
-  by editing the PRD toward your own guess.
+- Spec NEVER directly asks the user or presents `NEEDS_HUMAN`; `gate answer --gate spec` is refused.
+- Severity describes impact; structured disposition distinguishes `agent_fix`, `delegated_assumption`, and `human_authority`.
+  Under recorded delegation, reversible choices including material user-visible behavior are vetoable assumptions.
+  Credentials, money/cost, production data, destructive/irreversible effects, security/privacy/auth policy, public contract/migration, and unresolvable core-intent contradictions retain their authority boundary.
 - Only a new explicit user change request may open another cycle:
   `sasu gate reopen --slug <topic-slug> --gate spec --evidence "<the user's words>"`.
   The gate ledger preserves those words and supplies them to the judge without appending an interview answer.
@@ -381,11 +379,11 @@ wins, name the principle it overrides.
 4. Draft `prd.md` with the six sections, `human_approval: "pending"`, and a
    semantic review profile with rationale. Turn every qa-log UX Scenario Card
    into Behaviors rows for its primary, failure, and recovery paths.
-5. Ask only contract-breaking questions; do not rerun intake inside PRD.
+5. Route genuinely missing product authority through gap-audit; do not ask directly or rerun intake inside spec.
 6. Run the Inline Self-Check Before Ready and fix failures.
 7. Run the Harness Readiness Gate (`sasu prd readiness --prd`) and fix any
    blocking gaps.
-8. Run the sasu Spec Gate and fix findings until it passes or a human-decision finding stops the loop.
+8. Run the sasu Spec Gate and fix author-owned findings; route missing authority to gap-audit, then resume spec until it passes.
    If a required CLI or backend is unavailable, report the actual blocker and retain not-ready status.
    A conversation-only PRD with no qa-log uses the documented no-source skip; this does not excuse a failed required review.
 9. Mark `status: ready` only when blocking decisions are resolved, the inline

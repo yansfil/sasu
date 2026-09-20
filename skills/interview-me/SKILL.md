@@ -23,7 +23,10 @@ Match the user's language by default.
 - Keep the interview fast.
 - Ask only questions that change scope, behavior, acceptance, risk, implementation safety, or verification.
 - Keep one canonical artifact only: qa-log.md.
-- Own ordinary Q&A in the main agent.
+- Gap-audit owns the single user-question boundary throughout the interview and PRD flow.
+- The main agent delivers its question bundle and captures answers; do not create a separate pre-audit product questionnaire.
+- Under recorded `$please` delegation, resolve reversible product, UX, and taste choices within the intent as vetoable agent-owned assumptions, including important or user-visible choices.
+- Collect genuinely missing hard authority as blocking Decision Register entries for gap-audit; do not ask ahead of that boundary.
 - Do not spawn, retain, resume, or update subagents during ordinary questions.
 - Closure judgment is owned by the sasu gap-audit gate; use one fresh independent auditor subagent only as the recorded fallback when the sasu binary or judge backend is unavailable.
 - Do not use a numeric ambiguity score as a completion gate.
@@ -34,7 +37,7 @@ Match the user's language by default.
 Scope a coherent, production-quality product rather than an intentionally disposable MVP.
 Do not use first implementation, prototype, MVP, or time pressure as an implicit reason to omit product behavior or quality.
 Cover the complete primary journey and the relevant failure, recovery, accessibility, responsive, performance, security, operation, and support boundaries.
-Ask the user only when those boundaries require product or taste judgment.
+Route missing product authority through gap-audit; delegated reversible product or taste judgment remains an agent-owned assumption.
 Derive ordinary engineering quality from the repo and established practice without turning completeness into a questionnaire.
 Any deliberate scope reduction must be an explicit decision with the omitted behavior, user consequence, rationale, and revisit condition recorded in the Decision Register.
 
@@ -62,7 +65,8 @@ If automatic discovery is unavailable or you are deliberately recovering a known
 The explicit path is the override; do not pass it in a normal current-session flow.
 
 Ordinary answered questions require no tool call and no qa-log write.
-Keep the unresolved decision queue in the live conversation and ask the next question immediately.
+Keep the unresolved decision queue in the live conversation and deliver only the next question already owned by gap-audit.
+If none remains, record reversible delegated assumptions and collect hard-authority gaps for the next audit instead of inventing another question.
 At a checkpoint, on resume after interruption or compaction, and immediately before closure, import every completed assistant-text -> human-answer pair in one command:
 
 ~~~sh
@@ -101,7 +105,7 @@ Never edit `needs_normalization` or `outstanding_raw_entries` yourself; the chec
 Use an explicit list such as `--normalized "Q1,Q2"` only for a deliberate partial repair; naming an already-normalized entry aborts the whole checkpoint without writing anything.
 
 Run a mandatory `interview sync` immediately before the final full normalization, even when the last checkpoint was recent.
-Then mark qa-log.md complete and hand it to gen-prd.
+Then run gap-audit; only its PASS or recorded user answer marks qa-log.md complete for gen-prd.
 If the sasu binary is unavailable, fall back to direct edits that follow the artifact template exactly and record that fallback in the log.
 
 ## On-Demand Coherence Check
@@ -115,7 +119,8 @@ sasu interview coherence --slug <slug>
 This is an independent diagnostic - it has no access to the interview conversation and reads only the resolved decisions plus the Current Understanding summary, so it can test a specific direction-drift suspicion without inheriting the turn-by-turn framing that biases the interviewing agent.
 It judges coherence, not completeness: it reports only contradictions among resolved decisions and drift away from the stated goal, never missing decisions (that is the closure gate's job).
 It is advisory and never blocks: it does not touch gate state or the retry budget, a judge failure is safe to ignore, and it self-skips until at least three decisions are resolved.
-Treat any finding as a high-priority next-question candidate - a P0 coherence finding means the interview may be building on an invalidated premise, so resolve it with the user before piling on more questions.
+Repair coherence findings from established intent when possible.
+Route a truly unresolvable core-intent contradiction to gap-audit as missing authority; P0 severity alone does not authorize a user question.
 A PASS with no findings is the common, correct result; do not manufacture follow-ups from it.
 Do not run it on routine checkpoints, merely because three decisions exist, or inside the answer-to-question path.
 
@@ -124,11 +129,11 @@ Do not run it on routine checkpoints, merely because three decisions exist, or i
 The path from receiving an answer to asking the next question is the latency budget; everything else must stay out of it.
 
 1. Interpret the answer in the live context and update the in-memory unresolved decision queue.
-2. Ask the next question in the same reply without any qa-log, transcript, status, or decision command.
+2. Deliver the next gap-audit-owned question in the same reply without a capture command; do not ask an independent follow-up outside that bundle.
 3. Run `interview sync` only when resuming, at a checkpoint, or before closure.
 4. Repo or docs verification inside this path is at most one bounded lookup, and only when its result changes which question to ask next; batch anything broader into preflight or a checkpoint.
 5. UX Scenario Cards, Evidence, and Current Understanding edits happen at their trigger but never between an answer and the next question unless the next question depends on them; otherwise fold them into the next checkpoint.
-6. Between checkpoints, the live P0/P1 queue is the standing next-question queue; each checkpoint persists it into the Decision Register before the conversation proceeds.
+6. Between checkpoints, classify the live queue by authority, not priority: repair author defects, adopt delegated reversible assumptions, and persist unresolved authority for gap-audit.
 
 ## Preflight And Routing
 
@@ -147,14 +152,22 @@ Route each candidate answer before asking:
 | Answer kind | Source of truth | Interview behavior |
 | --- | --- | --- |
 | Existing fact | code, config, docs, or verified research | Record the evidence and tell the user briefly. |
-| Product or UX decision | user | Ask one focused question with a recommendation when useful. |
-| Mixed fact and decision | code or docs plus user judgment | Present verified facts, then ask the user to choose the intended behavior. |
-| Unknown external fact | current primary source | Research only when it materially changes a decision, then ask the user to confirm the decision. |
+| Reversible product or UX choice within intent | recorded delegation, otherwise user | Under `$please`, record a vetoable agent-owned assumption; otherwise collect the decision for gap-audit. |
+| Hard-authority decision | explicit user authority | Record the missing authority as blocking and let gap-audit own the question. |
+| Mixed fact and decision | code or docs plus delegated assumption or user authority | Separate verified facts from the choice; apply the same authority routing, without an immediate extra question. |
+| Unknown external fact | current primary source | Research when material; record the fact and route any remaining choice by authority. |
 
 Never convert an existing implementation fact into a new product decision without user confirmation.
 Never treat an agent inference as user intent.
 
 ## Decision Register
+
+Gap-audit is the single user-facing decision boundary for the interview and PRD gates, including new authority referred back by spec.
+In a delegated `$please` run, record the verbatim invocation with `sasu gate delegate` before adopting assumptions or auditing.
+That authority permits reversible choices within the intent to be recorded as vetoable agent-owned assumptions even when important or user-visible.
+P0/P1/P2 describes impact, not authority; a resolved material assumption is permitted under recorded delegation when the choice is reversible.
+Credentials, money/cost, production data, destructive/irreversible effects, security/privacy/auth policy, public contract/migration, and an unresolvable core-intent contradiction still require real authority.
+The ordinary silent-default rules below apply when no delegation exists and never broaden these hard boundaries.
 
 Maintain one compact Decision Register in qa-log.md.
 Create nodes only for material facts, decisions, assumptions, risks, and verification boundaries.
@@ -180,13 +193,15 @@ Use Status only for lifecycle state; a permitted P2 adopted default is Kind `ass
 
 Only silently adopt a default when it is reversible, does not change user-visible behavior, scope, public or provider contract, data shape, auth, security, cost, or launch criteria, and has an explicit verification path.
 Classify every silently adopted default as P2.
-Never mark a P0 or P1 assumption resolved: ask for explicit user agreement and record it as a decision, convert exact repository evidence into a fact, or defer the assumption with an owner and revisit trigger.
-Request explicit confirmation whenever a proposed resolution selects user-visible behavior, data lifecycle, a public or provider contract, compatibility or deprecation, auth or security, cost, or launch intent.
+Without recorded delegation, resolve a P0/P1 choice by explicit user agreement recorded as a decision, exact repository evidence recorded as a fact, or deferral with an owner and revisit trigger.
+Without recorded delegation, request explicit confirmation when a proposed resolution selects user-visible behavior or taste.
+Always obtain missing authority for credentials, money/cost, production data, destructive/irreversible effects, security/privacy/auth policy, public contract/migration, or an unresolvable core-intent contradiction.
+Local reversible lifecycle and compatibility details within the intent remain delegable assumptions.
 Record every adopted default as Kind assumption with its source and revisit trigger.
 Treat a short affirmative answer such as `yes`, `응`, or `그렇게 하자` as acceptance only when it unambiguously refers to the immediately preceding explicit recommendation.
 Record that source as a user-accepted recommendation in the relevant Q# rather than as an agent default.
 Silence, lack of objection, a topic change, or continuing the interview is not user consent.
-When the referent is ambiguous and the decision is material, ask one confirmation question; otherwise use only the silent-default rule above.
+When the referent is ambiguous and the decision is material, preserve the uncertainty and route needed confirmation through gap-audit; never relabel an assumption as user consent.
 
 ## UX And Behavior Pack
 
@@ -266,14 +281,15 @@ Use browser or runtime, API, DB, external, and human proof only where they prove
   When that budget is a question count, persist it with `interview init --question-limit <n>` so the cursor surfaces the boundary without a per-turn command.
   Never exceed it to satisfy coherence or gap-audit findings.
   At the limit, run the final sync and normalization, review whether any later captured exchange was a correction or closure response, audit once, record every remaining material gap, and mark the qa-log `paused` rather than asking another question or claiming PRD readiness.
-  Do not convert unresolved user-visible, scope, data, provider, access, cost, or lifecycle gaps into agent defaults merely to close within the budget.
-- Ask exactly one user-facing question at a time for P0 or P1 decisions, contradictions, UX choices that need judgment, and risk or operation questions.
-- Batch 3 to 5 low-risk confirmations only when they satisfy the silent-default rule.
+  Do not invent authority to close within the budget; recorded delegation still permits reversible assumptions without a question.
+- Deliver gap-audit's authority questions one at a time by default; use a bundle only when the user explicitly requests it.
+  Respect the user's current interaction budget in either format; bundling does not expand that budget, and severity alone never creates a question.
+- Do not request low-risk confirmations for choices covered by recorded delegation.
 - Explain briefly why a question changes the outcome or proof.
 - Include a recommended answer when it reduces cognitive load without concealing alternatives.
 - Preserve free-text reasoning, constraints, non-goals, and objections.
 - For a material free-text answer, normalize a Decision Packet before relying on it.
-- Confirm the packet only when interpretation could lose intent or alter scope.
+- Route packet confirmation through gap-audit only when unresolved authority could lose intent or alter scope.
 - `interview decision` anchors a resolved user-sourced decision onto a Raw Q&A entry automatically; use `--anchor none` only when the entry has no real turn to anchor to (a pre-interview fact, a repo-derived decision), and explain why in `immediate_notes`.
 - Do not repeat a resolved question unless new evidence reopened its node.
 - Treat I do not know as valid and classify the node as deferred or blocking.
@@ -380,14 +396,14 @@ normalization_checkpoint_every: 10
 1. Mirror current understanding in 2 to 4 bullets.
 2. Preflight the repository and classify relevant packs.
 3. Create qa-log.md with `sasu interview init`, then seed the preflight facts as register rows with `interview decision`.
-4. Ask the highest-impact unresolved decision, or a valid low-risk confirmation block.
-5. Continue ordinary questions with no recording command; keep decisions in live context until the next checkpoint.
+4. Record reversible choices covered by delegation as vetoable agent-owned assumptions, not user-approved decisions.
+5. Collect remaining missing authority for gap-audit without asking pre-audit questions; in a delegated run, only the hard-authority boundaries remain question candidates.
 6. Create or refresh a UX Scenario Card as soon as a user-facing primary flow is in scope, outside the answer-to-question path when possible.
 7. Every 10 answers, every 2 to 3 high-risk answers, or immediately when a P0 premise changes: run `interview sync`, batch-normalize the imported entries and Decision Register, run the intent, impact, and verification sweep, and record it with `interview checkpoint`; run `interview coherence` only if that sweep surfaces a concrete contradiction or goal-drift suspicion.
-8. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
+8. Before closure, restate the agreed goal in one sentence and check that another agent would build the intended outcome from that line.
 9. Run `interview sync` again, then full normalization and `interview checkpoint`.
 10. Run the sasu gap-audit gate. Fall back to one fresh independent read-only auditor subagent (in Claude Code, the default general-purpose subagent) or a recorded local fallback only when the `sasu` binary or its judge backend is unavailable.
-11. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
+11. Repair agent-fixable `BLOCK` findings; for `NEEDS_HUMAN`, deliver only gap-audit's questions using the Question Rules, or preserve unresolved items as blocking or deferred.
 12. The gate marks qa-log.md `status: complete` when it seals PASS; once it has, suggest `$gen-prd --context agents/interview/<topic-slug>/qa-log.md "<topic>"`.
 
 ## Gap-Audit Gate (sasu)
@@ -410,18 +426,25 @@ judge and never consume the retry budget.
 - The gate keeps an open findings set, not a round budget. Every judged run ends in one of three states:
   - `BLOCK`: at least one open finding is agent-fixable (`requiresHuman: false`).
     Resolve every such finding in the qa-log, then re-run.
-    The rerun judges only the findings still open (by their `F<n>` id) and may add a finding only in a lane whose Decision Register rows changed, so the set can only shrink.
+    The rerun judges findings still open by their `F<n>` id and ordinarily admits new findings only in lanes whose Decision Register rows or reopen evidence changed.
+    The explicit safety exception admits genuinely fresh `human_authority` findings at any severity and new P0 defects even when the register is unchanged; ordinary reversible choices do not qualify.
   - `NEEDS_HUMAN`: every open finding needs a human decision.
-    Ask the user the whole bundle in one message, record the decisions they give in the Decision Register, then record their words with `sasu gate answer --slug <topic-slug> --gate gap-audit --evidence "<the user's words>"`.
+    Deliver one question at a time by default, or the bundle when explicitly requested by the user, within their interaction budget.
+    Record the answers in the Decision Register; once every blocking authority decision is resolved, record their words with `sasu gate answer --slug <topic-slug> --gate gap-audit --evidence "<the user's words>"`.
     That seals PASS without another judge call; do not re-run the gate to "confirm" an answer.
   - `PASS`: the cycle is sealed.
 - A gap finding is not an answer; treat it only as evidence that a decision or source is missing.
 - `requiresHuman: false` does not authorize resolution.
-  Close such a finding only with an explicit user answer, exact repository evidence recorded as a fact, or a reversible P2 internal default that satisfies the silent-default rule.
-  Otherwise ask one focused question or defer it with an owner and revisit trigger, then re-run.
+  Close such a finding with an explicit user answer, exact repository evidence recorded as a fact, a reversible choice under recorded delegation, or a P2 internal default that satisfies the ordinary silent-default rule.
+  Otherwise record the missing authority for gap-audit or defer it with an owner and revisit trigger, then re-run; do not create another question stage.
 - Never promote a judge recommendation into a user decision or strengthen its scope, duration, lifecycle, compatibility, security, cost, or launch policy beyond the cited answer.
 - Prefer `--json` when consuming the result programmatically: it returns a structured object (top-level `contractVersion`, a `prelint` key separate from judge findings, verdict/attempt state) instead of scraping text.
-- A finding marked `needs human decision` must go to the user; never invent the answer.
+- A gap-audit finding still marked `needs human decision` must go to the user; never invent the answer.
+  A `delegated_assumption` finding under recorded delegation becomes a visible vetoable assumption without a user round trip; the original severity and source remain in the gate record.
+  Record already chosen defaults before the audit and carry recorded assumptions into the PRD Decisions table; do not edit a sealed document solely to chase advisory notes.
+- A spec `nextGate: gap-audit` referral is an explicit CLI-owned exception to ordinary seal admission.
+  Run gap-audit on the same qa-log; it reviews the new authority referral and existing open set, and only it may issue `NEEDS_HUMAN`.
+  Answer there, update the PRD, and resume spec; never fabricate user approval to reopen a gate.
 - Only a later explicit user change request may open another cycle with
   `sasu gate reopen --slug <topic-slug> --gate gap-audit --evidence "<the user's words>"`; it works on a sealed log too.
   Reopen evidence stays in the gate ledger and is supplied directly to the judge; reopening does not create a Raw Q&A answer or invalidate the sibling gate by itself.

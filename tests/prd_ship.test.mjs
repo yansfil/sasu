@@ -21,14 +21,15 @@ function write(file, text, mode) {
   if (mode) fs.chmodSync(file, mode);
 }
 
-function fixture() {
+function fixture(baselineFiles = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-ship-report-"));
   run("git", ["init", "-q"], { cwd: root });
   run("git", ["config", "user.name", "test"], { cwd: root });
   run("git", ["config", "user.email", "test@example.test"], { cwd: root });
   write(path.join(root, ".gitignore"), "agents/\n");
   write(path.join(root, "src", "feature.js"), "export const ready = false;\n");
-  run("git", ["add", ".gitignore", "src/feature.js"], { cwd: root });
+  for (const [relative, text] of Object.entries(baselineFiles)) write(path.join(root, relative), text);
+  run("git", ["add", ".gitignore", "src/feature.js", ...Object.keys(baselineFiles)], { cwd: root });
   run("git", ["commit", "-q", "-m", "baseline"], { cwd: root });
   const head = run("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.trim();
   write(path.join(root, "src", "feature.js"), "export const ready = true;\n");
@@ -141,16 +142,147 @@ test("local delivery never amends a verified checkpoint commit", () => {
   assert.equal(run("git", ["log", "-1", "--format=%s"], { cwd: current.root }).stdout.trim(), "checkpoint: implementation");
 });
 
-test("PR body draft exposes deterministic checks and both review disposition sections", () => {
+test("PR body draft reads Summary, Review, Evidence first and folds the machine record", () => {
   const current = fixture();
   const result = run(process.execPath, [shipScript, "body", "--state", current.statePath], { cwd: current.root, env: current.env });
   const output = JSON.parse(result.stdout);
+  assert.equal(output.template, null);
   const body = fs.readFileSync(path.join(current.root, output.bodyPath), "utf8");
-  assert.match(body, /## Deterministic Verification/);
+  const order = ["Related:", "## Summary", "## Review", "## Evidence", "## Breaking change", "<details><summary>Verification record</summary>"]
+    .map(marker => body.indexOf(marker));
+  assert.ok(order.every(index => index !== -1), `missing section in ${body}`);
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), "sections are out of reading order");
+  const record = body.slice(body.indexOf("<details>"));
+  assert.match(record, /S1: GREEN/);
+  assert.match(record, /verification-report\.json/);
+  assert.match(record, /Reviews: <!-- AGENT-FILL/);
+  assert.doesNotMatch(body.slice(0, body.indexOf("<details>")), /sha256|fingerprint/i, "hashes belong in the folded record only");
+  assert.doesNotMatch(body, /## Deterministic Verification|## Human Review Focus|## Delivery Staging/);
+  assert.doesNotMatch(body, /Mode: unknown|Branch: unknown/);
+});
+
+test("PR body draft takes the repository's own template and adds only the folded record", () => {
+  const current = fixture({
+    ".github/pull_request_template.md": [
+    "<!-- house guidance -->",
+    "",
+    "## Summary",
+    "",
+    "<!-- what changed -->",
+    "",
+    "## Review",
+    "",
+    "- **Judge**: <!-- product calls -->",
+    "",
+    "<details><summary>Verification record</summary>",
+    "",
+    "<!-- filled by ship -->",
+    "",
+    "</details>",
+    "",
+  ].join("\n"),
+  });
+  const result = run(process.execPath, [shipScript, "body", "--state", current.statePath], { cwd: current.root, env: current.env });
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.template, ".github/pull_request_template.md");
+  const body = fs.readFileSync(path.join(current.root, output.bodyPath), "utf8");
+  assert.ok(body.indexOf("<!-- house guidance -->") < body.indexOf("Related:"), "Related sits right under the template's leading comment");
+  assert.ok(body.indexOf("Related:") < body.indexOf("## Summary"), "Related sits above Summary");
+  assert.match(body, /Related: PRD `agents\/prd\/fixture\/prd\.md`/);
+  assert.match(body, /## Review\n\n- \*\*Judge\*\*: <!-- product calls -->/);
+  assert.doesNotMatch(body, /<!-- filled by ship -->/, "the template's placeholder record is replaced");
+  assert.equal((body.match(/<details>/g) || []).length, 1);
+  assert.match(body, /<details><summary>Verification record<\/summary>\n\n- PRD: `agents\/prd\/fixture\/prd\.md`/);
   assert.match(body, /S1: GREEN/);
-  assert.match(body, /## Agent Review: Fix Now/);
-  assert.match(body, /## Agent Review: Follow-up Improvements/);
-  assert.match(body, /verification-report\.json/);
+  assert.doesNotMatch(body, /## Breaking change/, "no house sections are added to a repository template");
+});
+
+function fakeGh(root) {
+  // Outside the fixture repository, so the fake never shows as an uncommitted change.
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-ship-gh-"));
+  const bin = path.join(outside, "bin");
+  const store = path.join(outside, "store");
+  fs.mkdirSync(store, { recursive: true });
+  write(path.join(bin, "gh"), `#!/usr/bin/env node
+const fs = require("fs"); const path = require("path");
+const args = process.argv.slice(2);
+const store = ${JSON.stringify(store)};
+fs.appendFileSync(path.join(store, "calls.log"), JSON.stringify(args) + "\\n");
+if (args[0] !== "api") { process.stdout.write("{}"); process.exit(0); }
+const put = args.includes("PUT");
+const target = args.find(arg => arg.startsWith("repos/"));
+const marker = path.join(store, encodeURIComponent(target));
+if (put) {
+  const input = JSON.parse(fs.readFileSync(args[args.indexOf("--input") + 1], "utf8"));
+  if (!input.message || !input.content) { process.stderr.write("bad payload"); process.exit(1); }
+  fs.writeFileSync(marker, input.content.length.toString());
+  process.stdout.write(JSON.stringify({ content: { sha: "deadbeef" } }));
+  process.exit(0);
+}
+if (fs.existsSync(marker)) { process.stdout.write("deadbeef\\n"); process.exit(0); }
+process.stderr.write("HTTP 404: Not Found"); process.exit(1);
+`, 0o755);
+  return { bin, store };
+}
+
+test("screenshots upload once per head into the assets repo and land under Summary", () => {
+  const current = fixture();
+  run("git", ["remote", "add", "origin", "https://github.com/example/product.git"], { cwd: current.root });
+  const gh = fakeGh(current.root);
+  const env = { ...current.env, PATH: `${gh.bin}:${current.env.PATH}` };
+  const png = Buffer.from("89504e470d0a1a0a", "hex");
+  write(path.join(current.root, "agents", "runs", "fixture", "artifacts", "01 overview.png"), png);
+  write(path.join(current.root, "agents", "runs", "fixture", "artifacts", "02-empty-state.png"), png);
+  const bodyPath = path.join(current.root, "agents", "runs", "fixture", "delivery", "pr-body.md");
+  write(bodyPath, "Related: #1\n\n## Summary\n\n- one\n- two\n\n## Review\n\n- judge\n\n<details><summary>Verification record</summary>\n\n- x\n\n</details>\n");
+  const args = [shipScript, "screenshots", "--state", current.statePath, "--assets-repo", "someone/pr-assets",
+    "--file", "agents/runs/fixture/artifacts/01 overview.png", "--caption", "Overview, grouped by worktree",
+    "--file", "agents/runs/fixture/artifacts/02-empty-state.png", "--caption", "02 empty state"];
+  let output = JSON.parse(run(process.execPath, args, { cwd: current.root, env }).stdout);
+  const head = current.report.headSha.slice(0, 7);
+  assert.equal(output.screenshots.length, 2);
+  assert.equal(output.screenshots[0].path, `product/fixture/${head}/01-overview.png`);
+  assert.equal(output.screenshots[0].url, `https://github.com/someone/pr-assets/blob/main/product/fixture/${head}/01-overview.png?raw=true`);
+  assert.equal(output.screenshots[0].caption, "Overview, grouped by worktree");
+  assert.equal(output.screenshots[1].caption, "02 empty state");
+  assert.ok(output.screenshots.every(item => item.uploaded));
+  assert.equal(output.body.updated, true);
+  const body = fs.readFileSync(bodyPath, "utf8");
+  const summaryAt = body.indexOf("## Summary");
+  const imageAt = body.indexOf("![Overview, grouped by worktree](");
+  const reviewAt = body.indexOf("## Review");
+  assert.ok(summaryAt < imageAt && imageAt < reviewAt, `images sit between Summary and Review:\n${body}`);
+  assert.match(body, /- two\n\n!\[Overview, grouped by worktree\]\(.*\)\n\n!\[02 empty state\]\(.*\)\n\n## Review/);
+
+  output = JSON.parse(run(process.execPath, args, { cwd: current.root, env }).stdout);
+  assert.ok(output.screenshots.every(item => item.uploaded === false), "a second run uploads nothing");
+  assert.equal(output.body.updated, false);
+  assert.equal(fs.readFileSync(bodyPath, "utf8"), body, "a second run leaves the body as it was");
+  const puts = fs.readFileSync(path.join(gh.store, "calls.log"), "utf8").split("\n").filter(line => line.includes("\"PUT\""));
+  assert.equal(puts.length, 2);
+
+  const bad = run(process.execPath, [shipScript, "screenshots", "--state", current.statePath, "--file", "agents/runs/fixture/artifacts/02-empty-state.png"], { cwd: current.root, env, allowFailure: true });
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /--assets-repo/);
+  const uneven = run(process.execPath, [...args, "--caption", "one too many"], { cwd: current.root, env, allowFailure: true });
+  assert.notEqual(uneven.status, 0);
+  assert.match(uneven.stderr, /one --caption per --file/);
+});
+
+test("ship refuses a body that still carries template comments or lacks the record", () => {
+  const current = fixture();
+  const bodyPath = path.join(current.root, "agents", "runs", "fixture", "delivery", "pr-body.md");
+  write(bodyPath, "## Summary\n\n- done\n\n<!-- leftover guidance -->\n\n<details><summary>Verification record</summary>\n\n- Verification report: x\n\n</details>\n");
+  const shipArgs = [shipScript, "ship", "--state", current.statePath, "--no-watch", "--no-gpg-sign", "--override-mode", "--reason", "test"];
+  let result = run(process.execPath, shipArgs, { cwd: current.root, env: current.env, allowFailure: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /template comments/);
+  write(bodyPath, "## Summary\n\n- done, see the verification report\n");
+  result = run(process.execPath, shipArgs, { cwd: current.root, env: current.env, allowFailure: true });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Verification record/);
+  let preflight = JSON.parse(run(process.execPath, [shipScript, "preflight", "--state", current.statePath], { cwd: current.root, env: current.env }).stdout);
+  assert.equal(preflight.body.status, "draft-unfilled-or-invalid");
 });
 
 test("delivery refuses a stale report identity before staging", () => {

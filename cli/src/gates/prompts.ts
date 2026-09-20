@@ -18,17 +18,21 @@ const GAP_JSON_CONTRACT = `Reply with ONLY a JSON object, no prose, no code fenc
       "severity": "P0" | "P1" | "P2",
       "missing": "<one sentence: the concrete gap>",
       "recommendation": "<one sentence: how to close it>",
-      "requiresHuman": true | false
+      "requiresHuman": true | false,
+      "disposition": "agent_fix" | "delegated_assumption" | "human_authority"
     }
   ]
 }
 Rules:
-- BLOCK only for material gaps (P0/P1) that would change scope, behavior, acceptance, risk, or verification.
-- P0 is narrow: a direct contradiction of stated user intent, missing authority for a destructive,
-  production, security, privacy, cost, or irreversible data decision, or a core behavior that cannot
-  be implemented as written. Do not use P0 for ordinary implementation detail or proof not yet produced.
+- BLOCK for material gaps (P0/P1) that change scope, behavior, acceptance, risk, or verification,
+  or for genuinely missing human authority at any severity.
+- P0 is narrow: a direct contradiction of stated user intent, a core behavior that cannot be
+  implemented as written, or potential severe harm involving security, privacy, cost, production
+  data, or destructive/irreversible effects. Missing approval alone does not determine severity;
+  assess the potential impact separately from authority. Do not use P0 for ordinary implementation
+  detail or proof not yet produced.
 - List EVERY material gap you can find in THIS single pass. Do not hold findings back for a later
-  round: a re-run on the fixed document should find nothing new unless the document changed.
+  round: a re-run should find nothing new unless the document changed or the safety exception below applies.
 - Depth bar: internal API details that a competent implementer resolves by following the codebase's
   existing conventions - parameter type guards, null/undefined contracts, return-shape mechanics,
   which case variant gets stored - are at most P2 notes, NEVER blockers. Block only on decisions
@@ -41,13 +45,22 @@ Rules:
   policy. If the recorded policy is stronger or broader than the cited answer - including its scope,
   duration, lifecycle, compatibility, security, cost, or launch effect - report the unsupported part.
   Treat invented consent as P0 because it corrupts the canonical PRD source, including on a re-run.
-- PASS may carry P2 notes only.
-- requiresHuman is true whenever closure needs explicit user intent or approval, including product
-  behavior, scope, data lifecycle, public or provider contracts, compatibility or deprecation,
-  auth or security, cost, launch, and taste judgments.
-- requiresHuman: false does not authorize the agent to invent or silently resolve a policy. Use false
-  only when exact repository evidence settles the gap or the remaining choice is a reversible internal
-  P2 engineering detail; otherwise recommend explicit confirmation or deferral.
+- PASS may carry P2 notes only when they require no human authority.
+- Classify resolution separately from severity using disposition:
+  agent_fix: the author can repair fidelity, contradictions, unclear wording, missing observable
+  outcomes, or unsupported claims using existing intent and evidence. requiresHuman must be false.
+  delegated_assumption: a reversible choice within the stated intent, including important or
+  user-visible behavior, UX, layout and taste. requiresHuman must be true; a recorded delegation
+  lets the harness retain it as a vetoable agent-owned assumption without asking the user.
+  human_authority: genuinely missing credentials, money/cost approval, production-data authority,
+  destructive/irreversible effects, security/privacy/auth policy, public contract/migration, or an
+  unresolvable core-intent contradiction. requiresHuman must be true. Delegation never supplies it.
+- P0/P1/P2 describes impact, not who may decide. Importance or visibility alone does not require
+  human authority. Never label an ordinary reversible choice P0 to force a question.
+- A recorded agent-owned assumption is not invented consent. Falsely calling it user-approved is
+  an author-fixable fidelity defect; preserve the assumption label instead of requesting approval.
+- Without delegation, reversible choices still require a gap-audit decision or explicit deferral.
+- requiresHuman: false does not authorize invented consent or expansion beyond the established intent.
 - Never output a numeric score of any kind.`;
 
 /** An open finding carried into a rerun, by its harness id. */
@@ -184,8 +197,8 @@ function rerunContext(priorFindings: PriorFinding[], rerun: boolean, decisionsCh
     ? `The Decision Register rows in your lane or the supplied reopen evidence CHANGED since the previous round, so you may report a genuinely
    NEW gap that the changed decisions or reopen request introduced. A new finding carries NO "id" field. Do not report a new
    finding about text that did not change.`
-    : `The Decision Register rows in your lane and the supplied reopen evidence did NOT change since the previous round, so no new finding is
-   admissible: the harness discards any finding whose "id" is not in the list above. Do not open new lines
+    : `The Decision Register rows in your lane and the supplied reopen evidence did NOT change since the previous round, so ordinary new findings are
+   inadmissible: the harness discards unknown ids except for the safety exception below. Do not open new lines
    of questioning about aspects that were previously acceptable.`;
   return `
 DELTA REVIEW CONTEXT: this document already received its exhaustive review, and the author revised it.
@@ -196,7 +209,12 @@ Your job is to close that review out, not to restart it:
    verbatim as an extra field "id" (e.g. "id": "F3") so the harness can match it. You may update its
    severity, wording, and requiresHuman to what the revision now warrants.
 3. ${newRule}
-4. Do not reserve concerns for another round.
+4. SAFETY EXCEPTION: even when Decision Register rows and reopen evidence are unchanged, report
+   genuinely new human_authority findings at ANY severity, and new P0 defects. A PRD-only edit can
+   introduce these risks without changing the register. Use NO "id" for a fresh finding, explain
+   the missing authority or severe impact, and keep severity independent of who may decide.
+   This exception does not admit ordinary reversible choices or reopen previously accepted taste.
+5. Do not reserve concerns for another round.
 
 ${prior}
 `;
@@ -254,7 +272,7 @@ export function gapAuditPrompt(
 ): string {
   const exhaustiveBlock = options.lane
     ? `Sweep the log ONCE for your lane only and list every material gap in YOUR lane in this single
-reply: a re-run on the fixed log must find nothing new in your lane unless the document changed.`
+reply: a re-run must find nothing new unless the document changed or the delta safety exception applies.`
     : `Be exhaustive NOW, not later. Before answering, sweep every operation, entity, and behavior the log
 already mentions and list, in this same reply, every unspecified error and edge-case decision for
 each of them (invalid input, missing/unknown id, empty or conflicting state, ordering ties). If an
@@ -313,6 +331,10 @@ This is a pre-implementation spec gate. Judge whether the PRD states clear obser
 product decisions. Do not require completed runtime evidence, production execution, exact DOM selectors,
 exact command lines, exact file names, or low-level implementation choices that a competent implementer
 can derive safely from the repository. Those belong to implementation and verify, not PRD approval.
+Spec NEVER asks the user and never presents NEEDS_HUMAN.
+Return author-fixable fidelity and self-containment defects as agent_fix for PRD repair.
+If genuinely new missing product authority remains, classify it human_authority; the harness routes
+it back through gap-audit, the single user-facing decision boundary. Do not invent an answer.
 
 ${axes}
 

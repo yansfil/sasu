@@ -34,6 +34,8 @@ import {
   reopenPrdGate,
   recordGateResult,
   sha256Of,
+  specReferral,
+  admitSpecReferral,
   staleInputsFor,
   type GateId,
   type GateInput,
@@ -135,21 +137,16 @@ export function priorFindingsFor(state: ReturnType<GateStore["load"]>, gate: Gat
 }
 
 /**
- * A finding that explicitly requires a human decision can never remain a P2
- * advisory. Normalizing it to P1 keeps all fresh and re-run paths fail-closed
- * even when a judge underestimates its severity.
+ * Authority is independent of impact. Normalize the compatibility flag from
+ * disposition without changing the judge's severity; old replies fail closed.
  */
 export function enforceHumanBlocking(judged: GapVerdict): GapVerdict {
-  const findings = judged.findings.map((finding) =>
-    finding.requiresHuman && finding.severity === "P2"
-      ? {
-          ...finding,
-          severity: "P1" as const,
-          recommendation: `[promoted: explicit human decision required] ${finding.recommendation}`,
-        }
-      : finding,
-  );
-  return { verdict: findings.some((finding) => finding.severity !== "P2") ? "BLOCK" : "PASS", findings };
+  const findings = judged.findings.map((raw) => {
+    const disposition = raw.disposition ?? (raw.requiresHuman ? "human_authority" : undefined);
+    const finding = { ...raw, ...(disposition === undefined ? {} : { disposition }), requiresHuman: disposition === undefined ? raw.requiresHuman : disposition !== "agent_fix" };
+    return finding;
+  });
+  return { verdict: findings.some((finding) => finding.severity !== "P2" || finding.requiresHuman) ? "BLOCK" : "PASS", findings };
 }
 
 /**
@@ -158,18 +155,14 @@ export function enforceHumanBlocking(judged: GapVerdict): GapVerdict {
  * veto-able assumptions, and this extends that trade to the gate's
  * human-consent findings. The judge still runs and every finding is still
  * produced and recorded (item 1: proof is never cut) - what changes is the
- * disposition: a non-P0 requiresHuman finding no longer blocks, it is
- * demoted to an advisory P2 whose recommendation names the assumption, and
+ * disposition: an explicitly delegable reversible finding no longer blocks,
+ * while its severity is preserved in the advisory and
  * the original finding lands verbatim in GateRecord.humanAssumptions with
  * the invocation as evidence.
  *
- * The P0 floor is deliberate and it is the only severity line that matters
- * here: enforceHumanBlocking promotes every human finding to at least P1,
- * so P1+requiresHuman IS the normal consent question ("which delivery
- * scope?", "which retention default?") - exactly the class the user
- * delegated. P0+requiresHuman means invented consent or an unimplementable
- * document; converting that would push through the corruption the gate
- * exists to stop, so it still blocks.
+ * Authority is a separate structured disposition; an old requiresHuman
+ * reply without it stays blocked rather than guessing whether it is safe.
+ * Hard authority remains blocking at every severity, including P2.
  *
  * Who may turn this on is prose-guarded like --grant-budget and
  * --allow-unapproved-prd (see 5644260): the CLI has no trusted channel to
@@ -182,19 +175,13 @@ export function assumeHumanFindings(
   converged: { verdict: "PASS" | "BLOCK"; findings: Finding[] },
 ): { verdict: "PASS" | "BLOCK"; findings: Finding[]; assumed: Finding[] } {
   const assumed: Finding[] = [];
-  const findings = converged.findings.map((finding) => {
-    if (!finding.requiresHuman || finding.severity === "P0") return finding;
+  const findings = converged.findings.filter((finding) => {
+    if (finding.disposition !== "delegated_assumption") return true;
     assumed.push(finding);
-    return {
-      ...finding,
-      severity: "P2" as const,
-      requiresHuman: false,
-      recommendation:
-        `[assumed under the recorded delegated invocation: record the chosen default in Decision Traceability; the user may veto] ${finding.recommendation}`,
-    };
+    return false;
   });
   return {
-    verdict: findings.some((finding) => finding.severity !== "P2") ? "BLOCK" : "PASS",
+    verdict: findings.some((finding) => finding.severity !== "P2" || finding.requiresHuman) ? "BLOCK" : "PASS",
     findings,
     assumed,
   };
@@ -259,7 +246,16 @@ export function mergeLaneFindings(lanes: { laneId: string; findings: Finding[]; 
                 : existing.finding;
         const combined = enforceHumanBlocking({
           verdict: "PASS",
-          findings: [{ ...preferred, requiresHuman: existing.finding.requiresHuman || finding.requiresHuman }],
+          findings: [{
+            ...preferred,
+            requiresHuman: existing.finding.requiresHuman || finding.requiresHuman,
+            // A duplicate must retain the strongest authority boundary, independently of impact.
+            disposition: [existing.finding, finding].some((f) => f.disposition === "human_authority" || (f.disposition === undefined && f.requiresHuman))
+              ? "human_authority"
+              : [existing.finding, finding].some((f) => f.disposition === "agent_fix" || (f.disposition === undefined && !f.requiresHuman))
+                ? "agent_fix"
+                : "delegated_assumption",
+          }],
         }).findings[0]!;
         seen.set(key, { finding: combined, blocking: existing.blocking || laneBlocking });
       }
@@ -271,7 +267,7 @@ export function mergeLaneFindings(lanes: { laneId: string; findings: Finding[]; 
     if (entry.blocking || entry.finding.requiresHuman || entry.finding.severity === "P0") findings.push(entry.finding);
     else advisories.push(entry.finding);
   }
-  const verdict = findings.some((f) => f.severity !== "P2") ? "BLOCK" : "PASS";
+  const verdict = findings.some((f) => f.severity !== "P2" || f.requiresHuman) ? "BLOCK" : "PASS";
   return { verdict, findings, advisories, dedupedCount, laneFindingCounts };
 }
 
@@ -367,8 +363,8 @@ export interface OpenSetOutcome {
  *     open. A finding with no (or an unknown) id is new, and is kept only if
  *     its lane's decisions changed; otherwise it is dropped. So the open set
  *     is a subset of the prior set plus the changed lanes' additions, and an
- *     unchanged document converges by construction. The one exception is the
- *     severity floor: a new P0 is admitted from any lane, because a PRD edit
+ *     unchanged document converges by construction. Fresh hard authority and
+ *     the severity floor are exceptions: a new P0 is admitted from any lane, because a PRD edit
  *     made to close a spec finding can introduce a security or destructive
  *     defect without touching the Decision Register, and a bound that drops
  *     a reported P0 is not convergence but blindness (RF4, 2026-09-06). A
@@ -376,11 +372,12 @@ export interface OpenSetOutcome {
  *     override, and that costs the same one round it always did.
  *  2. Lanes merge with dedupe; non-blocking-lane findings become warnings
  *     unless they need a human decision.
- *  3. Under a delegated run, non-P0 human findings become assumptions.
+ *  3. Under a delegated run, explicitly reversible choices become assumptions.
  *  4. The verdict is a pure function of the open set: empty -> PASS, all
  *     requiresHuman -> NEEDS_HUMAN (one bundle for the user), else BLOCK.
  */
 export function applyOpenSetContract(input: {
+  gate?: "gap-audit" | "spec";
   prior: PriorFinding[];
   lanes: JudgedLane[];
   rerun: boolean;
@@ -391,7 +388,10 @@ export function applyOpenSetContract(input: {
   const echoed = new Set<string>();
   const admitted = input.lanes.map((lane) => {
     const findings: Finding[] = [];
-    for (const finding of lane.findings) {
+    for (const raw of lane.findings) {
+      // Normalize legacy authority before admission, not only after merging:
+      // otherwise an unchanged lane can silently discard a real authority gap.
+      const finding = enforceHumanBlocking({ verdict: "PASS", findings: [raw] }).findings[0]!;
       if (!input.rerun) {
         // A first round hands out no ids; anything the judge invented is noise.
         const { id: _ignored, ...fresh } = finding;
@@ -404,7 +404,7 @@ export function applyOpenSetContract(input: {
         continue;
       }
       const { id: _unknown, ...fresh } = finding;
-      if (lane.decisionsChanged || fresh.severity === "P0") findings.push(fresh);
+      if (lane.decisionsChanged || fresh.severity === "P0" || fresh.disposition === "human_authority") findings.push(fresh);
       else dropped.push(fresh);
     }
     return { laneId: lane.laneId, blocking: lane.blocking, findings };
@@ -413,11 +413,15 @@ export function applyOpenSetContract(input: {
   const disposed = input.assumeEvidence !== undefined
     ? assumeHumanFindings({ verdict: merged.verdict, findings: merged.findings })
     : { verdict: merged.verdict, findings: merged.findings, assumed: [] as Finding[] };
-  const open = disposed.findings.filter((f) => f.severity !== "P2");
-  const warnings = [...disposed.findings.filter((f) => f.severity === "P2"), ...merged.advisories];
+  const open = disposed.findings.filter((f) => f.severity !== "P2" || f.requiresHuman);
+  const warnings = [
+    ...disposed.findings.filter((f) => f.severity === "P2" && !f.requiresHuman),
+    ...merged.advisories,
+    ...disposed.assumed.map((finding) => ({ ...finding, requiresHuman: false, recommendation: `[agent-owned assumption under the recorded delegation; record the chosen default in Decisions; user may veto] ${finding.recommendation}` })),
+  ];
   const verdict: OpenSetOutcome["verdict"] = open.length === 0
     ? "PASS"
-    : open.every((f) => f.requiresHuman)
+    : input.gate !== "spec" && open.every((f) => f.requiresHuman)
       ? "NEEDS_HUMAN"
       : "BLOCK";
   return {
@@ -456,6 +460,20 @@ function recordQaLogAudit(
     updated = setQaLogStatus(updated, "complete");
   }
   replaceQaLog(file, original, refreshBookkeeping(updated));
+}
+
+/** A referral may reopen only its existing canonical source, never a substitute log. */
+function assertReferralQaLog(projectRoot: string, state: ReturnType<GateStore["load"]>, input: GateInput): void {
+  if (specReferral(state) === null) return;
+  const specInput = state.gates.spec?.inputs?.find((candidate) => candidate.kind === "qa-log");
+  if (specInput === undefined) throw new Error("Spec referral has no pinned qa-log; restore its canonical source record before gap-audit");
+  const gapInput = state.gates["gap-audit"]?.inputs?.find((candidate) => candidate.kind === "qa-log");
+  const actual = fs.realpathSync(path.resolve(projectRoot, input.path));
+  for (const pinned of [specInput, ...(gapInput === undefined ? [] : [gapInput])]) {
+    if (actual !== fs.realpathSync(path.resolve(projectRoot, pinned.path))) {
+      throw new Error(`Spec referral qa-log mismatch: use --qa-log ${pinned.path}; a referral cannot replace its canonical interview log`);
+    }
+  }
 }
 
 function auditEntryFor(state: GatesState, gate: Extract<GateId, "gap-audit" | "spec">, result: AuditEntryInput["result"], note?: string): Omit<AuditEntryInput, "type"> {
@@ -516,6 +534,28 @@ async function runGapListGate(
   }
   try {
     let state = store.load();
+    const referral = specReferral(state);
+    if (gate === "spec" && referral !== null && (state.gates["gap-audit"]?.reviewedSpecReferral !== referral.sha256 || gateStatus(state, "gap-audit", config.judge.retryBudget, projectRoot).effective !== "PASS")) {
+      return {
+        ok: false, status: gateStatus(state, gate, config.judge.retryBudget, projectRoot), zeroJudgeCalls: true,
+        error: { code: "gap-audit-required", message: "Spec is waiting for gap-audit to resolve its authority referral; no judge was called", recovery: `Run sasu gate gap-audit --slug ${topic} --qa-log ${inputs.find((input) => input.kind === "qa-log")!.path}, then repair the PRD and resume spec.` },
+      };
+    }
+    if (gate === "gap-audit" && referral !== null) {
+      const pending = state.gates["gap-audit"]?.reviewedSpecReferral !== referral.sha256;
+      const qaLog = inputs.find((input) => input.kind === "qa-log");
+      if (qaLog === undefined) throw new Error("Spec referral requires a qa-log input");
+      assertReferralQaLog(projectRoot, state, qaLog);
+      const file = path.resolve(projectRoot, qaLog.path);
+      const original = pending ? fs.readFileSync(file, "utf8") : undefined;
+      // Reactivate only after admission succeeds. A refused referral must not
+      // change the document, and an unfinished re-audit must not look complete.
+      state = admitSpecReferral(store, referral.sha256);
+      if (original !== undefined) {
+        const active = setQaLogStatus(original, "active");
+        if (active !== original) replaceQaLog(file, original, refreshBookkeeping(active));
+      }
+    }
     if (options?.grantBudgetEvidence !== undefined) {
       state = grantGateBudget(store, state, gate, options.grantBudgetEvidence, config.judge.retryBudget);
     }
@@ -582,6 +622,12 @@ async function runGapListGate(
           laneDigests[laneId] = sha256Of(JSON.stringify([laneDigests[laneId], reopenEvidence]));
         }
       }
+      if (gate === "gap-audit" && referral !== null) {
+        for (const laneId of Object.keys(laneDigests)) laneDigests[laneId] = sha256Of(JSON.stringify([laneDigests[laneId], referral.sha256]));
+      }
+      const promptWithReferral = (prompt: string): string => gate === "gap-audit" && referral !== null
+        ? `${prompt}\nSPEC AUTHORITY REFERRAL (review only these new authority gaps plus the prior open set; this is not user consent):\n${JSON.stringify(referral.findings)}\nResolve against the interview evidence. Only gap-audit may return a user decision bundle.\n`
+        : prompt;
       const decisionsChanged = (laneId: string): boolean =>
         isRerun && pinnedDigests[laneId] !== laneDigests[laneId];
       const effort = laneEffortFor(config, gate);
@@ -595,7 +641,7 @@ async function runGapListGate(
           config,
           purpose,
           "routine",
-          buildPrompt(priorFindings, { rerun: isRerun, decisionsChanged: decisionsChanged(SINGLE_JUDGE_LANE_ID), delegationEvidence, reopenEvidence }),
+          promptWithReferral(buildPrompt(priorFindings, { rerun: isRerun, decisionsChanged: decisionsChanged(SINGLE_JUDGE_LANE_ID), delegationEvidence, reopenEvidence })),
           validateGapVerdict,
           { effort },
         );
@@ -629,14 +675,14 @@ async function runGapListGate(
                 config,
                 `${purpose}:lane:${lane.id}`,
                 "routine",
-                buildPrompt(routedPrior.get(lane.id) ?? [], {
+                promptWithReferral(buildPrompt(routedPrior.get(lane.id) ?? [], {
                   lane,
                   laneCount: lanes.length,
                   rerun: isRerun,
                   decisionsChanged: decisionsChanged(lane.id),
                   delegationEvidence,
                   reopenEvidence,
-                }),
+                })),
                 validateGapVerdict,
                 { effort },
               );
@@ -682,7 +728,7 @@ async function runGapListGate(
         }));
       }
 
-      const outcome = applyOpenSetContract({ prior: priorFindings, lanes: judged, rerun: isRerun, assumeEvidence });
+      const outcome = applyOpenSetContract({ gate, prior: priorFindings, lanes: judged, rerun: isRerun, assumeEvidence });
       if (outcome.dropped.length > 0) {
         process.stderr.write(
           `sasu: ${gate}: ${outcome.dropped.length} new finding(s) from lanes whose decisions did not change were discarded (recorded in the round artifact)\n`,
@@ -699,10 +745,12 @@ async function runGapListGate(
           warnings: outcome.warnings,
           laneDigests,
           inputs,
+          ...(gate === "gap-audit" && referral !== null ? { reviewedSpecReferral: referral.sha256 } : {}),
           ...(delegationSha256 !== undefined ? { delegationSha256 } : {}),
           ...(assumeEvidence !== undefined ? { humanAssumption: { evidence: assumeEvidence, findings: outcome.assumed } } : {}),
           artifactPayload: {
             verdict: outcome.verdict,
+            ...(gate === "gap-audit" && referral !== null ? { specReferral: referral } : {}),
             judgedVerdict: outcome.judgedVerdict,
             rerun: isRerun,
             dedupedCount: outcome.dedupedCount,
@@ -743,7 +791,12 @@ export async function runGapAudit(
   gateOptions?: { grantBudgetEvidence?: string; assumeHumanEvidence?: string },
 ): Promise<GateCommandResult> {
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
-  const prelint = runPrelint("qa-log", qaLog.content);
+  const state = new GateStore(projectRoot, topic).load();
+  // Check identity before structural lint so a substitute log gets the
+  // actionable referral error. Prelint failures themselves leave gate state unchanged.
+  assertReferralQaLog(projectRoot, state, qaLog.input);
+  const delegated = state.delegation !== undefined || Boolean(gateOptions?.assumeHumanEvidence?.trim());
+  const prelint = runPrelint("qa-log", qaLog.content, delegated);
   if (!prelint.ok) return prelintBlock(projectRoot, config, topic, "gap-audit", prelint);
   emitPrelintWarnings(prelint);
   const result = await runGapListGate(
@@ -927,6 +980,7 @@ export function runAnswer(
   gate: Extract<GateId, "gap-audit" | "spec">,
   evidence: string,
 ): GateStatusView {
+  if (gate === "spec") throw new Error("gate answer --gate spec is retired: run gap-audit to resolve the authority referral, then resume spec");
   const store = new GateStore(projectRoot, topic);
   const record = store.load().gates[gate];
   if (record === undefined || record.verdict !== "NEEDS_HUMAN") {

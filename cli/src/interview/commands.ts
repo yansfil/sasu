@@ -137,8 +137,8 @@ function readQaLog(projectRoot: string, slug: string): { file: string; content: 
  * decision) live in `warnings`, which drift never reads, so the
  * decision-before-log ordering inside a turn cannot produce drift noise.
  */
-function driftFindings(content: string): PrelintFinding[] {
-  return runPrelint("qa-log", content).findings.filter((finding) => finding.rule !== "qa-register-open");
+function driftFindings(content: string, delegated: boolean): PrelintFinding[] {
+  return runPrelint("qa-log", content, delegated).findings.filter((finding) => finding.rule !== "qa-register-open");
 }
 
 function result(
@@ -150,7 +150,8 @@ function result(
   extraDrift: PrelintFinding[] = [],
 ): InterviewResult {
   const state: QaLogState = readQaLogState(content);
-  const drift = [...driftFindings(content), ...extraDrift];
+  const delegated = new GateStore(projectRoot, slug).load().delegation !== undefined;
+  const drift = [...driftFindings(content, delegated), ...extraDrift];
   return {
     ok: true,
     action,

@@ -163,7 +163,7 @@ const QA_KINDS = ["fact", "decision", "assumption"];
 const QA_PRIORITIES = ["P0", "P1", "P2"];
 const QA_STATUSES = ["open", "resolved", "deferred", "blocking", "rejected"];
 
-export function prelintQaLog(content: string): PrelintResult {
+export function prelintQaLog(content: string, delegated = false): PrelintResult {
   const findings: PrelintFinding[] = [];
   const warnings: PrelintFinding[] = [];
   const lines = content.split("\n");
@@ -344,7 +344,7 @@ export function prelintQaLog(content: string): PrelintResult {
               );
             }
           }
-          if (kind === "assumption" && status === "resolved" && (priority === "P0" || priority === "P1")) {
+          if (kind === "assumption" && status === "resolved" && (priority === "P0" || priority === "P1") && !delegated) {
             findings.push(
               finding(
                 "qa-resolved-material-assumption",
@@ -615,9 +615,9 @@ export function prelintContract(content: string): PrelintResult {
  * Uniform fail-closed wrapper (D-11): any prelint execution error - not just a
  * recognized document defect - blocks the gate instead of reaching the judge.
  */
-export function runPrelint(doc: "qa-log" | "prd" | "contract", content: string): PrelintResult {
+export function runPrelint(doc: "qa-log" | "prd" | "contract", content: string, delegated = false): PrelintResult {
   try {
-    return doc === "qa-log" ? prelintQaLog(content) : doc === "contract" ? prelintContract(content) : prelintPrd(content);
+    return doc === "qa-log" ? prelintQaLog(content, delegated) : doc === "contract" ? prelintContract(content) : prelintPrd(content);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {

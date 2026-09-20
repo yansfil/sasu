@@ -25,6 +25,16 @@ test("validateGapVerdict accepts a PASS with empty findings", () => {
   assert.deepEqual(validateGapVerdict({ verdict: "PASS", findings: [] }), { verdict: "PASS", findings: [] });
 });
 
+test("gap finding disposition round-trips, rejects unknown authority, and retains old replies", () => {
+  const finding = { area: "ux", severity: "P1", missing: "choose overflow", recommendation: "use a reversible menu", requiresHuman: true };
+  for (const disposition of ["agent_fix", "delegated_assumption", "human_authority"]) {
+    const result = validateGapVerdict({ verdict: "BLOCK", findings: [{ ...finding, disposition }] });
+    assert.equal(result.findings[0].disposition, disposition);
+  }
+  assert.equal(typeof validateGapVerdict({ verdict: "BLOCK", findings: [{ ...finding, disposition: "P0" }] }), "string");
+  assert.deepEqual(validateGapVerdict({ verdict: "BLOCK", findings: [finding] }).findings, [finding]);
+});
+
 test("validateGapVerdict rejects BLOCK without findings", () => {
   assert.equal(typeof validateGapVerdict({ verdict: "BLOCK", findings: [] }), "string");
 });

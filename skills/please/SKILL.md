@@ -28,15 +28,22 @@ current request
 ```
 
 Use the current conversation as approval when the user explicitly asks for this one-shot pipeline.
-Record reversible implementation choices as assumptions.
-Stop only when work needs new authority for credentials, payment, production data, destructive effects, security policy, or another irreversible decision.
+Record the user's verbatim invocation once with `sasu gate delegate --slug <topic-slug> --evidence "<the user's words>"` before gap-audit or spec.
+Record reversible choices within the intent as vetoable agent-owned assumptions, including important or user-visible behavior, UX, layout, and taste.
+Importance (P0/P1/P2) is not decision authority; never downgrade impact merely to call a choice an assumption.
+Stop only when work needs new authority for credentials, money/cost, production data, destructive or irreversible effects, security/privacy/auth policy, public contract/migration, or a truly unresolvable core-intent contradiction.
 
 When a qa-log is needed, run its existing gap-audit and spec gates.
 Keep `qa-log.md` as the one canonical interview artifact.
 During this stage, do not treat silence or a topic change as approval.
 Run `interview sync` once more immediately before the final normalization and gap-audit.
 Fix agent-resolvable PRD defects and rerun the affected gate.
-Present a `NEEDS_HUMAN` decision bundle to the user because it represents missing product authority.
+Gap-audit is the single user-facing decision boundary.
+Present only gap-audit's `NEEDS_HUMAN` bundle to the user.
+Spec returns agent-fixable defects as `BLOCK`; fix the PRD using established intent and evidence.
+When spec reports `nextGate: gap-audit`, run gap-audit on the same qa-log, resolve its authority bundle there, then repair and resume spec.
+The CLI permits one targeted gap-audit delta for each new spec referral even if gap-audit was sealed; never fabricate a user reopen or answer.
+Spec never asks the user directly or seals a decision via `gate answer --gate spec`.
 Never run `sasu gate override` yourself.
 
 Start implementation only from a complete ready PRD.
