@@ -297,9 +297,8 @@ Deterministic prelint handles structural defects before that semantic review.
 
 - The gate keeps an open findings set, not a round budget. Every judged run ends in `BLOCK` or `PASS`:
   - `BLOCK`: unresolved fidelity or self-containment defects return to the author.
-    Fix every such finding in the PRD, then re-run; the rerun judges only the
-    findings still open (by their `F<n>` id) and may add a finding only when
-    the qa-log's Decision Register rows changed, so the set can only shrink.
+    Fix every such finding in the PRD, then re-run; the rerun judges findings still open by their `F<n>` id and ordinarily admits new findings only where Decision Register rows or reopen evidence changed.
+    The explicit safety exception admits genuinely fresh `human_authority` findings at any severity and new P0 defects even when the register is unchanged; ordinary reversible choices do not qualify.
     If the result includes `nextGate: gap-audit`, run `sasu gate gap-audit --slug <topic-slug> --qa-log agents/interview/<topic-slug>/qa-log.md`.
     The CLI admits a targeted review of the spec authority referral without fabricating a user reopen, including after a gap-audit PASS.
     Only gap-audit presents a `NEEDS_HUMAN` bundle and accepts `gate answer --gate gap-audit`.

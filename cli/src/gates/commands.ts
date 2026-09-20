@@ -792,7 +792,8 @@ export async function runGapAudit(
 ): Promise<GateCommandResult> {
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
   const state = new GateStore(projectRoot, topic).load();
-  // Check before prelint too: prelint failures are persisted gate mutations.
+  // Check identity before structural lint so a substitute log gets the
+  // actionable referral error. Prelint failures themselves leave gate state unchanged.
   assertReferralQaLog(projectRoot, state, qaLog.input);
   const delegated = state.delegation !== undefined || Boolean(gateOptions?.assumeHumanEvidence?.trim());
   const prelint = runPrelint("qa-log", qaLog.content, delegated);

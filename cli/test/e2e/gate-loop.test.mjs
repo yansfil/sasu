@@ -161,7 +161,8 @@ test("spec referral rejects a substitute qa-log before mutating either log or ga
   const originalState = fs.readFileSync(stateFile, "utf8");
   assert.match(originalLog, /status: "complete"/);
   // Even a byte-identical complete log has a different canonical identity.
-  // A malformed substitute also must be refused before prelint records a BLOCK.
+  // A malformed substitute must receive the identity error before structural
+  // lint; prelint failures themselves leave gate state unchanged.
   for (const content of [originalLog, "---\nstatus: complete\n---\n# Incomplete substitute"]) {
     fs.writeFileSync(substitute, content);
     const refused = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "other-log.md", "--json"], { stub: stubFile(dir, PASS) });

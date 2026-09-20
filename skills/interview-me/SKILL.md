@@ -282,7 +282,8 @@ Use browser or runtime, API, DB, external, and human proof only where they prove
   Never exceed it to satisfy coherence or gap-audit findings.
   At the limit, run the final sync and normalization, review whether any later captured exchange was a correction or closure response, audit once, record every remaining material gap, and mark the qa-log `paused` rather than asking another question or claiming PRD readiness.
   Do not invent authority to close within the budget; recorded delegation still permits reversible assumptions without a question.
-- Deliver gap-audit's authority questions one at a time, respecting the interaction budget; severity alone never creates a question.
+- Deliver gap-audit's authority questions one at a time by default; use a bundle only when the user explicitly requests it.
+  Respect the user's current interaction budget in either format; bundling does not expand that budget, and severity alone never creates a question.
 - Do not request low-risk confirmations for choices covered by recorded delegation.
 - Explain briefly why a question changes the outcome or proof.
 - Include a recommended answer when it reduces cognitive load without concealing alternatives.
@@ -395,14 +396,14 @@ normalization_checkpoint_every: 10
 1. Mirror current understanding in 2 to 4 bullets.
 2. Preflight the repository and classify relevant packs.
 3. Create qa-log.md with `sasu interview init`, then seed the preflight facts as register rows with `interview decision`.
-4. Ask the highest-impact unresolved decision, or a valid low-risk confirmation block.
-5. Continue ordinary questions with no recording command; keep decisions in live context until the next checkpoint.
+4. Record reversible choices covered by delegation as vetoable agent-owned assumptions, not user-approved decisions.
+5. Collect remaining missing authority for gap-audit without asking pre-audit questions; in a delegated run, only the hard-authority boundaries remain question candidates.
 6. Create or refresh a UX Scenario Card as soon as a user-facing primary flow is in scope, outside the answer-to-question path when possible.
 7. Every 10 answers, every 2 to 3 high-risk answers, or immediately when a P0 premise changes: run `interview sync`, batch-normalize the imported entries and Decision Register, run the intent, impact, and verification sweep, and record it with `interview checkpoint`; run `interview coherence` only if that sweep surfaces a concrete contradiction or goal-drift suspicion.
-8. Before closure, restate the agreed goal in one sentence and confirm that another agent would build the intended outcome from that line.
+8. Before closure, restate the agreed goal in one sentence and check that another agent would build the intended outcome from that line.
 9. Run `interview sync` again, then full normalization and `interview checkpoint`.
 10. Run the sasu gap-audit gate. Fall back to one fresh independent read-only auditor subagent (in Claude Code, the default general-purpose subagent) or a recorded local fallback only when the `sasu` binary or its judge backend is unavailable.
-11. If there is a material blocker, ask one exact blocking question or classify it as blocking or deferred in qa-log.md.
+11. Repair agent-fixable `BLOCK` findings; for `NEEDS_HUMAN`, deliver only gap-audit's questions using the Question Rules, or preserve unresolved items as blocking or deferred.
 12. The gate marks qa-log.md `status: complete` when it seals PASS; once it has, suggest `$gen-prd --context agents/interview/<topic-slug>/qa-log.md "<topic>"`.
 
 ## Gap-Audit Gate (sasu)
@@ -425,15 +426,17 @@ judge and never consume the retry budget.
 - The gate keeps an open findings set, not a round budget. Every judged run ends in one of three states:
   - `BLOCK`: at least one open finding is agent-fixable (`requiresHuman: false`).
     Resolve every such finding in the qa-log, then re-run.
-    The rerun judges only the findings still open (by their `F<n>` id) and may add a finding only in a lane whose Decision Register rows changed, so the set can only shrink.
+    The rerun judges findings still open by their `F<n>` id and ordinarily admits new findings only in lanes whose Decision Register rows or reopen evidence changed.
+    The explicit safety exception admits genuinely fresh `human_authority` findings at any severity and new P0 defects even when the register is unchanged; ordinary reversible choices do not qualify.
   - `NEEDS_HUMAN`: every open finding needs a human decision.
-    Ask the user the whole bundle in one message, record the decisions they give in the Decision Register, then record their words with `sasu gate answer --slug <topic-slug> --gate gap-audit --evidence "<the user's words>"`.
+    Deliver one question at a time by default, or the bundle when explicitly requested by the user, within their interaction budget.
+    Record the answers in the Decision Register; once every blocking authority decision is resolved, record their words with `sasu gate answer --slug <topic-slug> --gate gap-audit --evidence "<the user's words>"`.
     That seals PASS without another judge call; do not re-run the gate to "confirm" an answer.
   - `PASS`: the cycle is sealed.
 - A gap finding is not an answer; treat it only as evidence that a decision or source is missing.
 - `requiresHuman: false` does not authorize resolution.
   Close such a finding with an explicit user answer, exact repository evidence recorded as a fact, a reversible choice under recorded delegation, or a P2 internal default that satisfies the ordinary silent-default rule.
-  Otherwise ask one focused question or defer it with an owner and revisit trigger, then re-run.
+  Otherwise record the missing authority for gap-audit or defer it with an owner and revisit trigger, then re-run; do not create another question stage.
 - Never promote a judge recommendation into a user decision or strengthen its scope, duration, lifecycle, compatibility, security, cost, or launch policy beyond the cited answer.
 - Prefer `--json` when consuming the result programmatically: it returns a structured object (top-level `contractVersion`, a `prelint` key separate from judge findings, verdict/attempt state) instead of scraping text.
 - A gap-audit finding still marked `needs human decision` must go to the user; never invent the answer.
