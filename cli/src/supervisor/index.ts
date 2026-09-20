@@ -45,7 +45,7 @@ export interface SupervisorIndex {
   /** Terminal notifications abandoned only after bounded definite failures. */
   undeliveredTerminal: Array<{ at: string; statePath: string; runInstanceId: string; enrollmentId: string; failures: number; detail: string }>;
   /** One durable executor lease serializes scheduled and manually requested ticks. */
-  tickExecutor: { operationId: string; pid: number; startedAt: string; expiresAt: string } | null;
+  tickExecutor: { operationId: string; pid: number; processIncarnation: string | null; startedAt: string; expiresAt: string } | null;
   /** Bounded operation ids make a linked write recognizable under a newer head. */
   appliedWrites: string[];
 }
@@ -120,10 +120,20 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
     throw new Error(`supervisor index has invalid appliedWrites: ${file}`);
   }
   const tickExecutor = candidate["tickExecutor"] === undefined ? null : candidate["tickExecutor"];
+  let parsedTickExecutor: SupervisorIndex["tickExecutor"] = null;
   if (tickExecutor !== null) {
     if (typeof tickExecutor !== "object" || Array.isArray(tickExecutor)) throw new Error(`supervisor index has invalid tickExecutor: ${file}`);
     const lease = tickExecutor as Record<string, unknown>;
     if (typeof lease["operationId"] !== "string" || !Number.isInteger(lease["pid"]) || Number(lease["pid"]) < 1 || optionalTimestamp(lease["startedAt"], "tickExecutor.startedAt", file) === null || optionalTimestamp(lease["expiresAt"], "tickExecutor.expiresAt", file) === null) throw new Error(`supervisor index has invalid tickExecutor: ${file}`);
+    const processIncarnation = lease["processIncarnation"] === undefined || lease["processIncarnation"] === null ? null : lease["processIncarnation"];
+    if (processIncarnation !== null && (typeof processIncarnation !== "string" || processIncarnation === "" || processIncarnation.length > 512)) throw new Error(`supervisor index has invalid tickExecutor processIncarnation: ${file}`);
+    parsedTickExecutor = {
+      operationId: lease["operationId"],
+      pid: Number(lease["pid"]),
+      processIncarnation,
+      startedAt: String(lease["startedAt"]),
+      expiresAt: String(lease["expiresAt"]),
+    };
   }
   const undeliveredTerminal = candidate["undeliveredTerminal"] === undefined ? [] : candidate["undeliveredTerminal"];
   if (!Array.isArray(undeliveredTerminal) || undeliveredTerminal.length > UNDELIVERED_TERMINAL_CAP) throw new Error(`supervisor index has invalid undeliveredTerminal history: ${file}`);
@@ -134,7 +144,7 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
     entries,
     removed: Array.isArray(candidate["removed"]) ? candidate["removed"] as SupervisorIndex["removed"] : [],
     undeliveredTerminal: undeliveredTerminal as SupervisorIndex["undeliveredTerminal"],
-    tickExecutor: tickExecutor as SupervisorIndex["tickExecutor"],
+    tickExecutor: parsedTickExecutor,
     appliedWrites: appliedWrites as string[],
   };
 }
@@ -315,12 +325,20 @@ export function unenrollRun(file: string, entry: { statePath: string; runInstanc
 export function reconcileRunEnrollment(file: string, input: {
   statePath: string;
   desired: { runInstanceId: string; recoveryOwner: RecoveryOwner } | null;
+  /** Enrollment generation observed before the caller began prerequisite writes. */
+  expectedEnrollmentId?: string | null;
   at: string;
   cause: string;
 }): SupervisorIndex {
   const enrollmentId = crypto.randomUUID();
   return updateIndex(file, (index) => {
     const existing = index.entries.find((entry) => entry.statePath === input.statePath);
+    const currentEnrollmentId = existing?.enrollmentId ?? null;
+    const wouldReplaceGeneration = input.desired === null || existing?.runInstanceId !== input.desired.runInstanceId;
+    // A replacement dispatch persists state before enrolling. If it lands
+    // while an older recovery is repairing navigation, the older intent no
+    // longer owns the enrollment generation and must not undo the new run.
+    if (wouldReplaceGeneration && input.expectedEnrollmentId !== undefined && currentEnrollmentId !== input.expectedEnrollmentId) return;
     if (input.desired === null) {
       if (existing === undefined) return;
       index.entries = index.entries.filter((entry) => entry.statePath !== input.statePath);

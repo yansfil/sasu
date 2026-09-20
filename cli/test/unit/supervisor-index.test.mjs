@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { APPLIED_WRITES_CAP, emptyIndex, enrollRun, INDEX_SCHEMA, MAX_INDEX_BYTES, MAX_INDEX_ENTRIES, readIndex, REMOVED_HISTORY_CAP, updateIndex } from "../../dist/supervisor/index.js";
+import { APPLIED_WRITES_CAP, emptyIndex, enrollRun, INDEX_SCHEMA, MAX_INDEX_BYTES, MAX_INDEX_ENTRIES, readIndex, reconcileRunEnrollment, REMOVED_HISTORY_CAP, updateIndex } from "../../dist/supervisor/index.js";
 
 const file = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), "sasu-index-")), "index.json");
 
@@ -62,6 +62,35 @@ test("two writers never lose an enrollment that lands after comparison and befor
   const read = readIndex(index);
   assert.equal(read.lastTickAt, "2026-09-18T00:01:00.000Z");
   assert.deepEqual(read.entries.map((entry) => entry.runInstanceId), ["i-1", "i-2"]);
+});
+
+test("engineering 11: stale reconciliation cannot replace a newer enrollment generation", () => {
+  const index = file();
+  const statePath = "/repo/agents/runs/a/state.json";
+  enrollRun(index, { statePath, runInstanceId: "instance-old", recoveryOwner: "supervisor", at: "2026-09-18T00:00:00.000Z" });
+  const expectedEnrollmentId = readIndex(index).entries[0].enrollmentId;
+  const originalLink = fs.linkSync;
+  let replaced = false;
+  fs.linkSync = (...args) => {
+    if (!replaced && String(args[1]).includes(".revision-")) {
+      replaced = true;
+      enrollRun(index, { statePath, runInstanceId: "instance-new", recoveryOwner: "supervisor", at: "2026-09-18T00:00:30.000Z" });
+    }
+    return originalLink(...args);
+  };
+  try {
+    reconcileRunEnrollment(index, {
+      statePath,
+      desired: { runInstanceId: "instance-old", recoveryOwner: "supervisor" },
+      expectedEnrollmentId,
+      at: "2026-09-18T00:01:00.000Z",
+      cause: "stale prerequisite repair",
+    });
+  } finally {
+    fs.linkSync = originalLink;
+  }
+  assert.equal(replaced, true);
+  assert.equal(readIndex(index).entries[0].runInstanceId, "instance-new", "a refused stale repair leaves the replacement supervision intact");
 });
 
 test("a delayed writer cannot recreate a pruned old revision and mistake it for a committed update", () => {

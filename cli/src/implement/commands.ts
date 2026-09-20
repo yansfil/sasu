@@ -21,7 +21,7 @@ import { assertNoActiveVerification, recoverVerification, cancelVerificationExec
 import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEscalation, renderDiagnosis, solverPrompt, validateDiagnosis } from "./solver";
 import { closePreparedSpawn, getAgent, herdrCapabilities, isAgentAlive, promptAgent, readPane, spawnImplementor, type SpawnPlacement } from "./herdr";
 import { currentObserverIdentity, newRunInstanceId } from "../supervisor/commands";
-import { enrollRun, reconcileRunEnrollment } from "../supervisor/index";
+import { enrollRun, readIndex, reconcileRunEnrollment, type SupervisorIndex } from "../supervisor/index";
 import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest } from "../supervisor/digest";
 import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
@@ -577,6 +577,15 @@ function desiredEnrollment(state: ImplementState): { runInstanceId: string; reco
   return supervision === null ? null : { runInstanceId: supervision.runInstanceId, recoveryOwner: supervision.recoveryOwner };
 }
 
+function enrollmentAt(index: SupervisorIndex, statePath: string): SupervisorIndex["entries"][number] | undefined {
+  return index.entries.find((entry) => entry.statePath === statePath);
+}
+
+function enrollmentMatches(index: SupervisorIndex, statePath: string, desired: ReturnType<typeof desiredEnrollment>): boolean {
+  const current = enrollmentAt(index, statePath);
+  return desired === null ? current === undefined : current?.runInstanceId === desired.runInstanceId;
+}
+
 function prerequisiteFingerprint(state: ImplementState): string {
   return JSON.stringify({
     status: state.status,
@@ -600,27 +609,35 @@ function reconcileCurrentDispatchPrerequisites(projectRoot: string, statePath: s
       ?? before.supervision?.observer.sessionId
       ?? before.ownerSessionId
       ?? currentSessionId();
+    const expectedEnrollmentId = enrollmentAt(readIndex(indexPath()), statePath)?.enrollmentId ?? null;
     writeActivePointer(projectRoot, before, observerSession);
-    reconcileRunEnrollment(indexPath(), { statePath, desired: desiredEnrollment(before), at: nowIso(), cause });
+    const desired = desiredEnrollment(before);
+    const reconciled = reconcileRunEnrollment(indexPath(), { statePath, desired, expectedEnrollmentId, at: nowIso(), cause });
     const after = loadState(projectRoot, { state: statePath }).state;
-    if (prerequisiteFingerprint(after) === prerequisiteFingerprint(before)) return after;
+    if (prerequisiteFingerprint(after) === prerequisiteFingerprint(before) && enrollmentMatches(reconciled, statePath, desired)) return after;
   }
   throw new DispatchRejected("dispatch authority kept changing while navigation and enrollment were reconciled; retry against the current Observer");
 }
 
 function repairPendingDispatchPrerequisites(projectRoot: string, statePath: string, state: ImplementState, pending: PendingDispatch): { state: ImplementState; pending: PendingDispatch } {
+  const expectedEnrollmentId = enrollmentAt(readIndex(indexPath()), statePath)?.enrollmentId ?? null;
   writeActivePointer(projectRoot, state, pending.observer.sessionId);
   // The child receives no Observer session id. Its bare implement commands
   // resolve through the sessionless bookmark, which must exist before the
   // executable handoff can tell the child to use them.
   writeActivePointer(projectRoot, state, null);
-  reconcileRunEnrollment(indexPath(), {
+  const reconciled = reconcileRunEnrollment(indexPath(), {
     statePath,
     desired: { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner },
+    expectedEnrollmentId,
     at: nowIso(),
     cause: `partial dispatch ${pending.runInstanceId} restored before executable handoff`,
   });
-  return revalidatePendingHandoff(projectRoot, statePath, pending, "dispatch authority changed while navigation or enrollment was restored");
+  const validated = revalidatePendingHandoff(projectRoot, statePath, pending, "dispatch authority changed while navigation or enrollment was restored");
+  if (!enrollmentMatches(reconciled, statePath, { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner })) {
+    throw new DispatchRejected("dispatch enrollment changed while navigation was restored; no handoff input was sent");
+  }
+  return validated;
 }
 
 function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandResult {

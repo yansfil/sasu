@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { getAgent, promptAgent, type AgentLookup, type HerdrEnvironment, type PromptOutcome } from "../implement/herdr";
 import { decideRun, episodeKey, judgeObserver, type Candidate, type Decision } from "./decide";
 import { readRun, type ReadRun } from "./facts";
@@ -66,6 +67,39 @@ export const TICK_EXECUTOR_LEASE_MS = 5 * 60_000;
 export const MAX_HERDR_CALLS_PER_TICK = 128;
 export const MAX_RUNS_PER_TICK = 20;
 export const TICK_DEADLINE_MS = 25_000;
+export const TICK_DECISION_BUDGET_MS = 10_000;
+
+class TickLimitReached extends Error {}
+
+function processStartDescription(pid: number): string | null {
+  for (const binary of ["/bin/ps", "/usr/bin/ps"]) {
+    const observed = spawnSync(binary, ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8", timeout: 2_000 });
+    const started = observed.status === 0 ? observed.stdout.trim().replace(/\s+/g, " ") : "";
+    if (started !== "") return started;
+  }
+  return null;
+}
+
+/**
+ * Identify one OS process incarnation, not merely its reusable numeric PID.
+ * The round-two review reproduced a prior-boot lease blocking every tick for
+ * 24 hours after that PID belonged to an unrelated process.
+ */
+export function processIncarnation(pid: number): string | null {
+  if (!Number.isInteger(pid) || pid < 1) return null;
+  if (process.platform === "linux") {
+    try {
+      const boot = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+      const closing = stat.lastIndexOf(")");
+      const fields = closing === -1 ? [] : stat.slice(closing + 1).trim().split(/\s+/);
+      const startTicks = fields[19];
+      if (boot !== "" && startTicks !== undefined) return `linux:${boot}:${startTicks}`;
+    } catch {}
+  }
+  const started = processStartDescription(pid);
+  return started === null ? null : `${process.platform}:${started}`;
+}
 
 export function rotateLog(file: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -117,34 +151,33 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
   const index = readIndex(options.indexFile);
   let herdrCalls = 0;
   const checkedCall = <T>(call: () => T): T => {
-    if (herdrCalls >= MAX_HERDR_CALLS_PER_TICK) throw new Error(`tick herdr call budget ${MAX_HERDR_CALLS_PER_TICK} exhausted; remaining runs are deferred to the next tick`);
-    if (now() - tickNow >= TICK_DEADLINE_MS) throw new Error(`tick deadline ${TICK_DEADLINE_MS}ms exhausted; remaining runs are deferred to the next tick`);
+    if (herdrCalls >= MAX_HERDR_CALLS_PER_TICK) throw new TickLimitReached(`tick herdr call budget ${MAX_HERDR_CALLS_PER_TICK} exhausted; remaining runs are deferred to the next tick`);
+    if (now() - tickNow >= TICK_DEADLINE_MS) throw new TickLimitReached(`tick deadline ${TICK_DEADLINE_MS}ms exhausted; remaining runs are deferred to the next tick`);
     herdrCalls += 1;
     return call();
   };
   // The round-two 64-run reproduction spent the whole external-call budget
   // scanning, then repeated the same prefix forever without one delivery.
-  // Oldest-processed-first gives every enrollment fair continuation, while
-  // 20 leaves worst-case capacity for a host probe, the implementor and
-  // Observer decision reads, two Observer rechecks and one prompt per
-  // distinct run under the 128-call cap.
-  const priority = (entry: IndexEntry): number => Date.parse(entry.lastObservation?.at ?? entry.lastFailure?.at ?? entry.addedAt);
+  // Oldest-processed-first and the later decision budget give every enrollment
+  // fair continuation. The 20-entry cap also bounds local state reads and
+  // result persistence independently of the 128-call external cap.
+  const priority = (entry: IndexEntry): number => Math.max(
+    Date.parse(entry.addedAt),
+    entry.lastObservation === null ? Number.NEGATIVE_INFINITY : Date.parse(entry.lastObservation.at),
+    entry.lastFailure === null ? Number.NEGATIVE_INFINITY : Date.parse(entry.lastFailure.at),
+  );
   const scheduledEntries = [...index.entries]
     .sort((a, b) => priority(a) - priority(b))
     .slice(0, MAX_RUNS_PER_TICK);
   const scheduled = new Set(scheduledEntries.map(entryKey));
-  const scopes = [...new Set(scheduledEntries.map((entry) => {
-    try { return readRun(entry.statePath).supervision.observer.hostScope; } catch { return "default"; }
-  }))];
-  const probes = scopes.length === 0 ? [{ available: true, detail: null }] : scopes.map((scope) => checkedCall(() => options.herdr.probe(scope)));
-  const herdr = probes.every((probe) => probe.available)
-    ? { available: true, detail: null }
-    : { available: false, detail: probes.filter((probe) => !probe.available).map((probe) => probe.detail ?? "no detail").join("; ") };
   const results: RunTickResult[] = index.entries
     .filter((entry) => !scheduled.has(entryKey(entry)))
     .map((entry) => ({ statePath: entry.statePath, slug: null, decision: null, action: "deferred", detail: `per-tick work cap ${MAX_RUNS_PER_TICK} reached; this older-unprocessed enrollment is first on a later tick` }));
   const updates = new Map<string, (entry: IndexEntry) => void>();
   const removals: Array<{ statePath: string; enrollmentId: string; cause: string; outcome?: "undelivered-terminal" }> = [];
+  let herdr = index.lastHerdr ?? { available: true, detail: null };
+  const herdrUnavailableDetails = new Set<string>();
+  let limitDetail: string | null = null;
 
   const addUpdate = (entry: IndexEntry, mutate: (held: IndexEntry) => void): void => {
     const key = entryKey(entry);
@@ -152,12 +185,61 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
     updates.set(key, (held) => { previous?.(held); mutate(held); });
   };
 
+  const recordLimit = (entries: IndexEntry[], detail: string): void => {
+    const recorded = new Set(results.map((entry) => entry.statePath));
+    for (const entry of entries) {
+      addUpdate(entry, (held) => { held.lastFailure = { at, detail }; });
+      if (!recorded.has(entry.statePath)) {
+        results.push({ statePath: entry.statePath, slug: null, decision: null, action: "deferred", detail });
+        recorded.add(entry.statePath);
+      }
+    }
+  };
+
+  const finish = (): TickResult => {
+    options.beforePersist?.();
+    updateIndex(options.indexFile, (fresh: SupervisorIndex) => {
+      fresh.lastTickAt = at;
+      fresh.lastHerdr = herdr;
+      for (const entry of fresh.entries) updates.get(entryKey(entry))?.(entry);
+      const gone = new Set(removals.map((removal) => `${removal.statePath}\0${removal.enrollmentId}`));
+      const actuallyRemoved = fresh.entries.filter((entry) => gone.has(entryKey(entry))).map((entry) => entryKey(entry));
+      fresh.entries = fresh.entries.filter((entry) => !gone.has(entryKey(entry)));
+      for (const removal of removals) {
+        if (actuallyRemoved.includes(`${removal.statePath}\0${removal.enrollmentId}`)) {
+          const { enrollmentId: _enrollmentId, outcome, ...record } = removal;
+          if (!fresh.removed.some((existing) => existing.at === at && existing.statePath === record.statePath && existing.cause === record.cause)) fresh.removed.push({ at, ...record });
+          if (outcome === "undelivered-terminal" && !fresh.undeliveredTerminal.some((existing) => existing.enrollmentId === removal.enrollmentId)) {
+            const original = index.entries.find((entry) => entry.enrollmentId === removal.enrollmentId)!;
+            fresh.undeliveredTerminal.push({ at, statePath: removal.statePath, runInstanceId: original.runInstanceId, enrollmentId: removal.enrollmentId, failures: TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP, detail: removal.cause });
+          }
+        }
+      }
+    });
+    log({ event: "supervisor.tick", at, herdrAvailable: herdr.available, runs: results.length, sent: results.filter((entry) => entry.action === "sent").length, deferred: results.filter((entry) => entry.action === "deferred").length, failed: results.filter((entry) => entry.action === "failed").length, removed: removals.length, limit: limitDetail });
+    return { at, herdr, runs: results, executor: "ran" };
+  };
+
+  if (scheduledEntries.length === 0) {
+    try {
+      herdr = checkedCall(() => options.herdr.probe());
+    } catch (error) {
+      if (!(error instanceof TickLimitReached)) throw error;
+      limitDetail = error.message;
+      return finish();
+    }
+  }
+
   const lookups = new Map<string, AgentLookup>();
   const lookup = (target: string, hostScope: string): AgentLookup => {
     const key = `${hostScope}\0${target}`;
     const cached = lookups.get(key);
     if (cached !== undefined) return cached;
     const answer = checkedCall(() => options.herdr.getAgent(target, hostScope));
+    if (answer.kind === "unavailable") herdrUnavailableDetails.add(answer.detail);
+    herdr = herdrUnavailableDetails.size === 0
+      ? { available: true, detail: null }
+      : { available: false, detail: [...herdrUnavailableDetails].join("; ") };
     lookups.set(key, answer);
     return answer;
   };
@@ -174,7 +256,15 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
     return true;
   };
   const judged: Judged[] = [];
-  for (const entry of scheduledEntries) {
+  for (let scheduledIndex = 0; scheduledIndex < scheduledEntries.length; scheduledIndex += 1) {
+    const entry = scheduledEntries[scheduledIndex]!;
+    // The 20-run reproduction spent its full 25 seconds scanning and reached
+    // zero submissions on every retry. Stop discovery after 10 seconds so
+    // the already judged intents retain time for identity checks and input.
+    if (scheduledIndex > 0 && now() - tickNow >= TICK_DECISION_BUDGET_MS) {
+      recordLimit(scheduledEntries.slice(scheduledIndex), `tick decision budget ${TICK_DECISION_BUDGET_MS}ms reached; remaining runs are deferred to the next tick`);
+      break;
+    }
     const loaded = loadEntry(entry);
     if (loaded.missing) {
       const count = entry.missingTicks + 1;
@@ -204,6 +294,11 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
         observer: lookup(run.supervision.observer.paneId, run.supervision.observer.hostScope),
       }, entry, tickNow);
     } catch (error) {
+      if (error instanceof TickLimitReached) {
+        limitDetail = error.message;
+        recordLimit(scheduledEntries.slice(scheduledIndex), limitDetail);
+        break;
+      }
       const detail = error instanceof Error ? error.message : String(error);
       addUpdate(entry, (held) => { held.missingTicks = 0; held.lastFailure = { at, detail }; });
       results.push({ statePath: entry.statePath, slug: run.facts.slug, decision: null, action: "failed", detail });
@@ -211,6 +306,10 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
       continue;
     }
     judged.push({ loaded, run, decision });
+  }
+  if (limitDetail !== null) {
+    recordLimit(judged.map((item) => item.loaded.entry), limitDetail);
+    return finish();
   }
 
   const bundles = new Map<string, Judged[]>();
@@ -273,7 +372,14 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
     }
     if (currentItems.length === 0) continue;
     const currentObserver = currentItems[0]!.run.supervision.observer;
-    const freshVerdict = judgeObserver(currentObserver, checkedCall(() => options.herdr.getAgent(currentObserver.paneId, currentObserver.hostScope)));
+    let freshVerdict: ReturnType<typeof judgeObserver>;
+    try {
+      freshVerdict = judgeObserver(currentObserver, checkedCall(() => options.herdr.getAgent(currentObserver.paneId, currentObserver.hostScope)));
+    } catch (error) {
+      if (!(error instanceof TickLimitReached)) throw error;
+      limitDetail = error.message;
+      break;
+    }
     if (freshVerdict.kind !== "match" || freshVerdict.status === "working" || freshVerdict.status === "blocked") {
       const detail = freshVerdict.kind !== "match" ? `${freshVerdict.kind}: ${freshVerdict.detail}` : `observer is ${freshVerdict.status}; delivery deferred`;
       for (const { item } of currentItems) {
@@ -383,7 +489,15 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
     // handover. It is not executable authority until the committed operation,
     // enrollment, current state and actual Observer all agree again.
     const executableObserver = executableItems[0]!.run.supervision.observer;
-    const executableVerdict = judgeObserver(executableObserver, checkedCall(() => options.herdr.getAgent(executableObserver.paneId, executableObserver.hostScope)));
+    let executableVerdict: ReturnType<typeof judgeObserver>;
+    try {
+      executableVerdict = judgeObserver(executableObserver, checkedCall(() => options.herdr.getAgent(executableObserver.paneId, executableObserver.hostScope)));
+    } catch (error) {
+      releaseReservations(executableItems);
+      if (!(error instanceof TickLimitReached)) throw error;
+      limitDetail = error.message;
+      break;
+    }
     if (executableVerdict.kind !== "match" || executableVerdict.status === "working" || executableVerdict.status === "blocked") {
       releaseReservations(executableItems);
       const detail = executableVerdict.kind !== "match" ? `${executableVerdict.kind}: ${executableVerdict.detail}` : `observer is ${executableVerdict.status}; delivery deferred`;
@@ -414,7 +528,9 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
       // the exact prior attempt record so a provably absent effect costs no
       // uncertainty budget.
       releaseReservations(reservedItems);
-      throw error;
+      if (!(error instanceof TickLimitReached)) throw error;
+      limitDetail = error.message;
+      break;
     }
     updateIndex(options.indexFile, (fresh) => {
       for (const { item } of reservedItems) {
@@ -453,44 +569,42 @@ function executeTick(options: TickOptions, executorOperationId: string): TickRes
     log({ event: "supervisor.wake.attempted", operationId: deliveryOperationId, observer: executableObserver.sessionId, pane: executableObserver.paneId, hostScope: executableObserver.hostScope, runs: lines.map((line) => ({ statePath: line.statePath, slug: line.slug, instance: line.runInstanceId, reasons: line.reasons.map((entry) => entry.reason) })), outcome: outcome.outcome, path: outcome.path, code: outcome.code, at });
   }
 
-  options.beforePersist?.();
-  updateIndex(options.indexFile, (fresh: SupervisorIndex) => {
-    fresh.lastTickAt = at;
-    fresh.lastHerdr = herdr;
-    for (const entry of fresh.entries) updates.get(entryKey(entry))?.(entry);
-    const gone = new Set(removals.map((removal) => `${removal.statePath}\0${removal.enrollmentId}`));
-    const actuallyRemoved = fresh.entries.filter((entry) => gone.has(entryKey(entry))).map((entry) => entryKey(entry));
-    fresh.entries = fresh.entries.filter((entry) => !gone.has(entryKey(entry)));
-    for (const removal of removals) {
-      if (actuallyRemoved.includes(`${removal.statePath}\0${removal.enrollmentId}`)) {
-        const { enrollmentId: _enrollmentId, outcome, ...record } = removal;
-        if (!fresh.removed.some((existing) => existing.at === at && existing.statePath === record.statePath && existing.cause === record.cause)) fresh.removed.push({ at, ...record });
-        if (outcome === "undelivered-terminal" && !fresh.undeliveredTerminal.some((existing) => existing.enrollmentId === removal.enrollmentId)) {
-          const original = index.entries.find((entry) => entry.enrollmentId === removal.enrollmentId)!;
-          fresh.undeliveredTerminal.push({ at, statePath: removal.statePath, runInstanceId: original.runInstanceId, enrollmentId: removal.enrollmentId, failures: TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP, detail: removal.cause });
-        }
-      }
-    }
-  });
-  log({ event: "supervisor.tick", at, herdrAvailable: herdr.available, runs: results.length, sent: results.filter((entry) => entry.action === "sent").length, deferred: results.filter((entry) => entry.action === "deferred").length, failed: results.filter((entry) => entry.action === "failed").length, removed: removals.length });
-  return { at, herdr, runs: results, executor: "ran" };
+  if (limitDetail !== null) {
+    const recorded = new Set(results.map((entry) => entry.statePath));
+    recordLimit(judged.filter((item) => !recorded.has(item.loaded.entry.statePath)).map((item) => item.loaded.entry), limitDetail);
+  }
+  return finish();
 }
 
 export function runTick(options: TickOptions): TickResult {
   const now = options.now ?? (() => Date.now());
   const started = now();
   const operationId = crypto.randomUUID();
+  const currentProcessIncarnation = processIncarnation(process.pid);
   const claimed = updateIndex(options.indexFile, (index) => {
     const lease = index.tickExecutor;
     let ownerAlive = false;
     if (lease !== null) {
       try { process.kill(lease.pid, 0); ownerAlive = true; } catch (error) { ownerAlive = (error as NodeJS.ErrnoException).code === "EPERM"; }
     }
+    const observedIncarnation = lease !== null && ownerAlive && lease.processIncarnation !== null
+      ? processIncarnation(lease.pid)
+      : null;
+    const legacyProcessStartedAt = lease !== null && ownerAlive && lease.processIncarnation === null
+      ? Date.parse(processStartDescription(lease.pid) ?? "")
+      : Number.NaN;
     // A paused owner may outlive the nominal deadline while still inside a
-    // synchronous external call. Stealing from a live PID creates two delivery
-    // executors; only positive owner death permits recovery.
-    if (lease !== null && ownerAlive) return;
-    index.tickExecutor = { operationId, pid: process.pid, startedAt: new Date(started).toISOString(), expiresAt: new Date(started + TICK_EXECUTOR_LEASE_MS).toISOString() };
+    // synchronous external call. Stealing from that exact process creates two
+    // executors, while a reused PID from a dead process must not block restart.
+    // Legacy leases retain exclusion when that PID predates the lease, but a
+    // process started after the durable lease is positive PID-reuse evidence.
+    // Unobservable incarnations fail closed until the PID is absent.
+    const legacyOwnerCouldMatch = lease !== null && lease.processIncarnation === null
+      && (!Number.isFinite(legacyProcessStartedAt) || legacyProcessStartedAt <= Date.parse(lease.startedAt) + 1_000);
+    const exactOwnerAlive = lease !== null && ownerAlive
+      && (legacyOwnerCouldMatch || (lease.processIncarnation !== null && (observedIncarnation === null || observedIncarnation === lease.processIncarnation)));
+    if (exactOwnerAlive) return;
+    index.tickExecutor = { operationId, pid: process.pid, processIncarnation: currentProcessIncarnation, startedAt: new Date(started).toISOString(), expiresAt: new Date(started + TICK_EXECUTOR_LEASE_MS).toISOString() };
   });
   // updateIndex may replay the callback after a lost revision race. Closure
   // flags described an abandoned attempt in the round-two reproduction; the
