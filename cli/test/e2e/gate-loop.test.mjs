@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { GateStore } from "../../dist/gates/store.js";
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const CLI = path.resolve(HERE, "..", "..", "dist", "cli.js");
@@ -91,18 +92,31 @@ test("spec authority returns through sealed gap-audit, the user answers there, a
   const wrongAnswer = runCli(dir, ["gate", "answer", "--slug", "fixture", "--gate", "spec", "--evidence", "go ahead"]);
   assert.notEqual(wrongAnswer.status, 0);
   assert.match(wrongAnswer.stderr, /retired/);
+  const qaPath = path.join(dir, "qa-log.md");
+  const complete = fs.readFileSync(qaPath, "utf8");
+  assert.match(complete, /status: "complete"/);
+  const release = new GateStore(dir, "fixture").tryAcquireRunLock("gap-audit");
+  assert.ok(release);
+  try {
+    const refused = gapAudit(dir, PASS);
+    assert.equal(JSON.parse(refused.stdout).error.code, "gate-in-flight");
+    assert.equal(fs.readFileSync(qaPath, "utf8"), complete, "failed admission leaves the document untouched");
+  } finally {
+    release();
+  }
   const audited = gapAudit(dir, { byPurpose: { "lane:risk-ops-verification": { verdict: "BLOCK", findings: [hard] }, default: PASS } });
   assert.equal(JSON.parse(audited.stdout).status.verdict, "NEEDS_HUMAN", audited.stdout + audited.stderr);
+  assert.match(fs.readFileSync(qaPath, "utf8"), /status: "active"/);
   assert.equal(gatesState(dir).gates["gap-audit"].reviewReopens?.length ?? 0, 0, "no fabricated user reopen");
   assert.match(gatesState(dir).gates["gap-audit"].reviewedSpecReferral, /^[a-f0-9]{64}$/);
   assert.equal(lastArtifact(dir).specReferral.findings[0].missing, hard.missing, "the reviewed referral remains auditable after spec closes");
-  const qaPath = path.join(dir, "qa-log.md");
   fs.writeFileSync(qaPath, fs.readFileSync(qaPath, "utf8").replace(
     "## Raw Q&A",
     "| D-05 | decision | data | use synthetic local data only; no production data | P1 | user: synthetic local data only | resolved | Risks |\n\n## Raw Q&A",
   ));
   const answered = runCli(dir, ["gate", "answer", "--slug", "fixture", "--gate", "gap-audit", "--evidence", "Use synthetic local data only; production data remains out of scope.", "--json"]);
   assert.equal(answered.status, 0, answered.stdout + answered.stderr);
+  assert.match(fs.readFileSync(qaPath, "utf8"), /status: "complete"/);
   const prdPath = path.join(dir, "prd.md");
   fs.writeFileSync(prdPath, fs.readFileSync(prdPath, "utf8").replace("## Risks", "## Risks\n\nUse synthetic local data only; production-data use is excluded."));
   const resumed = runCli(dir, specArgs, { stub: stubFile(dir, PASS) });
@@ -111,6 +125,25 @@ test("spec authority returns through sealed gap-audit, the user answers there, a
   const count = gatesState(dir).judgeCalls.length;
   assert.equal(gapAudit(dir, PASS).status, 0);
   assert.equal(gatesState(dir).judgeCalls.length, count, "resolved referral does not reopen again");
+});
+
+test("a spec referral keeps qa-log active during BLOCK and completes only after gap re-review passes", () => {
+  const dir = makeProject();
+  assert.equal(gapAudit(dir, PASS).status, 0);
+  const hard = finding("fidelity", "P1", "missing production-data authority", true, { disposition: "human_authority" });
+  const spec = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"], {
+    stub: stubFile(dir, { byPurpose: { "lane:fidelity": { verdict: "BLOCK", findings: [hard] }, default: PASS } }),
+  });
+  assert.equal(JSON.parse(spec.stdout).status.nextGate, "gap-audit");
+  const defect = finding("data", "P1", "existing data authority needs a source citation", false, { disposition: "agent_fix" });
+  const blocked = gapAudit(dir, { byPurpose: { "lane:risk-ops-verification": { verdict: "BLOCK", findings: [defect] }, default: PASS } });
+  assert.equal(JSON.parse(blocked.stdout).status.verdict, "BLOCK", blocked.stdout + blocked.stderr);
+  const qaPath = path.join(dir, "qa-log.md");
+  assert.match(fs.readFileSync(qaPath, "utf8"), /status: "active"/);
+  fs.writeFileSync(qaPath, fs.readFileSync(qaPath, "utf8").replace("repo: src/store.js", "repo: src/store.js; synthetic local data fixture"));
+  const reviewed = gapAudit(dir, PASS);
+  assert.equal(reviewed.status, 0, reviewed.stdout + reviewed.stderr);
+  assert.match(fs.readFileSync(qaPath, "utf8"), /status: "complete"/);
 });
 
 test("spec author-fixable P0 stays BLOCK without becoming a user question", () => {
