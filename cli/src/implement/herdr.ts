@@ -113,7 +113,17 @@ export interface HerdrClock {
 }
 
 function defaultRun(args: string[], cwd?: string, env: NodeJS.ProcessEnv = process.env, timeoutMs = 15_000): { status: number | null; stdout: string; stderr: string; errorCode?: string } {
-  const executed = spawnSync("herdr", args, { cwd, env, encoding: "utf8", shell: false, timeout: Math.max(1, Math.min(15_000, Math.floor(timeoutMs))) });
+  // A 2026-09-21 deadline probe stayed blocked until a SIGTERM-ignoring child
+  // exited on its own. Deadline-bound adapter children are disposable CLI
+  // calls, so non-cooperative termination is required to release their owner.
+  const executed = spawnSync("herdr", args, {
+    cwd,
+    env,
+    encoding: "utf8",
+    shell: false,
+    timeout: Math.max(1, Math.min(15_000, Math.floor(timeoutMs))),
+    killSignal: "SIGKILL",
+  });
   if (executed.error !== undefined) return { status: null, stdout: "", stderr: String(executed.error), errorCode: (executed.error as NodeJS.ErrnoException).code };
   return { status: executed.status, stdout: executed.stdout ?? "", stderr: executed.stderr ?? "" };
 }

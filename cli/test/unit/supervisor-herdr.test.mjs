@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import test from "node:test";
 
 import { getAgent, guardedPromptSupport, promptAgent } from "../../dist/implement/herdr.js";
@@ -52,6 +55,40 @@ test("engineering 15: lookup and prompt pass the caller's remaining deadline to 
     { command: "agent get", timeoutMs: 321 },
     { command: "agent prompt", timeoutMs: 123 },
   ]);
+});
+
+test("engineering 14/15: a deadline kills a real prompt child that ignores SIGTERM", () => {
+  const bin = mkdtempSync(join(tmpdir(), "sasu-herdr-timeout-"));
+  const executable = join(bin, "herdr");
+  const pidFile = join(bin, "child.pid");
+  let childPid = null;
+  writeFileSync(executable, `#!/bin/sh
+trap '' TERM
+echo $$ > "$SASU_TEST_PID_FILE"
+exec "$SASU_TEST_NODE" -e 'process.on("SIGTERM", () => {}); setTimeout(() => process.exit(0), 2500)'
+`, { mode: 0o755 });
+  try {
+    const startedAt = performance.now();
+    const outcome = promptAgent(
+      { target: "w8D:p1", text: "SASU_WAKE", expectedInputGuard: null },
+      { env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`, SASU_TEST_NODE: process.execPath, SASU_TEST_PID_FILE: pidFile } },
+      500,
+    );
+    const elapsedMs = performance.now() - startedAt;
+    childPid = Number(readFileSync(pidFile, "utf8"));
+    const childAlive = (() => {
+      try { process.kill(childPid, 0); return true; } catch { return false; }
+    })();
+    assert.equal(outcome.outcome, "unknown", "a timed-out prompt may already have delivered bytes");
+    assert.equal(outcome.code, "herdr_prompt_timeout");
+    assert.ok(elapsedMs < 1000, `the 500 ms deadline must not wait for the child's 2500 ms exit (elapsed ${Math.round(elapsedMs)} ms)`);
+    assert.equal(childAlive, false, "the timeout must terminate the child, not leave it running after the adapter returns");
+  } finally {
+    if (childPid !== null) {
+      try { process.kill(childPid, "SIGKILL"); } catch {}
+    }
+    rmSync(bin, { recursive: true, force: true });
+  }
 });
 
 test("a plain wake is accepted on exit 0 and reported rejected on herdr's pre-input refusals", () => {
