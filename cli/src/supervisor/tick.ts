@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { getAgent, promptAgent, type AgentLookup, type HerdrEnvironment, type PromptOutcome } from "../implement/herdr";
@@ -44,7 +45,7 @@ export interface RunTickResult {
   statePath: string;
   slug: string | null;
   decision: Decision | null;
-  action: "sent" | "deferred" | "none" | "failed" | "removed";
+  action: "sent" | "deferred" | "none" | "failed" | "removed" | "undelivered-terminal";
   detail: string;
 }
 
@@ -52,6 +53,7 @@ export interface TickResult {
   at: string;
   herdr: { available: boolean; detail: string | null };
   runs: RunTickResult[];
+  executor: "ran" | "already-running";
 }
 
 export const LOG_CAP_BYTES = 1024 * 1024;
@@ -60,6 +62,9 @@ export const MAX_WAKE_RUNS_PER_PROMPT = 50;
 export const MAX_WAKE_BYTES = 128 * 1024;
 export const MAX_UNKNOWN_WAKE_ATTEMPTS = 2;
 export const TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP = 3;
+export const TICK_EXECUTOR_LEASE_MS = 5 * 60_000;
+export const MAX_HERDR_CALLS_PER_TICK = 128;
+export const TICK_DEADLINE_MS = 25_000;
 
 export function rotateLog(file: string): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -103,22 +108,29 @@ function sameObserver(a: ReadRun["supervision"]["observer"], b: ReadRun["supervi
   return a.sessionId === b.sessionId && a.terminalId === b.terminalId && a.paneId === b.paneId && a.hostScope === b.hostScope;
 }
 
-export function runTick(options: TickOptions): TickResult {
+function executeTick(options: TickOptions): TickResult {
   const now = options.now ?? (() => Date.now());
   const tickNow = now();
   const at = new Date(tickNow).toISOString();
   const log = options.log ?? ((event) => appendLog(path.join(path.dirname(options.indexFile), "tick.log"), event));
   const index = readIndex(options.indexFile);
+  let herdrCalls = 0;
+  const checkedCall = <T>(call: () => T): T => {
+    if (herdrCalls >= MAX_HERDR_CALLS_PER_TICK) throw new Error(`tick herdr call budget ${MAX_HERDR_CALLS_PER_TICK} exhausted; remaining runs are deferred to the next tick`);
+    if (now() - tickNow >= TICK_DEADLINE_MS) throw new Error(`tick deadline ${TICK_DEADLINE_MS}ms exhausted; remaining runs are deferred to the next tick`);
+    herdrCalls += 1;
+    return call();
+  };
   const scopes = [...new Set(index.entries.map((entry) => {
     try { return readRun(entry.statePath).supervision.observer.hostScope; } catch { return "default"; }
   }))];
-  const probes = scopes.length === 0 ? [{ available: true, detail: null }] : scopes.map((scope) => options.herdr.probe(scope));
+  const probes = scopes.length === 0 ? [{ available: true, detail: null }] : scopes.map((scope) => checkedCall(() => options.herdr.probe(scope)));
   const herdr = probes.every((probe) => probe.available)
     ? { available: true, detail: null }
     : { available: false, detail: probes.filter((probe) => !probe.available).map((probe) => probe.detail ?? "no detail").join("; ") };
   const results: RunTickResult[] = [];
   const updates = new Map<string, (entry: IndexEntry) => void>();
-  const removals: Array<{ statePath: string; enrollmentId: string; cause: string }> = [];
+  const removals: Array<{ statePath: string; enrollmentId: string; cause: string; outcome?: "undelivered-terminal" }> = [];
 
   const addUpdate = (entry: IndexEntry, mutate: (held: IndexEntry) => void): void => {
     const key = entryKey(entry);
@@ -131,7 +143,7 @@ export function runTick(options: TickOptions): TickResult {
     const key = `${hostScope}\0${target}`;
     const cached = lookups.get(key);
     if (cached !== undefined) return cached;
-    const answer = options.herdr.getAgent(target, hostScope);
+    const answer = checkedCall(() => options.herdr.getAgent(target, hostScope));
     lookups.set(key, answer);
     return answer;
   };
@@ -144,7 +156,7 @@ export function runTick(options: TickOptions): TickResult {
       held.lastFailure = { at, detail: `${detail}; terminal delivery failed ${count}/${TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP} consecutive tick(s)` };
     });
     if (count < TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP) return false;
-    removals.push({ statePath: item.loaded.entry.statePath, enrollmentId: item.loaded.entry.enrollmentId, cause: `terminal run could not notify its Observer for ${count} consecutive ticks: ${detail}` });
+    removals.push({ statePath: item.loaded.entry.statePath, enrollmentId: item.loaded.entry.enrollmentId, cause: `undelivered-terminal after ${count} definite delivery failures: ${detail}`, outcome: "undelivered-terminal" });
     return true;
   };
   const judged: Judged[] = [];
@@ -205,10 +217,10 @@ export function runTick(options: TickOptions): TickResult {
       continue;
     }
     if (decision.deferral !== null) {
-      const removed = decision.terminal
+      const removed = decision.terminal && decision.observer.kind === "observer-gone"
         ? recordTerminalFailure(item, decision.deferral, item.loaded.entry.terminalFailureTicks)
         : false;
-      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision, action: removed ? "removed" : "deferred", detail: decision.deferral });
+      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision, action: removed ? "undelivered-terminal" : "deferred", detail: decision.deferral });
       log({ event: "supervisor.wake.deferred", slug: item.run.facts.slug, enrollmentId: item.loaded.entry.enrollmentId, reasons: decision.due.map((entry) => entry.reason), detail: decision.deferral, at });
       continue;
     }
@@ -216,8 +228,7 @@ export function runTick(options: TickOptions): TickResult {
     if (item.loaded.entry.pendingWake?.episode === episode && item.loaded.entry.pendingWake.attempts >= MAX_UNKNOWN_WAKE_ATTEMPTS) {
       const detail = `wake delivery remains unknown after ${MAX_UNKNOWN_WAKE_ATTEMPTS} attempts; no further automatic input is sent for episode ${episode}`;
       addUpdate(item.loaded.entry, (held) => { held.lastFailure = { at, detail }; });
-      const removed = decision.terminal ? recordTerminalFailure(item, detail, item.loaded.entry.terminalFailureTicks) : false;
-      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision, action: removed ? "removed" : "failed", detail });
+      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision, action: "failed", detail });
       continue;
     }
     const observer = item.run.supervision.observer;
@@ -248,7 +259,7 @@ export function runTick(options: TickOptions): TickResult {
     }
     if (currentItems.length === 0) continue;
     const currentObserver = currentItems[0]!.run.supervision.observer;
-    const freshVerdict = judgeObserver(currentObserver, options.herdr.getAgent(currentObserver.paneId, currentObserver.hostScope));
+    const freshVerdict = judgeObserver(currentObserver, checkedCall(() => options.herdr.getAgent(currentObserver.paneId, currentObserver.hostScope)));
     if (freshVerdict.kind !== "match" || freshVerdict.status === "working" || freshVerdict.status === "blocked") {
       const detail = freshVerdict.kind !== "match" ? `${freshVerdict.kind}: ${freshVerdict.detail}` : `observer is ${freshVerdict.status}; delivery deferred`;
       for (const { item } of currentItems) {
@@ -261,10 +272,10 @@ export function runTick(options: TickOptions): TickResult {
           };
           if (freshVerdict.kind !== "match") held.lastFailure = { at, detail: freshVerdict.detail };
         });
-        const removed = item.decision.terminal
+        const removed = item.decision.terminal && freshVerdict.kind === "observer-gone"
           ? recordTerminalFailure(item, detail, item.loaded.entry.terminalFailureTicks)
           : false;
-        results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: removed ? "removed" : "deferred", detail });
+        results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: removed ? "undelivered-terminal" : "deferred", detail });
       }
       continue;
     }
@@ -301,11 +312,38 @@ export function runTick(options: TickOptions): TickResult {
       lines = nextLines;
     }
     if (cappedItems.length === 0) continue;
-    const outcome = options.herdr.promptAgent({ target: currentObserver.paneId, text: renderWake(currentObserver.sessionId, lines), expectedInputGuard: freshVerdict.inputGuard }, currentObserver.hostScope);
-    for (const { item } of cappedItems) {
-      const episode = episodeKey(item.decision.due);
-      const record: WakeRecord = { at, reasons: item.decision.due.map((entry: Candidate) => entry.reason), episode, outcome: outcome.outcome, path: outcome.path, code: outcome.code };
-      addUpdate(item.loaded.entry, (held) => {
+    const deliveryOperationId = crypto.randomUUID();
+    let reservedKeys = new Set<string>();
+    let priorPending = new Map<string, IndexEntry["pendingWake"]>();
+    updateIndex(options.indexFile, (fresh) => {
+      reservedKeys = new Set<string>();
+      priorPending = new Map<string, IndexEntry["pendingWake"]>();
+      for (const { item } of cappedItems) {
+        const held = fresh.entries.find((entry) => entry.statePath === item.loaded.entry.statePath && entry.enrollmentId === item.loaded.entry.enrollmentId);
+        if (held === undefined) continue;
+        if (item.decision.due.every((candidate) => held.acknowledgements[candidate.reason] === candidate.episode)) continue;
+        const episode = episodeKey(item.decision.due);
+        const prior = held.pendingWake?.episode === episode ? held.pendingWake : null;
+        if ((prior?.attempts ?? 0) >= MAX_UNKNOWN_WAKE_ATTEMPTS) continue;
+        const key = entryKey(held);
+        priorPending.set(key, prior === null ? null : { ...prior });
+        held.pendingWake = { episode, attempts: (prior?.attempts ?? 0) + 1, at, operationId: deliveryOperationId, status: "reserved" };
+        reservedKeys.add(key);
+      }
+    });
+    const reservedItems = cappedItems.filter(({ item }) => reservedKeys.has(entryKey(item.loaded.entry)));
+    for (const { item } of cappedItems.filter(({ item }) => !reservedKeys.has(entryKey(item.loaded.entry)))) {
+      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: "deferred", detail: "delivery episode was acknowledged, exhausted or reserved before submission; stale wake discarded" });
+    }
+    if (reservedItems.length === 0) continue;
+    lines = reservedItems.map(({ item, run }) => ({ slug: run.facts.slug, statePath: item.loaded.entry.statePath, runInstanceId: run.supervision.runInstanceId, observerSessionId: run.supervision.observer.sessionId, reasons: item.decision.due }));
+    const outcome = checkedCall(() => options.herdr.promptAgent({ target: currentObserver.paneId, text: renderWake(currentObserver.sessionId, lines), expectedInputGuard: freshVerdict.inputGuard }, currentObserver.hostScope));
+    updateIndex(options.indexFile, (fresh) => {
+      for (const { item } of reservedItems) {
+        const held = fresh.entries.find((entry) => entry.statePath === item.loaded.entry.statePath && entry.enrollmentId === item.loaded.entry.enrollmentId);
+        const episode = episodeKey(item.decision.due);
+        if (held === undefined || held.pendingWake?.operationId !== deliveryOperationId || held.pendingWake.episode !== episode) continue;
+        const record: WakeRecord = { at, reasons: item.decision.due.map((entry: Candidate) => entry.reason), episode, outcome: outcome.outcome, path: outcome.path, code: outcome.code };
         held.lastWake = record;
         if (outcome.outcome === "accepted") {
           for (const candidate of item.decision.due) held.acknowledgements[candidate.reason] = candidate.episode;
@@ -313,24 +351,28 @@ export function runTick(options: TickOptions): TickResult {
           held.pendingWake = null;
           held.lastFailure = null;
         } else if (outcome.outcome === "unknown") {
-          const attempts = item.loaded.entry.pendingWake?.episode === episode ? item.loaded.entry.pendingWake.attempts + 1 : 1;
-          held.pendingWake = { episode, attempts, at };
-          held.lastFailure = { at, detail: `wake delivery unknown (${outcome.code}), attempt ${attempts}/${MAX_UNKNOWN_WAKE_ATTEMPTS}: ${outcome.detail}` };
+          held.pendingWake = { ...held.pendingWake, operationId: null, status: "unknown" };
+          held.lastFailure = { at, detail: `wake delivery unknown (${outcome.code}), attempt ${held.pendingWake.attempts}/${MAX_UNKNOWN_WAKE_ATTEMPTS}: ${outcome.detail}` };
         } else {
-          // A definite rejection proves only this submission had no effect.
-          // It cannot erase uncertain effects from the same episode, or an
-          // unknown/rejected sequence can submit input without a bound.
-          held.pendingWake = held.pendingWake?.episode === episode ? held.pendingWake : null;
+          held.pendingWake = priorPending.get(entryKey(held)) ?? null;
           held.lastFailure = { at, detail: `wake rejected (${outcome.code}): ${outcome.detail}` };
         }
+      }
+    });
+    for (const { item } of reservedItems) {
+      const episode = episodeKey(item.decision.due);
+      addUpdate(item.loaded.entry, (held) => {
+        if (outcome.outcome === "accepted") held.lastFailure = null;
+        else if (outcome.outcome === "unknown") held.lastFailure = { at, detail: `wake delivery unknown (${outcome.code}): ${outcome.detail}` };
+        else held.lastFailure = { at, detail: `wake rejected (${outcome.code}): ${outcome.detail}` };
       });
-      const removed = item.decision.terminal && outcome.outcome !== "accepted"
+      const removed = item.decision.terminal && outcome.outcome === "rejected"
         ? recordTerminalFailure(item, `wake ${outcome.outcome} (${outcome.code}): ${outcome.detail}`, item.loaded.entry.terminalFailureTicks)
         : false;
-      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: outcome.outcome === "accepted" ? "sent" : removed ? "removed" : "failed", detail: `${item.decision.due.map((candidate) => candidate.reason).join("+")}: ${outcome.outcome} via ${outcome.path} (${outcome.code})` });
+      results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: outcome.outcome === "accepted" ? "sent" : removed ? "undelivered-terminal" : "failed", detail: `${item.decision.due.map((candidate) => candidate.reason).join("+")}: ${outcome.outcome} via ${outcome.path} (${outcome.code})` });
       if (item.decision.terminal && outcome.outcome === "accepted") removals.push({ statePath: item.loaded.entry.statePath, enrollmentId: item.loaded.entry.enrollmentId, cause: `run ${item.run.facts.status}; terminal wake accepted` });
     }
-    log({ event: "supervisor.wake.attempted", observer: currentObserver.sessionId, pane: currentObserver.paneId, hostScope: currentObserver.hostScope, runs: lines.map((line) => ({ statePath: line.statePath, slug: line.slug, instance: line.runInstanceId, reasons: line.reasons.map((entry) => entry.reason) })), outcome: outcome.outcome, path: outcome.path, code: outcome.code, at });
+    log({ event: "supervisor.wake.attempted", operationId: deliveryOperationId, observer: currentObserver.sessionId, pane: currentObserver.paneId, hostScope: currentObserver.hostScope, runs: lines.map((line) => ({ statePath: line.statePath, slug: line.slug, instance: line.runInstanceId, reasons: line.reasons.map((entry) => entry.reason) })), outcome: outcome.outcome, path: outcome.path, code: outcome.code, at });
   }
 
   options.beforePersist?.();
@@ -343,11 +385,44 @@ export function runTick(options: TickOptions): TickResult {
     fresh.entries = fresh.entries.filter((entry) => !gone.has(entryKey(entry)));
     for (const removal of removals) {
       if (actuallyRemoved.includes(`${removal.statePath}\0${removal.enrollmentId}`)) {
-        const { enrollmentId: _enrollmentId, ...record } = removal;
+        const { enrollmentId: _enrollmentId, outcome, ...record } = removal;
         if (!fresh.removed.some((existing) => existing.at === at && existing.statePath === record.statePath && existing.cause === record.cause)) fresh.removed.push({ at, ...record });
+        if (outcome === "undelivered-terminal" && !fresh.undeliveredTerminal.some((existing) => existing.enrollmentId === removal.enrollmentId)) {
+          const original = index.entries.find((entry) => entry.enrollmentId === removal.enrollmentId)!;
+          fresh.undeliveredTerminal.push({ at, statePath: removal.statePath, runInstanceId: original.runInstanceId, enrollmentId: removal.enrollmentId, failures: TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP, detail: removal.cause });
+        }
       }
     }
   });
   log({ event: "supervisor.tick", at, herdrAvailable: herdr.available, runs: results.length, sent: results.filter((entry) => entry.action === "sent").length, deferred: results.filter((entry) => entry.action === "deferred").length, failed: results.filter((entry) => entry.action === "failed").length, removed: removals.length });
-  return { at, herdr, runs: results };
+  return { at, herdr, runs: results, executor: "ran" };
+}
+
+export function runTick(options: TickOptions): TickResult {
+  const now = options.now ?? (() => Date.now());
+  const started = now();
+  const operationId = crypto.randomUUID();
+  let acquired = false;
+  updateIndex(options.indexFile, (index) => {
+    const lease = index.tickExecutor;
+    let ownerAlive = false;
+    if (lease !== null) {
+      try { process.kill(lease.pid, 0); ownerAlive = true; } catch (error) { ownerAlive = (error as NodeJS.ErrnoException).code === "EPERM"; }
+    }
+    if (lease !== null && ownerAlive && Date.parse(lease.expiresAt) > started) return;
+    index.tickExecutor = { operationId, pid: process.pid, startedAt: new Date(started).toISOString(), expiresAt: new Date(started + TICK_EXECUTOR_LEASE_MS).toISOString() };
+    acquired = true;
+  });
+  if (!acquired) {
+    const at = new Date(started).toISOString();
+    const previous = readIndex(options.indexFile).lastHerdr ?? { available: true, detail: null };
+    return { at, herdr: previous, runs: [], executor: "already-running" };
+  }
+  try {
+    return executeTick(options);
+  } finally {
+    updateIndex(options.indexFile, (index) => {
+      if (index.tickExecutor?.operationId === operationId) index.tickExecutor = null;
+    });
+  }
 }

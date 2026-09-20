@@ -53,8 +53,9 @@ export function currentObserverIdentity(env: NodeJS.ProcessEnv = process.env, he
 function tick(env: NodeJS.ProcessEnv): ImplementCommandResult {
   rotateLog(launchdLogPath(env));
   const outcome = runTick({ indexFile: indexPath(env), herdr: herdrForTick() });
+  if (outcome.executor === "already-running") return result("tick", true, `tick already running for ${indexPath(env)}; this request did not execute in parallel`, { ...outcome });
   const sent = outcome.runs.filter((run) => run.action === "sent").length;
-  const failed = outcome.runs.filter((run) => run.action === "failed").length;
+  const failed = outcome.runs.filter((run) => run.action === "failed" || run.action === "undelivered-terminal").length;
   const ok = outcome.herdr.available && failed === 0;
   return result("tick", ok, `tick at ${outcome.at}: ${outcome.runs.length} run(s), ${sent} wake(s) sent, ${failed} failure(s)${outcome.herdr.available ? "" : "; herdr unavailable, state.json judgment only"}`, { ...outcome, runs: outcome.runs.map((run) => ({ statePath: run.statePath, slug: run.slug, action: run.action, detail: run.detail, due: run.decision?.due.map((entry) => entry.reason) ?? [], candidates: run.decision?.candidates.map((entry) => entry.reason) ?? [] })) });
 }
@@ -94,6 +95,7 @@ export function supervisorStatusView(env: NodeJS.ProcessEnv, herdr: HerdrEnviron
     ...(index?.lastHerdr?.available === false ? [`last tick could not observe herdr: ${index.lastHerdr.detail ?? "no detail"}`] : []),
     ...runs.filter((run) => run.stale).map((run) => `${run.slug} routing is stale`),
     ...runs.filter((run) => run.lastFailure !== null).map((run) => `${run.slug} current failure: ${run.lastFailure!.detail}`),
+    ...(index?.undeliveredTerminal.map((record) => `undelivered-terminal ${slugOf(record.statePath)}: ${record.detail}`) ?? []),
   ];
   const lines = [
     `LaunchAgent: ${agent.installed ? "installed" : "NOT installed"} at ${agent.plistPath}; ${agent.loaded === true ? "loaded" : agent.loaded === false ? "NOT loaded" : "load state unknown"}${agent.detail === null ? "" : ` (${agent.detail})`}`,
@@ -104,9 +106,11 @@ export function supervisorStatusView(env: NodeJS.ProcessEnv, herdr: HerdrEnviron
     `Runs: ${runs.length}`,
     ...runs.map((run) => `  ${run.slug} ${run.runInstanceId}${run.stale ? " [stale]" : ""}: recovery owner ${run.recoveryOwner}; observer ${run.lastObservation?.observer ?? "unobserved"}; implementor ${run.lastObservation?.implementor ?? "unobserved"}; last wake ${run.lastWake === null ? "none" : `${run.lastWake.reasons.join("+")} at ${run.lastWake.at} ${run.lastWake.outcome} via ${run.lastWake.path}`}; last failure ${run.lastFailure === null ? "none" : `${run.lastFailure.at} ${run.lastFailure.detail}`}`),
     ...(index?.removed.slice(-5).map((removal) => `  removed ${slugOf(removal.statePath)} at ${removal.at}: ${removal.cause}`) ?? []),
+    `Undelivered terminal: ${index?.undeliveredTerminal.length ?? 0}`,
+    ...(index?.undeliveredTerminal.slice(-5).map((record) => `  ATTENTION ${slugOf(record.statePath)} ${record.runInstanceId} at ${record.at}: ${record.detail}`) ?? []),
   ];
   const ok = healthProblems.length === 0;
-  return { ok, lines, detail: { launchAgent: agent, lastTickAt: index?.lastTickAt ?? null, lastTickAgeMs: tickAgeMs, lastHerdr: index?.lastHerdr ?? null, guardedPrompt: guarded, indexPath: file, indexProblem, healthProblems, runs, removed: index?.removed ?? [], tickLog: tickLogPath(env) } };
+  return { ok, lines, detail: { launchAgent: agent, lastTickAt: index?.lastTickAt ?? null, lastTickAgeMs: tickAgeMs, lastHerdr: index?.lastHerdr ?? null, guardedPrompt: guarded, indexPath: file, indexProblem, healthProblems, runs, removed: index?.removed ?? [], undeliveredTerminal: index?.undeliveredTerminal ?? [], tickExecutor: index?.tickExecutor ?? null, tickLog: tickLogPath(env) } };
 }
 
 function status(env: NodeJS.ProcessEnv): ImplementCommandResult {
@@ -146,21 +150,30 @@ function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.Process
   const statePathFlag = flag(args, "state");
   const { statePath, state } = loadState(projectRoot, { ...(slug !== undefined ? { slug } : {}), ...(statePathFlag !== undefined ? { state: statePathFlag } : {}) });
   const supervision = state.supervision ?? null;
-  if (supervision === null) throw new Error(`run ${state.topicSlug} has no supervision record; it was never dispatched under Herdr`);
+  const pending = state.pendingDispatch ?? null;
+  if (supervision === null && pending === null) throw new Error(`run ${state.topicSlug} has no supervision or pending dispatch record; it was never dispatched under Herdr`);
   if (state.status !== "active") throw new Error(`run ${state.topicSlug} is ${state.status}; a finished run is not handed over`);
   const observer = currentObserverIdentity(env);
   if (observer.identity === null) throw new Error(observer.problem ?? "cannot read this pane's identity");
   const at = nowIso();
-  supervision.handovers = [...supervision.handovers, { at, from: supervision.observer, to: observer.identity, approval }];
-  supervision.observer = observer.identity;
+  const from = supervision?.observer ?? pending!.observer;
+  const transfer = { at, from, to: observer.identity, approval };
+  if (supervision !== null) {
+    supervision.handovers = [...supervision.handovers, transfer];
+    supervision.observer = observer.identity;
+  }
   // A partial handoff is recovered by the Observer, not by the Implementor.
   // Move that recovery authority with the explicit human-approved handover so
   // an interrupted dispatch cannot become permanently wedged (2026-09-20).
-  if (state.pendingDispatch !== undefined && state.pendingDispatch !== null) state.pendingDispatch.observer = observer.identity;
+  if (pending !== null) {
+    pending.handovers = [...(pending.handovers ?? []), transfer];
+    pending.observer = observer.identity;
+  }
   recordEvent(state, { kind: "handover", actor: "human", subject: null, summary: `Observer handed over to session ${observer.identity.sessionId} in ${observer.identity.paneId}`, at });
   persistState(statePath, state);
-  enrollRun(indexPath(env), { statePath, runInstanceId: supervision.runInstanceId, recoveryOwner: supervision.recoveryOwner, at });
-  return result("handover", true, `run ${state.topicSlug} is now observed by session ${observer.identity.sessionId} in pane ${observer.identity.paneId}; wakes resume on the next tick`, { observer: observer.identity, handovers: supervision.handovers.length });
+  const active = pending ?? supervision!;
+  enrollRun(indexPath(env), { statePath, runInstanceId: active.runInstanceId, recoveryOwner: active.recoveryOwner, at });
+  return result("handover", true, `run ${state.topicSlug} is now observed by session ${observer.identity.sessionId} in pane ${observer.identity.paneId}; wakes and partial recovery resume on the next action`, { observer: observer.identity, handovers: pending?.handovers?.length ?? supervision?.handovers.length ?? 0, pendingPhase: pending?.phase ?? null });
 }
 
 export async function runSupervisorCommand(projectRoot: string, args: SupervisorArgs, env: NodeJS.ProcessEnv = process.env): Promise<ImplementCommandResult> {

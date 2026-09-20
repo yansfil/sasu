@@ -564,7 +564,8 @@ function revalidatePendingHandoff(
 
 function restoreSupervisionAfterPartialDispatch(statePath: string, state: ImplementState, pending: PendingDispatch, at: string, cause: string): void {
   const previous = state.supervision ?? null;
-  if (previous === null) {
+  if (previous === null || previous.runInstanceId === pending.runInstanceId) {
+    if (previous?.runInstanceId === pending.runInstanceId) state.supervision = null;
     unenrollRun(indexPath(), { statePath, runInstanceId: pending.runInstanceId, at, cause });
     return;
   }
@@ -580,8 +581,27 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     assertRunOpenForMutation(state);
     if (args.flags.get("resume-handoff") === true) {
       let pending = state.pendingDispatch ?? null;
-      if (pending === null) throw new DispatchRejected("there is no partial dispatch whose handoff can be resumed");
+      const recoverAbsentChild = args.flags.get("recover-absent-child") === true;
+      if (pending === null) {
+        if (recoverAbsentChild) return result("dispatch", true, "no partial dispatch remains; absent-child recovery is already converged", { recovered: "already-clear" });
+        throw new DispatchRejected("there is no partial dispatch whose handoff can be resumed");
+      }
       if (currentSessionId() !== pending.observer.sessionId) throw new DispatchRejected(`only recorded Observer ${pending.observer.sessionId} may resume this handoff`);
+      if (recoverAbsentChild) {
+        if (pending.phase !== "started" || pending.implementor === null) throw new DispatchRejected(`--recover-absent-child requires a started partial dispatch; current phase is ${pending.phase}`);
+        const implementor = pending.implementor;
+        const recoveryHerdr = herdrEnvironmentForHostScope(implementor.hostScope);
+        const looked = getAgent(implementor.paneId, recoveryHerdr);
+        if (looked.kind === "unavailable") throw new DispatchRejected(`cannot prove recorded child ${implementor.sessionId} is absent: ${looked.detail}; recovery changed nothing`);
+        if (looked.kind === "found") throw new DispatchRejected(`recorded child ${implementor.sessionId} is still present in ${implementor.paneId}; use --resume-handoff with the packet instead`);
+        const at = nowIso();
+        restoreSupervisionAfterPartialDispatch(statePath, state, pending, at, "started partial dispatch recovered after the recorded child was positively absent");
+        state.pendingDispatch = null;
+        state.ownerSessionId = pending.observer.sessionId;
+        persistState(statePath, state);
+        writeActivePointer(projectRoot, state, pending.observer.sessionId);
+        return result("dispatch", true, `recorded child ${implementor.sessionId} is absent; partial dispatch ${pending.runInstanceId} was cleared and Observer navigation restored`, { runInstanceId: pending.runInstanceId, recovered: "started-absent", implementor });
+      }
       if (pending.phase === "planned") {
         const at = nowIso();
         restoreSupervisionAfterPartialDispatch(statePath, state, pending, at, "planned partial dispatch recovered before any agent was started");
@@ -675,7 +695,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     let pending: PendingDispatch = {
       runInstanceId, observer: observer.identity, plannedAgent: name, phase: "planned", prepared: null, implementor: null,
       canonicalRepository: canonicalRepository(placed.placement.cwd), prdPath: state.prdPath,
-      dispatchHead: repositoryHead(placed.placement.cwd), dispatchedAt, patrolIntervalMs, recoveryOwner,
+      dispatchHead: repositoryHead(placed.placement.cwd), dispatchedAt, patrolIntervalMs, recoveryOwner, handovers: [],
     };
     // The durable intent and enrollment exist before a pane is created. A
     // tick during this short window reports the partial dispatch rather than
@@ -718,7 +738,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         const supervision: SupervisionRecord = {
           runInstanceId, observer: observer.identity!, implementor,
           canonicalRepository: pending.canonicalRepository, prdPath: pending.prdPath, dispatchHead: pending.dispatchHead,
-          dispatchedAt, patrolIntervalMs, recoveryOwner, handovers: [],
+          dispatchedAt, patrolIntervalMs, recoveryOwner, handovers: pending.handovers ?? [],
         };
         recordId = recordDispatch(projectRoot, statePath, state, { ...started, agent: started.name, cwd: placed.placement!.cwd }, "observer",
           `implementor ${started.name} (${started.kind}) started in ${started.paneId}; exact identity recorded before handoff`, supervision).id;

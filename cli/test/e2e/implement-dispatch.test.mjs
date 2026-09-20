@@ -241,6 +241,50 @@ test("B2/B18: an approved Observer handover transfers partial-handoff recovery a
   assert.deepEqual(fake.prompts().map((entry) => [entry.target, entry.text]), [["w4G:p13", PACKET]]);
 });
 
+test("B2/B18: approved handover transfers a planned dispatch before supervision exists", () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  assert.equal(dispatch(root, { ...env, HERDR_FAKE_PROMPT_FAIL: "1" }).status, 1);
+  const fixture = state(root);
+  fixture.pendingDispatch.phase = "planned";
+  fixture.pendingDispatch.prepared = null;
+  fixture.pendingDispatch.implementor = null;
+  fixture.pendingDispatch.handovers = [];
+  fixture.supervision = null;
+  fs.writeFileSync(path.join(root, STATE_PATH), `${JSON.stringify(fixture, null, 2)}\n`);
+
+  fake.patchAgent("w4G:p12", { name: "observer", agent: "claude", agent_status: "working", pane_id: "w4G:p12", terminal_id: "term_replacement", agent_session: { value: "replacement-session" }, tokens: { activity: "2000" }, state_change_seq: 2 });
+  const replacementEnv = { ...env, CLAUDE_SESSION_ID: "replacement-session" };
+  const handed = sasu(root, ["supervisor", "handover", "--slug", "fixture", "--approval", "user: replacement Observer takes planned recovery"], { env: replacementEnv });
+  assert.equal(handed.status, 0, handed.text);
+  assert.equal(state(root).pendingDispatch.observer.sessionId, "replacement-session");
+  assert.equal(state(root).pendingDispatch.handovers[0].approval, "user: replacement Observer takes planned recovery");
+});
+
+test("D-04/engineering 10: a positively absent started child has an idempotent recovery operation", () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake, home } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  assert.equal(dispatch(root, { ...env, HERDR_FAKE_PROMPT_FAIL: "1" }).status, 1);
+  assert.equal(state(root).pendingDispatch.phase, "started");
+  fake.setAgents({});
+
+  const recovered = sasu(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff", "--recover-absent-child"], { env });
+  assert.equal(recovered.status, 0, recovered.text);
+  assert.equal(recovered.json.detail.recovered, "started-absent");
+  assert.equal(state(root).pendingDispatch, null);
+  assert.equal(state(root).ownerSessionId, OBSERVER);
+  assert.equal(readIndex(path.join(home, ".sasu", "supervisor", "index.json")).entries.length, 0);
+  assert.equal(fake.prompts().length, 0);
+
+  const repeated = sasu(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff", "--recover-absent-child"], { env });
+  assert.equal(repeated.status, 0, repeated.text);
+  assert.equal(repeated.json.detail.recovered, "already-clear");
+});
+
 async function initialDispatchAtFinalLookup(root, env, stem) {
   const ready = path.join(root, `${stem}.ready`);
   const release = path.join(root, `${stem}.release`);

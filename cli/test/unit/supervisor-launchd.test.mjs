@@ -114,3 +114,22 @@ test("a failed definition replacement leaves the old plist intact and the retry 
   assert.match(fs.readFileSync(plist, "utf8"), /\/new\/cli\.js/);
   assert.match(base.loaded.get(LAUNCHD_LABEL), /\/new\/cli\.js/);
 });
+
+test("engineering 10/11: a failed staged definition write leaves the loaded service and old bytes intact", () => {
+  const home = isolated();
+  const base = fakeLaunchctl();
+  const env = { HOME: home };
+  const initial = { env, launchctl: base.run, uid: 501 };
+  installLaunchAgent(spec(home), initial);
+  const plist = launchAgentPlistPath(env);
+  const oldBytes = fs.readFileSync(plist, "utf8");
+  const failed = installLaunchAgent(spec(home, { cli: "/new/cli.js" }), {
+    ...initial,
+    writeFile: () => { throw new Error("disk full"); },
+  });
+  assert.equal(failed.loaded, true);
+  assert.match(failed.problem, /could not stage replacement.*disk full/);
+  assert.equal(fs.readFileSync(plist, "utf8"), oldBytes);
+  assert.equal(base.loaded.has(LAUNCHD_LABEL), true);
+  assert.equal(base.asked.filter((command) => command.startsWith("bootout ")).length, 0, "a definition that cannot be staged never stops the service");
+});

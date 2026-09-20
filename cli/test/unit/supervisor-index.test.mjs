@@ -78,6 +78,35 @@ test("a delayed writer cannot recreate a pruned old revision and mistake it for 
   assert.equal(read.lastHerdr.detail, "writer-5", "the intervening writes survive the replay");
 });
 
+test("engineering 14/15: a reader whose selected revision is pruned retries from the fresh head", () => {
+  const index = file();
+  enrollRun(index, { statePath: "/repo/agents/runs/a/state.json", runInstanceId: "i-1", recoveryOwner: "supervisor", at: "2026-09-18T00:00:00.000Z" });
+  const originalOpen = fs.openSync;
+  let advanced = false;
+  fs.openSync = function patchedOpen(target, ...args) {
+    if (!advanced && String(target).includes(".revision-")) {
+      advanced = true;
+      for (let i = 0; i < 5; i += 1) updateIndex(index, (held) => { held.lastHerdr = { available: true, detail: `pruner-${i}` }; });
+    }
+    return originalOpen.call(fs, target, ...args);
+  };
+  try {
+    const read = readIndex(index);
+    assert.equal(advanced, true, "the deterministic barrier advanced beyond the retained revision window");
+    assert.equal(read.lastHerdr.detail, "pruner-4");
+  } finally {
+    fs.openSync = originalOpen;
+  }
+});
+
+test("engineering 14/15: the next successful write removes crash-orphaned index temp files", () => {
+  const index = file();
+  const orphan = `${index}.99999.00000000-0000-4000-8000-000000000000.tmp`;
+  fs.writeFileSync(orphan, "partial\n");
+  updateIndex(index, (held) => { held.lastTickAt = "2026-09-18T00:01:00.000Z"; });
+  assert.equal(fs.existsSync(orphan), false);
+});
+
 test("a successful write is not replayed when a successor lands after its link", () => {
   const index = file();
   let mutations = 0;

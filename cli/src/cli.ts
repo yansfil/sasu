@@ -50,7 +50,8 @@ Usage:
     (archives and re-seals the edited PRD, refreshes metadata, and invalidates the current verification report.)
   sasu implement dispatch --name <unique-agent-name> --prd <path> [--kind <agent>] [--model <model>] [--effort <level>] [--env KEY=VALUE ...] [--patrol <minutes>] [--recovery-owner <supervisor|task-factory>] [--json]
     (starts exactly one marked implementor in its own pane with the handoff packet on stdin, records this pane as the run's Observer,
-     and enrolls the run with the supervisor tick; recursive dispatch is refused.)
+     and enrolls the run with the supervisor tick; recursive dispatch is refused. Use --resume-handoff for every durable partial phase,
+     with --recover-absent-child only for a positively absent recorded started child; that recovery sends no input.)
   sasu implement escalate --reason "<what the implementor is stuck on>" [--target <finding-or-issue-ref>] [--agent <herdr-agent>] [--json]
     (bounded read-only diagnosis and context recovery; unavailable while a verify execution lease is live.)
   sasu implement artifact (--kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<observation>" | --manifest <json-file>) [--source "<collector and method>"] [--collected-at <ISO-time>] [--target "<observed target>"] [--environment "<environment>"] [--refs "<B1,B2,...>"] [--json]

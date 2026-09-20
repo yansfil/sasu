@@ -316,6 +316,8 @@ export interface PendingDispatch {
   dispatchedAt: string;
   patrolIntervalMs: number;
   recoveryOwner: "supervisor" | "task-factory";
+  /** Human-approved recovery-authority transfers before supervision exists. */
+  handovers?: ObserverHandover[];
 }
 
 export type PrdJudgeRecord =

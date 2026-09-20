@@ -31,7 +31,7 @@ export interface IndexEntry {
   acknowledgements: Partial<Record<WakeReason, string>>;
   lastAcknowledgedAt: string | null;
   /** Unknown delivery is retried a bounded number of times, never treated as accepted. */
-  pendingWake: { episode: string; attempts: number; at: string } | null;
+  pendingWake: { episode: string; attempts: number; at: string; operationId: string | null; status: "reserved" | "unknown" } | null;
   lastFailure: { at: string; detail: string } | null;
   lastObservation: { at: string; observer: string; implementor: string; guardedPrompt: boolean } | null;
 }
@@ -42,20 +42,26 @@ export interface SupervisorIndex {
   lastHerdr: { available: boolean; detail: string | null } | null;
   entries: IndexEntry[];
   removed: Array<{ at: string; statePath: string; cause: string }>;
+  /** Terminal notifications abandoned only after bounded definite failures. */
+  undeliveredTerminal: Array<{ at: string; statePath: string; runInstanceId: string; enrollmentId: string; failures: number; detail: string }>;
+  /** One durable executor lease serializes scheduled and manually requested ticks. */
+  tickExecutor: { operationId: string; pid: number; startedAt: string; expiresAt: string } | null;
   /** Bounded operation ids make a linked write recognizable under a newer head. */
   appliedWrites: string[];
 }
 
 export const REMOVED_HISTORY_CAP = 50;
+export const UNDELIVERED_TERMINAL_CAP = 50;
 export const MISSING_TICKS_BEFORE_CLEANUP = 3;
 export const MAX_INDEX_ENTRIES = 1024;
 export const MAX_INDEX_BYTES = 8 * 1024 * 1024;
 export const APPLIED_WRITES_CAP = 1024;
 const RETAINED_REVISIONS = 4;
 const REVISION_PREFIX = ".revision-";
+const READ_RETRIES = 4;
 
 export function emptyIndex(): SupervisorIndex {
-  return { schema: INDEX_SCHEMA, lastTickAt: null, lastHerdr: null, entries: [], removed: [], appliedWrites: [] };
+  return { schema: INDEX_SCHEMA, lastTickAt: null, lastHerdr: null, entries: [], removed: [], undeliveredTerminal: [], tickExecutor: null, appliedWrites: [] };
 }
 
 const legacyEnrollmentId = (entry: Record<string, unknown>): string =>
@@ -91,7 +97,11 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
       if (typeof record["pendingWake"] !== "object" || Array.isArray(record["pendingWake"])) throw new Error(`supervisor index entry ${record["statePath"]} has invalid pendingWake: ${file}`);
       const pending = record["pendingWake"] as Record<string, unknown>;
       if (typeof pending["episode"] !== "string" || !Number.isInteger(pending["attempts"]) || Number(pending["attempts"]) < 1 || typeof pending["at"] !== "string") throw new Error(`supervisor index entry ${record["statePath"]} has invalid pendingWake: ${file}`);
-      pendingWake = { episode: pending["episode"], attempts: Number(pending["attempts"]), at: pending["at"] };
+      const status = pending["status"] === undefined ? "unknown" : pending["status"];
+      if (status !== "reserved" && status !== "unknown") throw new Error(`supervisor index entry ${record["statePath"]} has invalid pendingWake status: ${file}`);
+      const operationId = pending["operationId"] === undefined || pending["operationId"] === null ? null : pending["operationId"];
+      if (operationId !== null && (typeof operationId !== "string" || operationId === "" || operationId.length > 128)) throw new Error(`supervisor index entry ${record["statePath"]} has invalid pendingWake operationId: ${file}`);
+      pendingWake = { episode: pending["episode"], attempts: Number(pending["attempts"]), at: pending["at"], operationId, status };
     }
     const terminalFailureTicks = record["terminalFailureTicks"] === undefined ? 0 : record["terminalFailureTicks"];
     if (!Number.isInteger(terminalFailureTicks) || Number(terminalFailureTicks) < 0) throw new Error(`supervisor index entry ${record["statePath"]} has invalid terminalFailureTicks: ${file}`);
@@ -109,12 +119,22 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
   if (!Array.isArray(appliedWrites) || appliedWrites.length > APPLIED_WRITES_CAP || appliedWrites.some((entry) => typeof entry !== "string" || entry === "" || entry.length > 128)) {
     throw new Error(`supervisor index has invalid appliedWrites: ${file}`);
   }
+  const tickExecutor = candidate["tickExecutor"] === undefined ? null : candidate["tickExecutor"];
+  if (tickExecutor !== null) {
+    if (typeof tickExecutor !== "object" || Array.isArray(tickExecutor)) throw new Error(`supervisor index has invalid tickExecutor: ${file}`);
+    const lease = tickExecutor as Record<string, unknown>;
+    if (typeof lease["operationId"] !== "string" || !Number.isInteger(lease["pid"]) || Number(lease["pid"]) < 1 || optionalTimestamp(lease["startedAt"], "tickExecutor.startedAt", file) === null || optionalTimestamp(lease["expiresAt"], "tickExecutor.expiresAt", file) === null) throw new Error(`supervisor index has invalid tickExecutor: ${file}`);
+  }
+  const undeliveredTerminal = candidate["undeliveredTerminal"] === undefined ? [] : candidate["undeliveredTerminal"];
+  if (!Array.isArray(undeliveredTerminal) || undeliveredTerminal.length > UNDELIVERED_TERMINAL_CAP) throw new Error(`supervisor index has invalid undeliveredTerminal history: ${file}`);
   return {
     schema: INDEX_SCHEMA,
     lastTickAt: optionalTimestamp(candidate["lastTickAt"], "lastTickAt", file),
     lastHerdr: candidate["lastHerdr"] !== null && typeof candidate["lastHerdr"] === "object" ? candidate["lastHerdr"] as SupervisorIndex["lastHerdr"] : null,
     entries,
     removed: Array.isArray(candidate["removed"]) ? candidate["removed"] as SupervisorIndex["removed"] : [],
+    undeliveredTerminal: undeliveredTerminal as SupervisorIndex["undeliveredTerminal"],
+    tickExecutor: tickExecutor as SupervisorIndex["tickExecutor"],
     appliedWrites: appliedWrites as string[],
   };
 }
@@ -134,19 +154,30 @@ function revisions(file: string): number[] {
   }).sort((a, b) => a - b);
 }
 
-function readSource(file: string): { revision: number; source: string | null; sourceFile: string } {
-  const found = revisions(file);
-  if (found.length > 0) {
-    const revision = found.at(-1)!;
-    const sourceFile = revisionFile(file, revision);
-    const size = fs.statSync(sourceFile).size;
+function readDescriptor(sourceFile: string): string {
+  const descriptor = fs.openSync(sourceFile, "r");
+  try {
+    const size = fs.fstatSync(descriptor).size;
     if (size > MAX_INDEX_BYTES) throw new Error(`supervisor index is ${size} bytes, above the ${MAX_INDEX_BYTES} byte cap: ${sourceFile}`);
-    return { revision, source: fs.readFileSync(sourceFile, "utf8"), sourceFile };
+    return fs.readFileSync(descriptor, "utf8");
+  } finally {
+    fs.closeSync(descriptor);
   }
-  if (!fs.existsSync(file)) return { revision: 0, source: null, sourceFile: file };
-  const size = fs.statSync(file).size;
-  if (size > MAX_INDEX_BYTES) throw new Error(`supervisor index is ${size} bytes, above the ${MAX_INDEX_BYTES} byte cap: ${file}`);
-  return { revision: 0, source: fs.readFileSync(file, "utf8"), sourceFile: file };
+}
+
+function readSource(file: string): { revision: number; source: string | null; sourceFile: string } {
+  for (let attempt = 0; attempt < READ_RETRIES; attempt += 1) {
+    const found = revisions(file);
+    const revision = found.at(-1) ?? 0;
+    const sourceFile = revision === 0 ? file : revisionFile(file, revision);
+    try {
+      return { revision, source: readDescriptor(sourceFile), sourceFile };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (revision === 0 && revisions(file).length === 0) return { revision: 0, source: null, sourceFile: file };
+    }
+  }
+  throw new Error(`supervisor index head kept changing while it was opened: ${file}; retry the operation`);
 }
 
 function parseSource(source: string | null, file: string): SupervisorIndex {
@@ -170,6 +201,23 @@ function pruneRevisions(file: string): void {
   }
 }
 
+function cleanupTemporaryFiles(file: string): void {
+  const directory = path.dirname(file);
+  if (!fs.existsSync(directory)) return;
+  const escaped = path.basename(file).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`^${escaped}\\.(\\d+)\\.[0-9a-f-]+\\.tmp$`);
+  for (const name of fs.readdirSync(directory)) {
+    const matched = pattern.exec(name);
+    if (matched === null) continue;
+    let ownerAlive = false;
+    try { process.kill(Number(matched[1]), 0); ownerAlive = true; } catch (error) { ownerAlive = (error as NodeJS.ErrnoException).code === "EPERM"; }
+    if (ownerAlive) continue;
+    try { fs.unlinkSync(path.join(directory, name)); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
 /**
  * Atomic optimistic update without a lock file. Writers compete to create the
  * same immutable next revision with link(2). Exactly one succeeds; losers
@@ -186,6 +234,7 @@ export function updateIndex(file: string, mutate: (index: SupervisorIndex) => vo
     if (index.appliedWrites.length > APPLIED_WRITES_CAP) index.appliedWrites = index.appliedWrites.slice(-APPLIED_WRITES_CAP);
     if (index.entries.length > MAX_INDEX_ENTRIES) throw new Error(`supervisor index entry cap ${MAX_INDEX_ENTRIES} exceeded; nothing was written`);
     if (index.removed.length > REMOVED_HISTORY_CAP) index.removed = index.removed.slice(-REMOVED_HISTORY_CAP);
+    if (index.undeliveredTerminal.length > UNDELIVERED_TERMINAL_CAP) index.undeliveredTerminal = index.undeliveredTerminal.slice(-UNDELIVERED_TERMINAL_CAP);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const serialized = `${JSON.stringify(index, null, 2)}\n`;
     if (Buffer.byteLength(serialized) > MAX_INDEX_BYTES) throw new Error(`supervisor index byte cap ${MAX_INDEX_BYTES} exceeded; nothing was written`);
@@ -219,6 +268,7 @@ export function updateIndex(file: string, mutate: (index: SupervisorIndex) => vo
         continue;
       }
       pruneRevisions(file);
+      cleanupTemporaryFiles(file);
       return head;
     } catch (error) {
       try { fs.unlinkSync(temporary); } catch {}

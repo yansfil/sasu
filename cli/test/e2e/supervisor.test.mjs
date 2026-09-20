@@ -12,7 +12,7 @@ import { CLI, git, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../hel
 import { installFakeHerdr, installFakeLaunchctl } from "../helpers/fake-herdr.mjs";
 import { readIndex, updateIndex } from "../../dist/supervisor/index.js";
 import { launchdLogPath } from "../../dist/supervisor/paths.js";
-import { LOG_CAP_BYTES } from "../../dist/supervisor/tick.js";
+import { LOG_CAP_BYTES, TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP } from "../../dist/supervisor/tick.js";
 import { attemptFixture } from "../helpers/implement-state.mjs";
 
 const OBSERVER = "0b5e7e1e-0000-4000-8000-00000000000a";
@@ -187,6 +187,24 @@ test("B15: retiring the run wakes the Observer once with reason terminal and rem
   assert.match(run.index().removed[0].cause, /run retired; terminal wake accepted/);
   assert.equal(run.tick().json.detail.runs.length, 0);
   assert.equal(run.wakes().length, 1);
+});
+
+test("B15/engineering 10: an exhausted terminal delivery is prominent in status and doctor", () => {
+  const run = dispatchedRun();
+  const retired = sasu(run.root, ["implement", "retire", "--slug", "fixture", "--issuer", "human"], { env: { ...run.observerEnv, CLAUDE_SESSION_ID: "someone", SASU_HERDR_ROLE: "implementor", SASU_RUN_INSTANCE_ID: run.runInstanceId } });
+  assert.equal(retired.status, 0, retired.text);
+  run.herdr.setAgents({ [OBSERVER_PANE]: observerAgent({ agent_session: { value: "replacement-session" } }), [IMPL_PANE]: implAgent() });
+  for (let attempt = 1; attempt < TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP; attempt += 1) assert.equal(run.tick().json.detail.runs[0].action, "deferred");
+  assert.equal(run.tick().json.detail.runs[0].action, "undelivered-terminal");
+
+  const status = sasu(run.home, ["supervisor", "status"], { env: run.base });
+  assert.equal(status.json.detail.undeliveredTerminal.length, 1);
+  assert.match(status.json.detail.healthProblems.join("\n"), /undelivered-terminal fixture/);
+  assert.match(status.json.summary.join("\n"), /Undelivered terminal: 1[\s\S]*ATTENTION fixture/);
+
+  const doctor = sasu(run.root, ["doctor"], { env: run.base });
+  const supervisor = doctor.json.sections.find((section) => section.section === "supervisor");
+  assert.match(supervisor.lines.join("\n"), /Undelivered terminal: 1[\s\S]*ATTENTION fixture/);
 });
 
 test("B3/D-09: a tick killed after the prompt effect but before persistence duplicates at most once and then converges", async () => {

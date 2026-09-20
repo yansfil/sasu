@@ -323,6 +323,19 @@ export function parseImplementState(text: string): ImplementState {
     assertRecord(observer, "pendingDispatch.observer");
     for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(observer[field], `pendingDispatch.observer.${field}`);
     assertIsoTimestamp(observer["recordedAt"], "pendingDispatch.observer.recordedAt");
+    if (pending["handovers"] !== undefined) {
+      for (const handover of array(pending["handovers"], "pendingDispatch.handovers")) {
+        assertRecord(handover, "pendingDispatch.handovers[]");
+        assertIsoTimestamp(handover["at"], "pendingDispatch.handovers[].at");
+        assertString(handover["approval"], "pendingDispatch.handovers[].approval");
+        for (const side of ["from", "to"] as const) {
+          const identity = handover[side];
+          assertRecord(identity, `pendingDispatch.handovers[].${side}`);
+          for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(identity[field], `pendingDispatch.handovers[].${side}.${field}`);
+          assertIsoTimestamp(identity["recordedAt"], `pendingDispatch.handovers[].${side}.recordedAt`);
+        }
+      }
+    }
     if (pending["prepared"] !== null) {
       const prepared = pending["prepared"];
       assertRecord(prepared, "pendingDispatch.prepared");

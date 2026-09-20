@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -77,6 +78,9 @@ export interface LaunchdEnvironment {
   env?: NodeJS.ProcessEnv;
   launchctl?: LaunchctlRun;
   uid?: number;
+  /** Injectable filesystem boundaries keep failure-path tests deterministic. */
+  writeFile?: (file: string, contents: string) => void;
+  rename?: (from: string, to: string) => void;
 }
 
 const domain = (environment: LaunchdEnvironment): string => `gui/${environment.uid ?? os.userInfo().uid}`;
@@ -130,13 +134,35 @@ export function installLaunchAgent(spec: LaunchAgentSpec, environment: LaunchdEn
   const changed = current !== rendered;
   const before = launchAgentStatus(environment);
   const target = `${domain(environment)}/${LAUNCHD_LABEL}`;
-  if (before.loaded === true && changed) {
-    const out = call(["bootout", target]);
-    if (!out.ok) return { plistPath, plist: "unchanged", launchctl: asked, loaded: true, problem: `bootout failed, the old definition and its matching plist remain in place: ${out.detail}` };
-  }
+  let staged: string | null = null;
   if (changed) {
     fs.mkdirSync(path.dirname(plistPath), { recursive: true });
-    fs.writeFileSync(plistPath, rendered);
+    staged = `${plistPath}.${process.pid}.${crypto.randomUUID()}.tmp`;
+    try {
+      (environment.writeFile ?? ((file, contents) => fs.writeFileSync(file, contents)))(staged, rendered);
+    } catch (error) {
+      try { fs.rmSync(staged, { force: true }); } catch {}
+      return { plistPath, plist: "unchanged", launchctl: asked, loaded: before.loaded === true, problem: `could not stage replacement before changing the loaded service: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+  if (before.loaded === true && changed) {
+    const out = call(["bootout", target]);
+    if (!out.ok) {
+      if (staged !== null) fs.rmSync(staged, { force: true });
+      return { plistPath, plist: "unchanged", launchctl: asked, loaded: true, problem: `bootout failed, the old definition and its matching plist remain in place: ${out.detail}` };
+    }
+  }
+  if (changed) {
+    try {
+      (environment.rename ?? fs.renameSync)(staged!, plistPath);
+    } catch (error) {
+      try { fs.rmSync(staged!, { force: true }); } catch {}
+      if (before.loaded === true) {
+        const restored = call(["bootstrap", domain(environment), plistPath]);
+        return { plistPath, plist: "unchanged", launchctl: asked, loaded: restored.ok, problem: `could not activate the staged definition; ${restored.ok ? "the prior service was restored" : `the service is stopped and restoration failed: ${restored.detail}`}: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      return { plistPath, plist: "unchanged", launchctl: asked, loaded: false, problem: `could not activate the staged definition: ${error instanceof Error ? error.message : String(error)}` };
+    }
   }
   if (before.loaded !== true || changed) {
     const boot = call(["bootstrap", domain(environment), plistPath]);

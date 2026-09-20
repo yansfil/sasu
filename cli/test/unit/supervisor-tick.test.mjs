@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { appendLog, LOG_CAP_BYTES, LOG_EVENT_CAP_BYTES, MAX_WAKE_BYTES, rotateLog, runTick, TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP } from "../../dist/supervisor/tick.js";
+import { appendLog, LOG_CAP_BYTES, LOG_EVENT_CAP_BYTES, MAX_UNKNOWN_WAKE_ATTEMPTS, MAX_WAKE_BYTES, rotateLog, runTick, TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP, TICK_DEADLINE_MS } from "../../dist/supervisor/tick.js";
 import { readIndex, enrollRun, MISSING_TICKS_BEFORE_CLEANUP } from "../../dist/supervisor/index.js";
 import { MAX_RUN_STATE_BYTES } from "../../dist/supervisor/facts.js";
 import { WAKE_MARKER } from "../../dist/supervisor/wake.js";
@@ -38,6 +38,19 @@ test("engineering 15: one oversized structured event becomes an explicit bounded
   assert.equal(recorded.originalEvent, "large");
   assert.ok(recorded.originalBytes > LOG_EVENT_CAP_BYTES);
   assert.ok(fs.statSync(log).size < 1024);
+});
+
+test("engineering 10/15: the total tick deadline fails actionably and releases its executor", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor() } });
+  let clock = T0;
+  assert.throws(
+    () => runTick({ indexFile: index, herdr: herdr.herdr, now: () => { const value = clock; clock += TICK_DEADLINE_MS + 1; return value; }, log: silent }),
+    new RegExp(`tick deadline ${TICK_DEADLINE_MS}ms exhausted`),
+  );
+  assert.equal(readIndex(index).tickExecutor, null, "the deadline exit cannot strand the serialized executor");
 });
 
 test("B8/B10: a settled implementor wakes exactly the recorded Observer once, with an identity note, and the index records the wake", () => {
@@ -274,11 +287,29 @@ test("B15: a retired run with a missing Observer is removed after a bounded fail
     assert.equal(tick(index, herdr, T0 + i * MIN).runs[0].action, "deferred");
   }
   const final = tick(index, herdr, T0 + TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP * MIN);
-  assert.equal(final.runs[0].action, "removed");
+  assert.equal(final.runs[0].action, "undelivered-terminal");
   const recorded = readIndex(index);
   assert.equal(recorded.entries.length, 0);
-  assert.match(recorded.removed.at(-1).cause, new RegExp(`${TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP} consecutive ticks`));
+  assert.equal(recorded.undeliveredTerminal.length, 1);
+  assert.match(recorded.undeliveredTerminal[0].detail, new RegExp(`${TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP}`));
   assert.equal(herdr.prompts.length, 0);
+});
+
+test("B15/engineering 4: terminal notification defers without budget loss while the Observer is working", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  patchState(run.statePath, (state) => { state.status = "retired"; state.retirement = { retiredAt: "2026-09-18T10:05:00.000Z", retiredBySessionId: null }; });
+  const herdr = fakeTickHerdr({ agents: { obs: observer({ status: "working" }), impl: implementor() } });
+  for (let i = 1; i <= TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP + 2; i += 1) {
+    assert.equal(tick(index, herdr, T0 + i * MIN).runs[0].action, "deferred");
+  }
+  assert.equal(readIndex(index).entries[0].terminalFailureTicks, 0);
+  assert.equal(readIndex(index).undeliveredTerminal.length, 0);
+  herdr.state.agents.obs = observer({ status: "idle" });
+  assert.equal(tick(index, herdr, T0 + 10 * MIN).runs[0].action, "sent");
+  assert.equal(herdr.prompts.length, 1);
+  assert.equal(readIndex(index).entries.length, 0);
 });
 
 test("B8: a working Observer is not interrupted; the same condition is delivered on the next tick it is idle", () => {
@@ -362,6 +393,48 @@ test("D-09: definite rejections do not erase the same episode's uncertain-delive
   for (let offset = 1; offset <= 5; offset += 1) tick(index, herdr, T0 + offset * MIN);
   assert.equal(submissions, 3, "two uncertain submissions plus one definite rejection exhaust the episode's automatic input budget");
   assert.equal(readIndex(index).entries[0].pendingWake.attempts, 2);
+});
+
+test("engineering 11: concurrent ticks cannot exceed one episode's uncertain-delivery budget", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
+  let submissions = 0;
+  herdr.herdr.promptAgent = () => {
+    submissions += 1;
+    if (submissions === 1) {
+      const reserved = readIndex(index).entries[0].pendingWake;
+      assert.equal(reserved.status, "reserved", "the attempt is durable before the external submission");
+      assert.equal(reserved.attempts, 1);
+      assert.match(reserved.operationId, /^[0-9a-f-]{36}$/);
+      const competing = [tick(index, herdr, T0 + 2 * MIN), tick(index, herdr, T0 + 3 * MIN)];
+      assert.deepEqual(competing.map((result) => result.executor), ["already-running", "already-running"]);
+    }
+    return { outcome: "unknown", path: "session-match", code: "herdr_prompt_timeout", detail: "timeout" };
+  };
+  tick(index, herdr, T0 + MIN);
+  tick(index, herdr, T0 + 4 * MIN);
+  assert.equal(submissions, MAX_UNKNOWN_WAKE_ATTEMPTS, "a competing tick must defer instead of spending or overwriting the same delivery budget");
+});
+
+test("engineering 11: concurrent ticks cannot submit an acknowledged second episode twice", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked", stateChangeSeq: 1 }) } });
+  let submissions = 0;
+  herdr.herdr.promptAgent = () => {
+    submissions += 1;
+    if (submissions === 1) {
+      herdr.state.agents.impl = implementor({ status: "blocked", stateChangeSeq: 2 });
+      tick(index, herdr, T0 + 2 * MIN);
+    }
+    return { outcome: "accepted", path: "session-match", code: "submitted", detail: "ok" };
+  };
+  tick(index, herdr, T0 + MIN);
+  tick(index, herdr, T0 + 3 * MIN);
+  assert.equal(submissions, 2, "the second episode acknowledgment must survive the older tick's completion");
 });
 
 test("D-09: interacting wake reasons keep independent episode acknowledgements", () => {
