@@ -146,6 +146,49 @@ test("a spec referral keeps qa-log active during BLOCK and completes only after 
   assert.match(fs.readFileSync(qaPath, "utf8"), /status: "complete"/);
 });
 
+test("spec referral rejects a substitute qa-log before mutating either log or gate state", () => {
+  const dir = makeProject();
+  assert.equal(gapAudit(dir, PASS).status, 0);
+  const hard = finding("fidelity", "P1", "production-data use requires authority", true, { disposition: "human_authority" });
+  const spec = runCli(dir, ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"], {
+    stub: stubFile(dir, { byPurpose: { "lane:fidelity": { verdict: "BLOCK", findings: [hard] }, default: PASS } }),
+  });
+  assert.equal(JSON.parse(spec.stdout).status.nextGate, "gap-audit");
+  const canonical = path.join(dir, "qa-log.md");
+  const substitute = path.join(dir, "other-log.md");
+  const stateFile = path.join(dir, "agents", "runs", "fixture", "gates", "gates.json");
+  const originalLog = fs.readFileSync(canonical, "utf8");
+  const originalState = fs.readFileSync(stateFile, "utf8");
+  assert.match(originalLog, /status: "complete"/);
+  // Even a byte-identical complete log has a different canonical identity.
+  // A malformed substitute also must be refused before prelint records a BLOCK.
+  for (const content of [originalLog, "---\nstatus: complete\n---\n# Incomplete substitute"]) {
+    fs.writeFileSync(substitute, content);
+    const refused = runCli(dir, ["gate", "gap-audit", "--slug", "fixture", "--qa-log", "other-log.md", "--json"], { stub: stubFile(dir, PASS) });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr + refused.stdout, /qa-log mismatch: use --qa-log qa-log.md/);
+    assert.equal(fs.readFileSync(stateFile, "utf8"), originalState);
+    assert.equal(fs.readFileSync(canonical, "utf8"), originalLog);
+    assert.equal(fs.readFileSync(substitute, "utf8"), content);
+  }
+});
+
+for (const severity of ["P1", "P2"]) test(`spec rerun routes a fresh legacy ${severity} authority gap despite unchanged decisions`, () => {
+  const dir = makeProject();
+  const args = ["gate", "spec", "--slug", "fixture", "--prd", "prd.md", "--qa-log", "qa-log.md", "--json"];
+  const defect = finding("fidelity", "P1", "repair the PRD's unsupported claim", false, { disposition: "agent_fix" });
+  const first = runCli(dir, args, { stub: stubFile(dir, { byPurpose: { "lane:fidelity": { verdict: "BLOCK", findings: [defect] }, default: PASS } }) });
+  assert.equal(JSON.parse(first.stdout).status.verdict, "BLOCK");
+  const legacy = finding("fidelity", severity, "newly discovered missing production-data authority", true);
+  const second = runCli(dir, args, { stub: stubFile(dir, { byPurpose: { "lane:fidelity": { verdict: "BLOCK", findings: [legacy] }, default: PASS } }) });
+  const status = JSON.parse(second.stdout).status;
+  assert.equal(status.verdict, "BLOCK");
+  assert.equal(status.nextGate, "gap-audit");
+  assert.equal(status.findings.length, 1);
+  assert.equal(status.findings[0].missing, legacy.missing);
+  assert.equal(status.findings[0].severity, severity);
+});
+
 test("spec author-fixable P0 stays BLOCK without becoming a user question", () => {
   const dir = makeProject();
   const defect = finding("fidelity", "P0", "PRD contradicts the recorded accepted behavior", false, { disposition: "agent_fix" });

@@ -10,17 +10,28 @@ test("fresh gap-audit prompt carries no delta context", () => {
 });
 
 // PRD gate-loop R1: a rerun judges the open findings by id; new findings
-// exist only where the lane's decisions changed.
+// exist where decisions changed, with explicit safety exceptions.
 test("delta gap-audit prompt lists the open findings by id and asks for the id to be echoed", () => {
   const prompt = gapAuditPrompt("log", PRIOR);
   assert.match(prompt, /DELTA REVIEW CONTEXT/);
   assert.match(prompt, /- F1 \[P1\/error-handling\] setPriority unknown id/);
   assert.match(prompt, /echo its id\s+verbatim as an extra field "id"/);
-  assert.match(prompt, /did NOT change since the previous round, so no new finding is\s+admissible/);
+  assert.match(prompt, /did NOT change since the previous round, so ordinary new findings are\s+inadmissible/);
   assert.doesNotMatch(prompt, /origin/);
   // The wording must hold for every delta round, so it must not claim to be
   // a terminal or closure round.
   assert.doesNotMatch(prompt, /terminal for the current review cycle|closure review|closure verdict|one exhaustive review/i);
+});
+
+test("unchanged-register delta prompts admit fresh authority independently of severity", () => {
+  for (const prompt of [gapAuditPrompt("log", PRIOR), specGatePrompt("prd", "log", PRIOR)]) {
+    assert.match(prompt, /SAFETY EXCEPTION: even when Decision Register rows and reopen evidence are unchanged/);
+    assert.match(prompt, /new human_authority findings at ANY severity, and new P0 defects/);
+    assert.match(prompt, /Use NO "id" for a fresh finding/);
+    assert.match(prompt, /does not admit ordinary reversible choices/);
+    assert.match(prompt, /Missing approval alone does not determine severity/);
+    assert.doesNotMatch(prompt, /P0 is narrow:.*missing authority/);
+  }
 });
 
 test("a delta round on a lane whose decisions changed admits new findings without an id", () => {

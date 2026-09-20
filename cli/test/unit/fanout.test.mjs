@@ -17,6 +17,17 @@ function finding(overrides = {}) {
   };
 }
 
+for (const severity of ["P1", "P2"]) test(`fresh legacy ${severity} authority survives unchanged-lane admission`, () => {
+  for (const gate of ["spec", "gap-audit"]) {
+    const outcome = applyOpenSetContract({ gate, prior: [], rerun: true, assumeEvidence: "$please", lanes: [{ laneId: "fidelity", blocking: true, decisionsChanged: false, findings: [finding({ severity, requiresHuman: true })] }] });
+    assert.equal(outcome.verdict, gate === "spec" ? "BLOCK" : "NEEDS_HUMAN");
+    assert.equal(outcome.findings[0].disposition, "human_authority");
+    assert.equal(outcome.findings[0].severity, severity);
+    assert.deepEqual(outcome.dropped, []);
+    assert.deepEqual(outcome.assumed, []);
+  }
+});
+
 test("merge: all lanes empty is a PASS with zero findings", () => {
   const merged = mergeLaneFindings([
     { laneId: "a", findings: [] },
@@ -167,7 +178,7 @@ test("spec lanes: two lanes remain and old verification/coverage findings route 
 test("lane prompts: a rerun lane with no routed open finding is told so, and told whether new findings are admissible", () => {
   const unchanged = gapAuditPrompt("qa log body", [], { lane: GAP_AUDIT_LANES[0], laneCount: 4, rerun: true, decisionsChanged: false });
   assert.match(unchanged, /No open finding is assigned to your lane/);
-  assert.match(unchanged, /did NOT change since the previous round, so no new finding is\s+admissible/);
+  assert.match(unchanged, /did NOT change since the previous round, so ordinary new findings are\s+inadmissible/);
   assert.doesNotMatch(unchanged, /origin/);
   const changed = gapAuditPrompt("qa log body", [], { lane: GAP_AUDIT_LANES[0], laneCount: 4, rerun: true, decisionsChanged: true });
   assert.match(changed, /CHANGED since the previous round, so you may report a genuinely\s+NEW gap/);

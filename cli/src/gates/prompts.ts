@@ -24,12 +24,15 @@ const GAP_JSON_CONTRACT = `Reply with ONLY a JSON object, no prose, no code fenc
   ]
 }
 Rules:
-- BLOCK only for material gaps (P0/P1) that would change scope, behavior, acceptance, risk, or verification.
-- P0 is narrow: a direct contradiction of stated user intent, missing authority for a destructive,
-  production, security, privacy, cost, or irreversible data decision, or a core behavior that cannot
-  be implemented as written. Do not use P0 for ordinary implementation detail or proof not yet produced.
+- BLOCK for material gaps (P0/P1) that change scope, behavior, acceptance, risk, or verification,
+  or for genuinely missing human authority at any severity.
+- P0 is narrow: a direct contradiction of stated user intent, a core behavior that cannot be
+  implemented as written, or potential severe harm involving security, privacy, cost, production
+  data, or destructive/irreversible effects. Missing approval alone does not determine severity;
+  assess the potential impact separately from authority. Do not use P0 for ordinary implementation
+  detail or proof not yet produced.
 - List EVERY material gap you can find in THIS single pass. Do not hold findings back for a later
-  round: a re-run on the fixed document should find nothing new unless the document changed.
+  round: a re-run should find nothing new unless the document changed or the safety exception below applies.
 - Depth bar: internal API details that a competent implementer resolves by following the codebase's
   existing conventions - parameter type guards, null/undefined contracts, return-shape mechanics,
   which case variant gets stored - are at most P2 notes, NEVER blockers. Block only on decisions
@@ -42,7 +45,7 @@ Rules:
   policy. If the recorded policy is stronger or broader than the cited answer - including its scope,
   duration, lifecycle, compatibility, security, cost, or launch effect - report the unsupported part.
   Treat invented consent as P0 because it corrupts the canonical PRD source, including on a re-run.
-- PASS may carry P2 notes only.
+- PASS may carry P2 notes only when they require no human authority.
 - Classify resolution separately from severity using disposition:
   agent_fix: the author can repair fidelity, contradictions, unclear wording, missing observable
   outcomes, or unsupported claims using existing intent and evidence. requiresHuman must be false.
@@ -194,8 +197,8 @@ function rerunContext(priorFindings: PriorFinding[], rerun: boolean, decisionsCh
     ? `The Decision Register rows in your lane or the supplied reopen evidence CHANGED since the previous round, so you may report a genuinely
    NEW gap that the changed decisions or reopen request introduced. A new finding carries NO "id" field. Do not report a new
    finding about text that did not change.`
-    : `The Decision Register rows in your lane and the supplied reopen evidence did NOT change since the previous round, so no new finding is
-   admissible: the harness discards any finding whose "id" is not in the list above. Do not open new lines
+    : `The Decision Register rows in your lane and the supplied reopen evidence did NOT change since the previous round, so ordinary new findings are
+   inadmissible: the harness discards unknown ids except for the safety exception below. Do not open new lines
    of questioning about aspects that were previously acceptable.`;
   return `
 DELTA REVIEW CONTEXT: this document already received its exhaustive review, and the author revised it.
@@ -206,7 +209,12 @@ Your job is to close that review out, not to restart it:
    verbatim as an extra field "id" (e.g. "id": "F3") so the harness can match it. You may update its
    severity, wording, and requiresHuman to what the revision now warrants.
 3. ${newRule}
-4. Do not reserve concerns for another round.
+4. SAFETY EXCEPTION: even when Decision Register rows and reopen evidence are unchanged, report
+   genuinely new human_authority findings at ANY severity, and new P0 defects. A PRD-only edit can
+   introduce these risks without changing the register. Use NO "id" for a fresh finding, explain
+   the missing authority or severe impact, and keep severity independent of who may decide.
+   This exception does not admit ordinary reversible choices or reopen previously accepted taste.
+5. Do not reserve concerns for another round.
 
 ${prior}
 `;
@@ -264,7 +272,7 @@ export function gapAuditPrompt(
 ): string {
   const exhaustiveBlock = options.lane
     ? `Sweep the log ONCE for your lane only and list every material gap in YOUR lane in this single
-reply: a re-run on the fixed log must find nothing new in your lane unless the document changed.`
+reply: a re-run must find nothing new unless the document changed or the delta safety exception applies.`
     : `Be exhaustive NOW, not later. Before answering, sweep every operation, entity, and behavior the log
 already mentions and list, in this same reply, every unspecified error and edge-case decision for
 each of them (invalid input, missing/unknown id, empty or conflicting state, ordering ties). If an

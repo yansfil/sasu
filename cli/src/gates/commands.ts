@@ -142,7 +142,8 @@ export function priorFindingsFor(state: ReturnType<GateStore["load"]>, gate: Gat
  */
 export function enforceHumanBlocking(judged: GapVerdict): GapVerdict {
   const findings = judged.findings.map((raw) => {
-    const finding = { ...raw, requiresHuman: raw.disposition === undefined ? raw.requiresHuman : raw.disposition !== "agent_fix" };
+    const disposition = raw.disposition ?? (raw.requiresHuman ? "human_authority" : undefined);
+    const finding = { ...raw, ...(disposition === undefined ? {} : { disposition }), requiresHuman: disposition === undefined ? raw.requiresHuman : disposition !== "agent_fix" };
     return finding;
   });
   return { verdict: findings.some((finding) => finding.severity !== "P2" || finding.requiresHuman) ? "BLOCK" : "PASS", findings };
@@ -362,8 +363,8 @@ export interface OpenSetOutcome {
  *     open. A finding with no (or an unknown) id is new, and is kept only if
  *     its lane's decisions changed; otherwise it is dropped. So the open set
  *     is a subset of the prior set plus the changed lanes' additions, and an
- *     unchanged document converges by construction. The one exception is the
- *     severity floor: a new P0 is admitted from any lane, because a PRD edit
+ *     unchanged document converges by construction. Fresh hard authority and
+ *     the severity floor are exceptions: a new P0 is admitted from any lane, because a PRD edit
  *     made to close a spec finding can introduce a security or destructive
  *     defect without touching the Decision Register, and a bound that drops
  *     a reported P0 is not convergence but blindness (RF4, 2026-09-06). A
@@ -387,7 +388,10 @@ export function applyOpenSetContract(input: {
   const echoed = new Set<string>();
   const admitted = input.lanes.map((lane) => {
     const findings: Finding[] = [];
-    for (const finding of lane.findings) {
+    for (const raw of lane.findings) {
+      // Normalize legacy authority before admission, not only after merging:
+      // otherwise an unchanged lane can silently discard a real authority gap.
+      const finding = enforceHumanBlocking({ verdict: "PASS", findings: [raw] }).findings[0]!;
       if (!input.rerun) {
         // A first round hands out no ids; anything the judge invented is noise.
         const { id: _ignored, ...fresh } = finding;
@@ -456,6 +460,20 @@ function recordQaLogAudit(
     updated = setQaLogStatus(updated, "complete");
   }
   replaceQaLog(file, original, refreshBookkeeping(updated));
+}
+
+/** A referral may reopen only its existing canonical source, never a substitute log. */
+function assertReferralQaLog(projectRoot: string, state: ReturnType<GateStore["load"]>, input: GateInput): void {
+  if (specReferral(state) === null) return;
+  const specInput = state.gates.spec?.inputs?.find((candidate) => candidate.kind === "qa-log");
+  if (specInput === undefined) throw new Error("Spec referral has no pinned qa-log; restore its canonical source record before gap-audit");
+  const gapInput = state.gates["gap-audit"]?.inputs?.find((candidate) => candidate.kind === "qa-log");
+  const actual = fs.realpathSync(path.resolve(projectRoot, input.path));
+  for (const pinned of [specInput, ...(gapInput === undefined ? [] : [gapInput])]) {
+    if (actual !== fs.realpathSync(path.resolve(projectRoot, pinned.path))) {
+      throw new Error(`Spec referral qa-log mismatch: use --qa-log ${pinned.path}; a referral cannot replace its canonical interview log`);
+    }
+  }
 }
 
 function auditEntryFor(state: GatesState, gate: Extract<GateId, "gap-audit" | "spec">, result: AuditEntryInput["result"], note?: string): Omit<AuditEntryInput, "type"> {
@@ -527,6 +545,7 @@ async function runGapListGate(
       const pending = state.gates["gap-audit"]?.reviewedSpecReferral !== referral.sha256;
       const qaLog = inputs.find((input) => input.kind === "qa-log");
       if (qaLog === undefined) throw new Error("Spec referral requires a qa-log input");
+      assertReferralQaLog(projectRoot, state, qaLog);
       const file = path.resolve(projectRoot, qaLog.path);
       const original = pending ? fs.readFileSync(file, "utf8") : undefined;
       // Reactivate only after admission succeeds. A refused referral must not
@@ -772,7 +791,10 @@ export async function runGapAudit(
   gateOptions?: { grantBudgetEvidence?: string; assumeHumanEvidence?: string },
 ): Promise<GateCommandResult> {
   const qaLog = readInputFile(projectRoot, qaLogPath, "qa-log");
-  const delegated = new GateStore(projectRoot, topic).load().delegation !== undefined || Boolean(gateOptions?.assumeHumanEvidence?.trim());
+  const state = new GateStore(projectRoot, topic).load();
+  // Check before prelint too: prelint failures are persisted gate mutations.
+  assertReferralQaLog(projectRoot, state, qaLog.input);
+  const delegated = state.delegation !== undefined || Boolean(gateOptions?.assumeHumanEvidence?.trim());
   const prelint = runPrelint("qa-log", qaLog.content, delegated);
   if (!prelint.ok) return prelintBlock(projectRoot, config, topic, "gap-audit", prelint);
   emitPrelintWarnings(prelint);
