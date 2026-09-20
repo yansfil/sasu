@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { appendLog, LOG_CAP_BYTES, LOG_EVENT_CAP_BYTES, MAX_UNKNOWN_WAKE_ATTEMPTS, MAX_WAKE_BYTES, rotateLog, runTick, TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP, TICK_DEADLINE_MS } from "../../dist/supervisor/tick.js";
-import { readIndex, enrollRun, MISSING_TICKS_BEFORE_CLEANUP } from "../../dist/supervisor/index.js";
+import { readIndex, enrollRun, MISSING_TICKS_BEFORE_CLEANUP, updateIndex } from "../../dist/supervisor/index.js";
 import { MAX_RUN_STATE_BYTES } from "../../dist/supervisor/facts.js";
 import { WAKE_MARKER } from "../../dist/supervisor/wake.js";
 import { agent, fakeTickHerdr, implementorIdentity, IMPLEMENTOR_PANE, makeSupervisedRun, OBSERVER_PANE, OBSERVER_SESSION, observerIdentity, patchState } from "../helpers/supervised-run.mjs";
@@ -51,6 +51,80 @@ test("engineering 10/15: the total tick deadline fails actionably and releases i
     new RegExp(`tick deadline ${TICK_DEADLINE_MS}ms exhausted`),
   );
   assert.equal(readIndex(index).tickExecutor, null, "the deadline exit cannot strand the serialized executor");
+});
+
+test("engineering 11: a lease claim lost to a competing revision never executes", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
+  const originalLink = fs.linkSync;
+  let injected = false;
+  fs.linkSync = (...args) => {
+    if (!injected && String(args[1]).startsWith(`${index}.revision-`)) {
+      injected = true;
+      updateIndex(index, (held) => {
+        held.tickExecutor = {
+          operationId: "competing-executor",
+          pid: process.pid,
+          startedAt: new Date(T0).toISOString(),
+          expiresAt: new Date(T0 + 5 * MIN).toISOString(),
+        };
+      });
+    }
+    return originalLink(...args);
+  };
+  try {
+    const result = tick(index, herdr, T0 + MIN);
+    assert.equal(result.executor, "already-running");
+    assert.equal(herdr.prompts.length, 0, "the CAS loser owns no authority to submit");
+    assert.equal(readIndex(index).tickExecutor.operationId, "competing-executor");
+  } finally {
+    fs.linkSync = originalLink;
+  }
+});
+
+test("engineering 14: a live executor is not stolen merely because its lease timestamp elapsed", () => {
+  const index = indexFile();
+  updateIndex(index, (held) => {
+    held.tickExecutor = {
+      operationId: "live-but-delayed",
+      pid: process.pid,
+      startedAt: new Date(T0 - 10 * MIN).toISOString(),
+      expiresAt: new Date(T0 - MIN).toISOString(),
+    };
+  });
+  const herdr = fakeTickHerdr();
+  const result = tick(index, herdr, T0);
+  assert.equal(result.executor, "already-running");
+  assert.equal(readIndex(index).tickExecutor.operationId, "live-but-delayed");
+});
+
+test("engineering 10/15: a fair bounded batch eventually delivers every ready run", () => {
+  const index = indexFile();
+  const base = makeSupervisedRun();
+  const template = JSON.parse(fs.readFileSync(base.statePath, "utf8"));
+  const agents = {};
+  for (let number = 0; number < 64; number += 1) {
+    const statePath = path.join(path.dirname(base.statePath), `ready-${String(number).padStart(2, "0")}.json`);
+    const state = structuredClone(template);
+    state.topicSlug = `ready-${number}`;
+    state.supervision.runInstanceId = `instance-${number}`;
+    state.supervision.observer = observerIdentity({ sessionId: `observer-${number}`, terminalId: `observer-term-${number}`, paneId: `observer-pane-${number}`, hostScope: `scope-${number}` });
+    state.supervision.implementor = implementorIdentity({ sessionId: `implementor-${number}`, terminalId: `implementor-term-${number}`, paneId: `implementor-pane-${number}`, agent: `implementor-${number}`, hostScope: `scope-${number}` });
+    fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+    enrollRun(index, { statePath, runInstanceId: `instance-${number}`, recoveryOwner: "supervisor", at: new Date(T0 + number).toISOString() });
+    agents[`observer-${number}`] = observer({ sessionId: `observer-${number}`, terminalId: `observer-term-${number}`, paneId: `observer-pane-${number}` });
+    agents[`implementor-${number}`] = implementor({ name: `implementor-${number}`, sessionId: `implementor-${number}`, terminalId: `implementor-term-${number}`, paneId: `implementor-pane-${number}`, status: "blocked" });
+  }
+  const herdr = fakeTickHerdr({ agents });
+  for (let pass = 1; pass <= 4; pass += 1) {
+    const result = tick(index, herdr, T0 + pass * MIN);
+    assert.equal(result.executor, "ran");
+  }
+  assert.equal(herdr.prompts.length, 64, "bounded continuation cannot rescan the same prefix forever");
+  assert.equal(new Set(herdr.prompts.map((prompt) => prompt.target)).size, 64);
+  assert.equal(readIndex(index).entries.filter((entry) => entry.pendingWake !== null).length, 0, "no call-budget failure spends an unsubmitted attempt");
 });
 
 test("B8/B10: a settled implementor wakes exactly the recorded Observer once, with an identity note, and the index records the wake", () => {
@@ -435,6 +509,42 @@ test("engineering 11: concurrent ticks cannot submit an acknowledged second epis
   tick(index, herdr, T0 + MIN);
   tick(index, herdr, T0 + 3 * MIN);
   assert.equal(submissions, 2, "the second episode acknowledgment must survive the older tick's completion");
+});
+
+test("engineering 11: a handover that replaces a committed reservation sends nothing to the former Observer", () => {
+  for (const guarded of [false, true]) {
+    const index = indexFile();
+    const run = makeSupervisedRun();
+    enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+    const herdr = fakeTickHerdr({ agents: { obs: observer(guarded ? { inputGuard: "guard-old" } : {}), impl: implementor({ status: "blocked" }) }, guardSupport: guarded });
+    const originalLink = fs.linkSync;
+    let replaced = false;
+    fs.linkSync = (...args) => {
+      const temporary = String(args[0]);
+      let reservation = false;
+      try {
+        const candidate = JSON.parse(fs.readFileSync(temporary, "utf8"));
+        reservation = candidate.entries?.some((entry) => entry.pendingWake?.status === "reserved") === true;
+      } catch {}
+      const answer = originalLink(...args);
+      if (!replaced && reservation) {
+        replaced = true;
+        patchState(run.statePath, (state) => {
+          state.supervision.observer = observerIdentity({ sessionId: "observer-new", terminalId: "term-new", paneId: "observer-pane-new" });
+        });
+        herdr.state.agents.newObserver = observer({ sessionId: "observer-new", terminalId: "term-new", paneId: "observer-pane-new", inputGuard: guarded ? "guard-new" : null });
+        enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: new Date(T0 + MIN).toISOString() });
+      }
+      return answer;
+    };
+    try {
+      tick(index, herdr, T0 + MIN);
+      assert.equal(herdr.prompts.length, 0, `the ${guarded ? "guarded" : "unguarded"} stale reservation is not executable authority`);
+      assert.equal(readIndex(index).entries[0].pendingWake, null);
+    } finally {
+      fs.linkSync = originalLink;
+    }
+  }
 });
 
 test("D-09: interacting wake reasons keep independent episode acknowledgements", () => {

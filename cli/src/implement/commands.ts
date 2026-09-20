@@ -21,7 +21,7 @@ import { assertNoActiveVerification, recoverVerification, cancelVerificationExec
 import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEscalation, renderDiagnosis, solverPrompt, validateDiagnosis } from "./solver";
 import { closePreparedSpawn, getAgent, herdrCapabilities, isAgentAlive, promptAgent, readPane, spawnImplementor, type SpawnPlacement } from "./herdr";
 import { currentObserverIdentity, newRunInstanceId } from "../supervisor/commands";
-import { enrollRun, unenrollRun } from "../supervisor/index";
+import { enrollRun, reconcileRunEnrollment } from "../supervisor/index";
 import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest } from "../supervisor/digest";
 import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
@@ -562,14 +562,65 @@ function revalidatePendingHandoff(
   return { state: loaded.state, pending };
 }
 
-function restoreSupervisionAfterPartialDispatch(statePath: string, state: ImplementState, pending: PendingDispatch, at: string, cause: string): void {
+function restoreSupervisionAfterPartialDispatch(state: ImplementState, pending: PendingDispatch): void {
   const previous = state.supervision ?? null;
   if (previous === null || previous.runInstanceId === pending.runInstanceId) {
     if (previous?.runInstanceId === pending.runInstanceId) state.supervision = null;
-    unenrollRun(indexPath(), { statePath, runInstanceId: pending.runInstanceId, at, cause });
     return;
   }
-  enrollRun(indexPath(), { statePath, runInstanceId: previous.runInstanceId, recoveryOwner: previous.recoveryOwner, at });
+}
+
+function desiredEnrollment(state: ImplementState): { runInstanceId: string; recoveryOwner: "supervisor" | "task-factory" } | null {
+  const pending = state.pendingDispatch ?? null;
+  if (pending !== null) return { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner };
+  const supervision = state.supervision ?? null;
+  return supervision === null ? null : { runInstanceId: supervision.runInstanceId, recoveryOwner: supervision.recoveryOwner };
+}
+
+function prerequisiteFingerprint(state: ImplementState): string {
+  return JSON.stringify({
+    status: state.status,
+    activeVerification: state.activeVerification?.token ?? null,
+    ownerSessionId: state.ownerSessionId ?? null,
+    pendingDispatch: state.pendingDispatch ?? null,
+    supervision: state.supervision ?? null,
+  });
+}
+
+function reconcileCurrentDispatchPrerequisites(projectRoot: string, statePath: string, cause: string): ImplementState {
+  // state.json and the scheduler index are deliberately separate authority
+  // domains. Re-read after reconciliation so a handover between their writes
+  // is applied again instead of losing the newer enrollment, as happened in
+  // the round-two absent-child recovery review.
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const before = loadState(projectRoot, { state: statePath }).state;
+    assertRunOpenForMutation(before);
+    if (before.activeVerification !== undefined) throw new DispatchRejected(`verification still active: ${before.activeVerification.attemptId}; dispatch prerequisites changed nothing`);
+    const observerSession = before.pendingDispatch?.observer.sessionId
+      ?? before.supervision?.observer.sessionId
+      ?? before.ownerSessionId
+      ?? currentSessionId();
+    writeActivePointer(projectRoot, before, observerSession);
+    reconcileRunEnrollment(indexPath(), { statePath, desired: desiredEnrollment(before), at: nowIso(), cause });
+    const after = loadState(projectRoot, { state: statePath }).state;
+    if (prerequisiteFingerprint(after) === prerequisiteFingerprint(before)) return after;
+  }
+  throw new DispatchRejected("dispatch authority kept changing while navigation and enrollment were reconciled; retry against the current Observer");
+}
+
+function repairPendingDispatchPrerequisites(projectRoot: string, statePath: string, state: ImplementState, pending: PendingDispatch): { state: ImplementState; pending: PendingDispatch } {
+  writeActivePointer(projectRoot, state, pending.observer.sessionId);
+  // The child receives no Observer session id. Its bare implement commands
+  // resolve through the sessionless bookmark, which must exist before the
+  // executable handoff can tell the child to use them.
+  writeActivePointer(projectRoot, state, null);
+  reconcileRunEnrollment(indexPath(), {
+    statePath,
+    desired: { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner },
+    at: nowIso(),
+    cause: `partial dispatch ${pending.runInstanceId} restored before executable handoff`,
+  });
+  return revalidatePendingHandoff(projectRoot, statePath, pending, "dispatch authority changed while navigation or enrollment was restored");
 }
 
 function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -583,7 +634,16 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       let pending = state.pendingDispatch ?? null;
       const recoverAbsentChild = args.flags.get("recover-absent-child") === true;
       if (pending === null) {
-        if (recoverAbsentChild) return result("dispatch", true, "no partial dispatch remains; absent-child recovery is already converged", { recovered: "already-clear" });
+        const recordedObserver = state.supervision?.observer.sessionId ?? state.ownerSessionId ?? null;
+        if (recordedObserver !== null && currentSessionId() !== recordedObserver) throw new DispatchRejected(`only recorded Observer ${recordedObserver} may reconcile this handoff`);
+        if (recoverAbsentChild) {
+          reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "idempotent absent-child recovery reconciled the current run");
+          return result("dispatch", true, "no partial dispatch remains; absent-child recovery and its prerequisites are converged", { recovered: "already-clear" });
+        }
+        if (state.supervision !== undefined && state.supervision !== null) {
+          reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "completed handoff prerequisites reconciled on retry");
+          return result("dispatch", true, "no partial dispatch remains; the handoff and its prerequisites are already converged", { recovered: "already-complete" });
+        }
         throw new DispatchRejected("there is no partial dispatch whose handoff can be resumed");
       }
       if (currentSessionId() !== pending.observer.sessionId) throw new DispatchRejected(`only recorded Observer ${pending.observer.sessionId} may resume this handoff`);
@@ -594,19 +654,25 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         const looked = getAgent(implementor.paneId, recoveryHerdr);
         if (looked.kind === "unavailable") throw new DispatchRejected(`cannot prove recorded child ${implementor.sessionId} is absent: ${looked.detail}; recovery changed nothing`);
         if (looked.kind === "found") throw new DispatchRejected(`recorded child ${implementor.sessionId} is still present in ${implementor.paneId}; use --resume-handoff with the packet instead`);
-        const at = nowIso();
-        restoreSupervisionAfterPartialDispatch(statePath, state, pending, at, "started partial dispatch recovered after the recorded child was positively absent");
+        const refreshed = revalidatePendingHandoff(projectRoot, statePath, pending, "the partial dispatch or recovery authority changed while the recorded child was inspected");
+        state = refreshed.state;
+        pending = refreshed.pending;
+        const ready = repairPendingDispatchPrerequisites(projectRoot, statePath, state, pending);
+        state = ready.state;
+        pending = ready.pending;
+        restoreSupervisionAfterPartialDispatch(state, pending);
         state.pendingDispatch = null;
         state.ownerSessionId = pending.observer.sessionId;
         persistState(statePath, state);
-        writeActivePointer(projectRoot, state, pending.observer.sessionId);
+        reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "started partial dispatch recovered after the recorded child was positively absent");
         return result("dispatch", true, `recorded child ${implementor.sessionId} is absent; partial dispatch ${pending.runInstanceId} was cleared and Observer navigation restored`, { runInstanceId: pending.runInstanceId, recovered: "started-absent", implementor });
       }
       if (pending.phase === "planned") {
-        const at = nowIso();
-        restoreSupervisionAfterPartialDispatch(statePath, state, pending, at, "planned partial dispatch recovered before any agent was started");
+        restoreSupervisionAfterPartialDispatch(state, pending);
         state.pendingDispatch = null;
+        state.ownerSessionId = pending.observer.sessionId;
         persistState(statePath, state);
+        reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "planned partial dispatch recovered before any agent was started");
         return result("dispatch", true, `planned partial dispatch ${pending.runInstanceId} was cleared before any agent started; run dispatch again to create a fresh pane`, { runInstanceId: pending.runInstanceId, recovered: "planned", possibleEmptyPane: true });
       }
       let resumeHerdr = herdrEnvironmentForHostScope(pending.implementor?.hostScope ?? pending.prepared?.hostScope ?? pending.observer.hostScope);
@@ -614,12 +680,19 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         const prepared = pending.prepared!;
         const observed = getAgent(prepared.paneId, resumeHerdr);
         if (observed.kind === "absent") {
+          const inspected = revalidatePendingHandoff(projectRoot, statePath, pending, "the prepared dispatch or recovery authority changed while its pane was inspected");
+          state = inspected.state;
+          pending = inspected.pending;
           const cleaned = closePreparedSpawn({ ...prepared, name: pending.plannedAgent }, resumeHerdr);
           if (!cleaned.ok) return result("dispatch", false, `prepared dispatch could not be cleaned safely: ${cleaned.problem}`, { pendingDispatch: pending });
-          const at = nowIso();
-          restoreSupervisionAfterPartialDispatch(statePath, state, pending, at, "empty prepared pane cleaned before retry");
+          const refreshed = revalidatePendingHandoff(projectRoot, statePath, pending, "the prepared dispatch or recovery authority changed while its empty pane was closed");
+          state = refreshed.state;
+          pending = refreshed.pending;
+          restoreSupervisionAfterPartialDispatch(state, pending);
           state.pendingDispatch = null;
+          state.ownerSessionId = pending.observer.sessionId;
           persistState(statePath, state);
+          reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "empty prepared pane cleaned before retry");
           return result("dispatch", true, `empty prepared pane ${prepared.paneId} was closed and partial dispatch ${pending.runInstanceId} was cleared; run dispatch again`, { runInstanceId: pending.runInstanceId, recovered: "prepared-empty", paneId: prepared.paneId });
         }
         if (observed.kind === "unavailable") throw new DispatchRejected(`cannot inspect prepared pane ${prepared.paneId}: ${observed.detail}; no input was sent`);
@@ -650,10 +723,22 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       const ready = revalidatePendingHandoff(projectRoot, statePath, pending, "run, recovery authority or implementor identity changed during the final target lookup");
       state = ready.state;
       pending = ready.pending;
-      const sent = promptAgent({ target: implementor.paneId, text: packet, expectedInputGuard: looked.agent.inputGuard }, resumeHerdr);
+      const repaired = repairPendingDispatchPrerequisites(projectRoot, statePath, state, pending);
+      state = repaired.state;
+      pending = repaired.pending;
+      const finalLooked = getAgent(implementor.paneId, resumeHerdr);
+      if (finalLooked.kind !== "found" || finalLooked.agent.paneId !== implementor.paneId || finalLooked.agent.name !== implementor.agent
+        || finalLooked.agent.sessionId !== implementor.sessionId || finalLooked.agent.terminalId !== implementor.terminalId) {
+        throw new DispatchRejected(`the partial dispatch target changed while navigation and enrollment were restored; no input was sent`);
+      }
+      const executable = revalidatePendingHandoff(projectRoot, statePath, pending, "run, recovery authority or implementor identity changed while handoff prerequisites were restored");
+      state = executable.state;
+      pending = executable.pending;
+      const sent = promptAgent({ target: implementor.paneId, text: packet, expectedInputGuard: finalLooked.agent.inputGuard }, resumeHerdr);
       if (sent.outcome !== "accepted") return result("dispatch", false, `handoff was not confirmed (${sent.outcome}, ${sent.code}): ${sent.detail}; pending dispatch remains for an explicit retry`, { pendingDispatch: pending, prompt: sent });
       state.pendingDispatch = null;
       persistState(statePath, state);
+      reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "completed handoff prerequisites reconciled after accepted input");
       return result("dispatch", true, `handoff resumed to ${pending.plannedAgent} in ${implementor.paneId}; dispatch ${pending.runInstanceId} is complete`, { runInstanceId: pending.runInstanceId, implementor, prompt: sent });
     }
     assertRunOwnership(statePath, state, args);
@@ -951,17 +1036,19 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
         state.pendingDispatch = null;
         persistState(statePath, state);
       } else if (pending.phase === "planned") {
-        restoreSupervisionAfterPartialDispatch(statePath, state, pending, nowIso(), "replacement dispatch failed before a pane was created");
+        restoreSupervisionAfterPartialDispatch(state, pending);
         state.pendingDispatch = null;
         persistState(statePath, state);
+        reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "replacement dispatch failed before a pane was created");
       }
     } catch (error) {
       enrollProblem = error instanceof Error ? error.message : String(error);
       if (pending.phase === "planned") {
-        try { restoreSupervisionAfterPartialDispatch(statePath, state, pending, nowIso(), "replacement enrollment failed before a pane was created"); }
+        try { restoreSupervisionAfterPartialDispatch(state, pending); }
         catch (restoreError) { enrollProblem = `${enrollProblem}; prior supervision restore failed: ${restoreError instanceof Error ? restoreError.message : String(restoreError)}`; }
         state.pendingDispatch = null;
         persistState(statePath, state);
+        reconcileCurrentDispatchPrerequisites(projectRoot, statePath, "replacement enrollment failed before a pane was created");
       }
       reset = { ok: false, value: null, problem: enrollProblem };
     }

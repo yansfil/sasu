@@ -303,3 +303,52 @@ export function unenrollRun(file: string, entry: { statePath: string; runInstanc
     if (index.entries.length !== before) index.removed.push({ at: entry.at, statePath: entry.statePath, cause: entry.cause });
   });
 }
+
+/**
+ * Bring one state path to the supervision identity that state.json currently
+ * names without resetting a matching enrollment. Recovery can commit state
+ * and index only as two ordered writes; the round-two recovery incident left
+ * the newer Observer unenrolled when the stale writer changed the index
+ * first. Reconciliation after the state CAS makes retries converge, while a
+ * same-instance handover keeps its newer enrollment id and acknowledgements.
+ */
+export function reconcileRunEnrollment(file: string, input: {
+  statePath: string;
+  desired: { runInstanceId: string; recoveryOwner: RecoveryOwner } | null;
+  at: string;
+  cause: string;
+}): SupervisorIndex {
+  const enrollmentId = crypto.randomUUID();
+  return updateIndex(file, (index) => {
+    const existing = index.entries.find((entry) => entry.statePath === input.statePath);
+    if (input.desired === null) {
+      if (existing === undefined) return;
+      index.entries = index.entries.filter((entry) => entry.statePath !== input.statePath);
+      index.removed.push({ at: input.at, statePath: input.statePath, cause: input.cause });
+      return;
+    }
+    if (existing?.runInstanceId === input.desired.runInstanceId) {
+      existing.recoveryOwner = input.desired.recoveryOwner;
+      return;
+    }
+    if (existing === undefined && index.entries.length >= MAX_INDEX_ENTRIES) {
+      throw new Error(`supervisor index entry cap ${MAX_INDEX_ENTRIES} reached; retire or remove a watched run before reconciling recovery`);
+    }
+    index.entries = index.entries.filter((entry) => entry.statePath !== input.statePath);
+    index.entries.push({
+      statePath: input.statePath,
+      runInstanceId: input.desired.runInstanceId,
+      enrollmentId,
+      recoveryOwner: input.desired.recoveryOwner,
+      addedAt: input.at,
+      missingTicks: 0,
+      terminalFailureTicks: 0,
+      lastWake: null,
+      acknowledgements: {},
+      lastAcknowledgedAt: null,
+      pendingWake: null,
+      lastFailure: null,
+      lastObservation: null,
+    });
+  });
+}

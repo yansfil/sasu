@@ -64,6 +64,7 @@ export const MAX_UNKNOWN_WAKE_ATTEMPTS = 2;
 export const TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP = 3;
 export const TICK_EXECUTOR_LEASE_MS = 5 * 60_000;
 export const MAX_HERDR_CALLS_PER_TICK = 128;
+export const MAX_RUNS_PER_TICK = 20;
 export const TICK_DEADLINE_MS = 25_000;
 
 export function rotateLog(file: string): void {
@@ -108,7 +109,7 @@ function sameObserver(a: ReadRun["supervision"]["observer"], b: ReadRun["supervi
   return a.sessionId === b.sessionId && a.terminalId === b.terminalId && a.paneId === b.paneId && a.hostScope === b.hostScope;
 }
 
-function executeTick(options: TickOptions): TickResult {
+function executeTick(options: TickOptions, executorOperationId: string): TickResult {
   const now = options.now ?? (() => Date.now());
   const tickNow = now();
   const at = new Date(tickNow).toISOString();
@@ -121,14 +122,27 @@ function executeTick(options: TickOptions): TickResult {
     herdrCalls += 1;
     return call();
   };
-  const scopes = [...new Set(index.entries.map((entry) => {
+  // The round-two 64-run reproduction spent the whole external-call budget
+  // scanning, then repeated the same prefix forever without one delivery.
+  // Oldest-processed-first gives every enrollment fair continuation, while
+  // 20 leaves worst-case capacity for a host probe, the implementor and
+  // Observer decision reads, two Observer rechecks and one prompt per
+  // distinct run under the 128-call cap.
+  const priority = (entry: IndexEntry): number => Date.parse(entry.lastObservation?.at ?? entry.lastFailure?.at ?? entry.addedAt);
+  const scheduledEntries = [...index.entries]
+    .sort((a, b) => priority(a) - priority(b))
+    .slice(0, MAX_RUNS_PER_TICK);
+  const scheduled = new Set(scheduledEntries.map(entryKey));
+  const scopes = [...new Set(scheduledEntries.map((entry) => {
     try { return readRun(entry.statePath).supervision.observer.hostScope; } catch { return "default"; }
   }))];
   const probes = scopes.length === 0 ? [{ available: true, detail: null }] : scopes.map((scope) => checkedCall(() => options.herdr.probe(scope)));
   const herdr = probes.every((probe) => probe.available)
     ? { available: true, detail: null }
     : { available: false, detail: probes.filter((probe) => !probe.available).map((probe) => probe.detail ?? "no detail").join("; ") };
-  const results: RunTickResult[] = [];
+  const results: RunTickResult[] = index.entries
+    .filter((entry) => !scheduled.has(entryKey(entry)))
+    .map((entry) => ({ statePath: entry.statePath, slug: null, decision: null, action: "deferred", detail: `per-tick work cap ${MAX_RUNS_PER_TICK} reached; this older-unprocessed enrollment is first on a later tick` }));
   const updates = new Map<string, (entry: IndexEntry) => void>();
   const removals: Array<{ statePath: string; enrollmentId: string; cause: string; outcome?: "undelivered-terminal" }> = [];
 
@@ -160,7 +174,7 @@ function executeTick(options: TickOptions): TickResult {
     return true;
   };
   const judged: Judged[] = [];
-  for (const entry of index.entries) {
+  for (const entry of scheduledEntries) {
     const loaded = loadEntry(entry);
     if (loaded.missing) {
       const count = entry.missingTicks + 1;
@@ -313,11 +327,10 @@ function executeTick(options: TickOptions): TickResult {
     }
     if (cappedItems.length === 0) continue;
     const deliveryOperationId = crypto.randomUUID();
-    let reservedKeys = new Set<string>();
     let priorPending = new Map<string, IndexEntry["pendingWake"]>();
-    updateIndex(options.indexFile, (fresh) => {
-      reservedKeys = new Set<string>();
+    const reservationHead = updateIndex(options.indexFile, (fresh) => {
       priorPending = new Map<string, IndexEntry["pendingWake"]>();
+      if (fresh.tickExecutor?.operationId !== executorOperationId) return;
       for (const { item } of cappedItems) {
         const held = fresh.entries.find((entry) => entry.statePath === item.loaded.entry.statePath && entry.enrollmentId === item.loaded.entry.enrollmentId);
         if (held === undefined) continue;
@@ -328,16 +341,81 @@ function executeTick(options: TickOptions): TickResult {
         const key = entryKey(held);
         priorPending.set(key, prior === null ? null : { ...prior });
         held.pendingWake = { episode, attempts: (prior?.attempts ?? 0) + 1, at, operationId: deliveryOperationId, status: "reserved" };
-        reservedKeys.add(key);
       }
     });
-    const reservedItems = cappedItems.filter(({ item }) => reservedKeys.has(entryKey(item.loaded.entry)));
-    for (const { item } of cappedItems.filter(({ item }) => !reservedKeys.has(entryKey(item.loaded.entry)))) {
+    let reservedItems = cappedItems.filter(({ item }) => {
+      const held = reservationHead.entries.find((entry) => entry.statePath === item.loaded.entry.statePath && entry.enrollmentId === item.loaded.entry.enrollmentId);
+      return reservationHead.tickExecutor?.operationId === executorOperationId && held?.pendingWake?.operationId === deliveryOperationId;
+    });
+    for (const { item } of cappedItems.filter((candidate) => !reservedItems.includes(candidate))) {
       results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: "deferred", detail: "delivery episode was acknowledged, exhausted or reserved before submission; stale wake discarded" });
     }
     if (reservedItems.length === 0) continue;
+
+    const releaseReservations = (releasing: typeof reservedItems): void => {
+      updateIndex(options.indexFile, (fresh) => {
+        for (const { item } of releasing) {
+          const held = fresh.entries.find((entry) => entry.statePath === item.loaded.entry.statePath && entry.enrollmentId === item.loaded.entry.enrollmentId);
+          if (held?.pendingWake?.operationId === deliveryOperationId) held.pendingWake = priorPending.get(entryKey(held)) ?? null;
+        }
+      });
+    };
+    const stillAuthorized = (candidate: typeof reservedItems[number], heldIndex: SupervisorIndex): boolean => {
+      if (heldIndex.tickExecutor?.operationId !== executorOperationId) return false;
+      const held = heldIndex.entries.find((entry) => entry.statePath === candidate.item.loaded.entry.statePath && entry.enrollmentId === candidate.item.loaded.entry.enrollmentId);
+      if (held?.pendingWake?.operationId !== deliveryOperationId) return false;
+      try {
+        const latest = readRun(candidate.item.loaded.entry.statePath);
+        return latest.supervision.runInstanceId === held.runInstanceId && sameObserver(latest.supervision.observer, candidate.run.supervision.observer);
+      } catch { return false; }
+    };
+
+    let authorityHead = readIndex(options.indexFile);
+    let executableItems = reservedItems.filter((candidate) => stillAuthorized(candidate, authorityHead));
+    const invalidBeforeLookup = reservedItems.filter((candidate) => !executableItems.includes(candidate));
+    if (invalidBeforeLookup.length > 0) {
+      releaseReservations(invalidBeforeLookup);
+      for (const { item } of invalidBeforeLookup) results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: "deferred", detail: "reservation, enrollment, executor or Observer changed before final delivery lookup; stale wake discarded" });
+    }
+    if (executableItems.length === 0) continue;
+
+    // Reservation persistence can lose a CAS or be followed immediately by
+    // handover. It is not executable authority until the committed operation,
+    // enrollment, current state and actual Observer all agree again.
+    const executableObserver = executableItems[0]!.run.supervision.observer;
+    const executableVerdict = judgeObserver(executableObserver, checkedCall(() => options.herdr.getAgent(executableObserver.paneId, executableObserver.hostScope)));
+    if (executableVerdict.kind !== "match" || executableVerdict.status === "working" || executableVerdict.status === "blocked") {
+      releaseReservations(executableItems);
+      const detail = executableVerdict.kind !== "match" ? `${executableVerdict.kind}: ${executableVerdict.detail}` : `observer is ${executableVerdict.status}; delivery deferred`;
+      for (const { item } of executableItems) {
+        const removed = item.decision.terminal && executableVerdict.kind === "observer-gone"
+          ? recordTerminalFailure(item, detail, item.loaded.entry.terminalFailureTicks)
+          : false;
+        results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: removed ? "undelivered-terminal" : "deferred", detail });
+      }
+      continue;
+    }
+
+    authorityHead = readIndex(options.indexFile);
+    const beforePrompt = executableItems.filter((candidate) => stillAuthorized(candidate, authorityHead));
+    const invalidAfterLookup = executableItems.filter((candidate) => !beforePrompt.includes(candidate));
+    if (invalidAfterLookup.length > 0) {
+      releaseReservations(invalidAfterLookup);
+      for (const { item } of invalidAfterLookup) results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: "deferred", detail: "reservation, enrollment, executor or Observer changed during final delivery lookup; stale wake discarded" });
+    }
+    reservedItems = beforePrompt;
+    if (reservedItems.length === 0) continue;
     lines = reservedItems.map(({ item, run }) => ({ slug: run.facts.slug, statePath: item.loaded.entry.statePath, runInstanceId: run.supervision.runInstanceId, observerSessionId: run.supervision.observer.sessionId, reasons: item.decision.due }));
-    const outcome = checkedCall(() => options.herdr.promptAgent({ target: currentObserver.paneId, text: renderWake(currentObserver.sessionId, lines), expectedInputGuard: freshVerdict.inputGuard }, currentObserver.hostScope));
+    let outcome: PromptOutcome;
+    try {
+      outcome = checkedCall(() => options.herdr.promptAgent({ target: executableObserver.paneId, text: renderWake(executableObserver.sessionId, lines), expectedInputGuard: executableVerdict.inputGuard }, executableObserver.hostScope));
+    } catch (error) {
+      // No prompt call began when checkedCall raises its cap/deadline. Restore
+      // the exact prior attempt record so a provably absent effect costs no
+      // uncertainty budget.
+      releaseReservations(reservedItems);
+      throw error;
+    }
     updateIndex(options.indexFile, (fresh) => {
       for (const { item } of reservedItems) {
         const held = fresh.entries.find((entry) => entry.statePath === item.loaded.entry.statePath && entry.enrollmentId === item.loaded.entry.enrollmentId);
@@ -372,7 +450,7 @@ function executeTick(options: TickOptions): TickResult {
       results.push({ statePath: item.loaded.entry.statePath, slug: item.run.facts.slug, decision: item.decision, action: outcome.outcome === "accepted" ? "sent" : removed ? "undelivered-terminal" : "failed", detail: `${item.decision.due.map((candidate) => candidate.reason).join("+")}: ${outcome.outcome} via ${outcome.path} (${outcome.code})` });
       if (item.decision.terminal && outcome.outcome === "accepted") removals.push({ statePath: item.loaded.entry.statePath, enrollmentId: item.loaded.entry.enrollmentId, cause: `run ${item.run.facts.status}; terminal wake accepted` });
     }
-    log({ event: "supervisor.wake.attempted", operationId: deliveryOperationId, observer: currentObserver.sessionId, pane: currentObserver.paneId, hostScope: currentObserver.hostScope, runs: lines.map((line) => ({ statePath: line.statePath, slug: line.slug, instance: line.runInstanceId, reasons: line.reasons.map((entry) => entry.reason) })), outcome: outcome.outcome, path: outcome.path, code: outcome.code, at });
+    log({ event: "supervisor.wake.attempted", operationId: deliveryOperationId, observer: executableObserver.sessionId, pane: executableObserver.paneId, hostScope: executableObserver.hostScope, runs: lines.map((line) => ({ statePath: line.statePath, slug: line.slug, instance: line.runInstanceId, reasons: line.reasons.map((entry) => entry.reason) })), outcome: outcome.outcome, path: outcome.path, code: outcome.code, at });
   }
 
   options.beforePersist?.();
@@ -402,24 +480,28 @@ export function runTick(options: TickOptions): TickResult {
   const now = options.now ?? (() => Date.now());
   const started = now();
   const operationId = crypto.randomUUID();
-  let acquired = false;
-  updateIndex(options.indexFile, (index) => {
+  const claimed = updateIndex(options.indexFile, (index) => {
     const lease = index.tickExecutor;
     let ownerAlive = false;
     if (lease !== null) {
       try { process.kill(lease.pid, 0); ownerAlive = true; } catch (error) { ownerAlive = (error as NodeJS.ErrnoException).code === "EPERM"; }
     }
-    if (lease !== null && ownerAlive && Date.parse(lease.expiresAt) > started) return;
+    // A paused owner may outlive the nominal deadline while still inside a
+    // synchronous external call. Stealing from a live PID creates two delivery
+    // executors; only positive owner death permits recovery.
+    if (lease !== null && ownerAlive) return;
     index.tickExecutor = { operationId, pid: process.pid, startedAt: new Date(started).toISOString(), expiresAt: new Date(started + TICK_EXECUTOR_LEASE_MS).toISOString() };
-    acquired = true;
   });
-  if (!acquired) {
+  // updateIndex may replay the callback after a lost revision race. Closure
+  // flags described an abandoned attempt in the round-two reproduction; the
+  // committed lease identity is the only ownership proof.
+  if (claimed.tickExecutor?.operationId !== operationId) {
     const at = new Date(started).toISOString();
-    const previous = readIndex(options.indexFile).lastHerdr ?? { available: true, detail: null };
+    const previous = claimed.lastHerdr ?? { available: true, detail: null };
     return { at, herdr: previous, runs: [], executor: "already-running" };
   }
   try {
-    return executeTick(options);
+    return executeTick(options, operationId);
   } finally {
     updateIndex(options.indexFile, (index) => {
       if (index.tickExecutor?.operationId === operationId) index.tickExecutor = null;

@@ -10,7 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { CLI, git, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
 import { installFakeHerdr } from "../helpers/fake-herdr.mjs";
 import { attemptFixture } from "../helpers/implement-state.mjs";
-import { readIndex } from "../../dist/supervisor/index.js";
+import { readIndex, unenrollRun } from "../../dist/supervisor/index.js";
 
 const OBSERVER = "observer-session";
 const IMPLEMENTOR = "implementor-session";
@@ -261,6 +261,10 @@ test("B2/B18: approved handover transfers a planned dispatch before supervision 
   assert.equal(handed.status, 0, handed.text);
   assert.equal(state(root).pendingDispatch.observer.sessionId, "replacement-session");
   assert.equal(state(root).pendingDispatch.handovers[0].approval, "user: replacement Observer takes planned recovery");
+
+  const recovered = sasu(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff"], { env: replacementEnv });
+  assert.equal(recovered.status, 0, recovered.text);
+  assert.equal(state(root).ownerSessionId, "replacement-session", "the transferred Observer can begin the next dispatch without a second adoption");
 });
 
 test("D-04/engineering 10: a positively absent started child has an idempotent recovery operation", () => {
@@ -283,6 +287,86 @@ test("D-04/engineering 10: a positively absent started child has an idempotent r
   const repeated = sasu(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff", "--recover-absent-child"], { env });
   assert.equal(repeated.status, 0, repeated.text);
   assert.equal(repeated.json.detail.recovered, "already-clear");
+});
+
+test("D-04: absent-child recovery revalidates handover before changing enrollment", async () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake, home } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  assert.equal(dispatch(root, { ...env, HERDR_FAKE_PROMPT_FAIL: "1" }).status, 1);
+  fake.setAgents({});
+  const ready = path.join(root, "absent-recovery.ready");
+  const release = path.join(root, "absent-recovery.release");
+  const running = sasuAsync(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff", "--recover-absent-child"], {
+    env: { ...env, HERDR_FAKE_GET_BARRIER_TARGET: "w4G:p13", HERDR_FAKE_GET_BARRIER_READY: ready, HERDR_FAKE_GET_BARRIER_RELEASE: release },
+  });
+  try {
+    await waitForFile(ready);
+    fake.patchAgent("w4G:p12", { name: "observer", agent: "claude", agent_status: "working", pane_id: "w4G:p12", terminal_id: "term_replacement", agent_session: { value: "replacement-session" }, tokens: { activity: "2000" }, state_change_seq: 2 });
+    const handed = sasu(root, ["supervisor", "handover", "--slug", "fixture", "--approval", "user: replacement Observer takes absent recovery"], { env: { ...env, CLAUDE_SESSION_ID: "replacement-session" } });
+    assert.equal(handed.status, 0, handed.text);
+  } finally {
+    fs.writeFileSync(release, "release\n");
+  }
+  const recovered = await running.completion;
+  assert.notEqual(recovered.status, 0, recovered.text);
+  assert.match(recovered.text, /partial dispatch changed|authority/i);
+  assert.equal(state(root).pendingDispatch.observer.sessionId, "replacement-session");
+  const entries = readIndex(path.join(home, ".sasu", "supervisor", "index.json")).entries;
+  assert.equal(entries.length, 1, "stale recovery cannot remove the replacement Observer's enrollment");
+  assert.equal(entries[0].runInstanceId, state(root).pendingDispatch.runInstanceId);
+});
+
+test("D-04/engineering 10: navigation failure leaves absent recovery retryable", () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  assert.equal(dispatch(root, { ...env, HERDR_FAKE_PROMPT_FAIL: "1" }).status, 1);
+  fake.setAgents({});
+  const pointer = path.join(root, POINTER);
+  fs.rmSync(pointer, { force: true });
+  fs.mkdirSync(pointer);
+  fs.writeFileSync(path.join(pointer, "block-replacement"), "occupied\n");
+
+  const interrupted = sasu(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff", "--recover-absent-child"], { env });
+  assert.notEqual(interrupted.status, 0, interrupted.text);
+  assert.equal(state(root).pendingDispatch.phase, "started", "navigation must succeed before the durable recovery record is cleared");
+
+  fs.rmSync(pointer, { recursive: true });
+  const retried = sasu(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff", "--recover-absent-child"], { env });
+  assert.equal(retried.status, 0, retried.text);
+  assert.ok(fs.existsSync(pointer), "the retry repairs navigation instead of trusting a stale converged result");
+});
+
+test("D-04: resumed handoff restores navigation and enrollment before executable input", async () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake, home } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  assert.equal(dispatch(root, { ...env, HERDR_FAKE_PROMPT_FAIL: "1" }).status, 1);
+  const partial = state(root).pendingDispatch;
+  const pointer = path.join(root, POINTER);
+  fs.rmSync(pointer, { force: true });
+  unenrollRun(path.join(home, ".sasu", "supervisor", "index.json"), { statePath: path.join(root, STATE_PATH), runInstanceId: partial.runInstanceId, at: new Date().toISOString(), cause: "test removes prerequisites" });
+  const ready = path.join(root, "resume-prerequisites.ready");
+  const release = path.join(root, "resume-prerequisites.release");
+  const running = sasuAsync(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff"], {
+    env: { ...env, HERDR_FAKE_PROMPT_BARRIER_READY: ready, HERDR_FAKE_PROMPT_BARRIER_RELEASE: release },
+    input: PACKET,
+  });
+  try {
+    await waitForFile(ready);
+    assert.ok(fs.existsSync(pointer), "navigation exists before the prompt process starts");
+    const entries = readIndex(path.join(home, ".sasu", "supervisor", "index.json")).entries;
+    assert.deepEqual(entries.map((entry) => entry.runInstanceId), [partial.runInstanceId], "enrollment exists before the prompt process starts");
+  } finally {
+    fs.writeFileSync(release, "release\n");
+  }
+  const resumed = await running.completion;
+  assert.equal(resumed.status, 0, resumed.text);
+  assert.equal(fake.prompts().length, 1);
 });
 
 async function initialDispatchAtFinalLookup(root, env, stem) {
