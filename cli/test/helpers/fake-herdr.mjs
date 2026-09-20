@@ -11,6 +11,7 @@
 //   HERDR_FAKE_GUARD_SUPPORT "1" makes `agent prompt` accept --expected-input-guard
 //   HERDR_FAKE_DOWN          "1" makes every call fail like a dead socket
 //   HERDR_FAKE_REQUIRED_SOCKET_PATH fails calls routed to any other socket
+//   HERDR_FAKE_GET_BARRIER_* holds one exact agent get at a test-owned barrier
 import fs from "node:fs";
 import path from "node:path";
 
@@ -33,6 +34,11 @@ if (key === "agent list") answer({ result: { type: "agent_list", agents: Object.
 if (key === "agent get") {
   const target = argv[2];
   if (process.env.HERDR_FAKE_FAIL_GET_TARGET === target) refuse("scripted_get_failure", "scripted agent get failure");
+  if (process.env.HERDR_FAKE_GET_BARRIER_TARGET === target && process.env.HERDR_FAKE_GET_BARRIER_READY) {
+    fs.writeFileSync(process.env.HERDR_FAKE_GET_BARRIER_READY, "ready\\n");
+    const wait = new Int32Array(new SharedArrayBuffer(4));
+    while (!process.env.HERDR_FAKE_GET_BARRIER_RELEASE || !fs.existsSync(process.env.HERDR_FAKE_GET_BARRIER_RELEASE)) Atomics.wait(wait, 0, 0, 25);
+  }
   const found = Object.values(agents()).find((agent) => agent.pane_id === target || agent.name === target);
   if (!found) refuse("agent_not_found", "agent target " + target + " not found");
   answer({ result: { type: "agent_info", agent: found } });

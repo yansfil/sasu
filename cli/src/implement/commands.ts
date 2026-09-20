@@ -593,6 +593,10 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       const packet = readHandoffPacket().trim();
       if (packet === "") throw new DispatchRejected("resume-handoff requires the handoff packet on stdin");
       const refreshed = loadState(projectRoot, stateOptions(args));
+      assertRunOpenForMutation(refreshed.state);
+      if (refreshed.state.activeVerification !== undefined) {
+        throw new DispatchRejected(`verification still active: ${refreshed.state.activeVerification.attemptId}; no handoff input was sent`);
+      }
       const freshPending = refreshed.state.pendingDispatch ?? null;
       if (refreshed.statePath !== statePath || freshPending === null || freshPending.phase !== "started"
         || freshPending.runInstanceId !== pending.runInstanceId || freshPending.implementor === null) {
@@ -613,6 +617,29 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
           : looked.detail;
         throw new DispatchRejected(`the partial dispatch target no longer has recorded implementor ${implementor.sessionId}: ${mismatch}; no input was sent`);
       }
+      // The exact agent lookup can also block. Re-read every authority fact
+      // once more after it returns so retirement, verification, handover or
+      // redispatch cannot race ahead of the external prompt.
+      const ready = loadState(projectRoot, stateOptions(args));
+      assertRunOpenForMutation(ready.state);
+      if (ready.state.activeVerification !== undefined) {
+        throw new DispatchRejected(`verification still active: ${ready.state.activeVerification.attemptId}; no handoff input was sent`);
+      }
+      const readyPending = ready.state.pendingDispatch ?? null;
+      const readyImplementor = readyPending?.implementor ?? null;
+      if (ready.statePath !== statePath || readyPending === null || readyPending.phase !== "started"
+        || readyPending.runInstanceId !== pending.runInstanceId || readyImplementor === null
+        || readyPending.observer.sessionId !== pending.observer.sessionId
+        || readyPending.observer.terminalId !== pending.observer.terminalId
+        || readyPending.observer.paneId !== pending.observer.paneId
+        || readyPending.observer.hostScope !== pending.observer.hostScope
+        || readyImplementor.paneId !== implementor.paneId || readyImplementor.agent !== implementor.agent
+        || readyImplementor.sessionId !== implementor.sessionId || readyImplementor.terminalId !== implementor.terminalId
+        || readyImplementor.hostScope !== implementor.hostScope) {
+        throw new DispatchRejected("run, recovery authority or implementor identity changed during the final target lookup; no handoff input was sent");
+      }
+      state = ready.state;
+      pending = readyPending;
       const sent = promptAgent({ target: implementor.paneId, text: packet, expectedInputGuard: looked.agent.inputGuard }, resumeHerdr);
       if (sent.outcome !== "accepted") return result("dispatch", false, `handoff was not confirmed (${sent.outcome}, ${sent.code}): ${sent.detail}; pending dispatch remains for an explicit retry`, { pendingDispatch: pending, prompt: sent });
       state.pendingDispatch = null;

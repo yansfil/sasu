@@ -3,11 +3,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { CLI, git, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
 import { installFakeHerdr } from "../helpers/fake-herdr.mjs";
+import { attemptFixture } from "../helpers/implement-state.mjs";
 import { readIndex } from "../../dist/supervisor/index.js";
 
 const OBSERVER = "observer-session";
@@ -19,6 +21,34 @@ function sasu(root, args, { env = {}, input } = {}) {
   let json;
   try { json = JSON.parse(result.stdout); } catch { json = { stdout: result.stdout, stderr: result.stderr }; }
   return { ...result, json, text: result.stdout + result.stderr };
+}
+
+function sasuAsync(root, args, { env = {}, input } = {}) {
+  const child = spawn(process.execPath, [CLI, ...args, "--json"], { cwd: root, env: isolatedEnv(env), stdio: ["pipe", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  child.stdin.end(input);
+  const completion = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("async sasu test timed out")); }, 30_000);
+    child.once("error", (error) => { clearTimeout(timeout); reject(error); });
+    child.once("close", (status, signal) => {
+      clearTimeout(timeout);
+      let json;
+      try { json = JSON.parse(stdout); } catch { json = { stdout, stderr }; }
+      resolve({ status, signal, stdout, stderr, json, text: stdout + stderr });
+    });
+  });
+  return { child, completion };
+}
+
+async function waitForFile(file, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!fs.existsSync(file) && Date.now() < deadline) await delay(10);
+  if (!fs.existsSync(file)) throw new Error(`barrier was not reached: ${file}`);
 }
 
 const argvLog = (log) => fs.readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
@@ -209,6 +239,92 @@ test("B2/B18: an approved Observer handover transfers partial-handoff recovery a
   assert.equal(resumed.status, 0, resumed.text);
   assert.equal(state(root).pendingDispatch, null);
   assert.deepEqual(fake.prompts().map((entry) => [entry.target, entry.text]), [["w4G:p13", PACKET]]);
+});
+
+test("B2: resumed handoff rechecks lifecycle after the final target lookup", async () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  assert.equal(dispatch(root, { ...env, HERDR_FAKE_PROMPT_FAIL: "1" }).status, 1);
+  const ready = path.join(root, "resume-get.ready");
+  const release = path.join(root, "resume-get.release");
+  const running = sasuAsync(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff"], {
+    env: { ...env, HERDR_FAKE_GET_BARRIER_TARGET: "w4G:p13", HERDR_FAKE_GET_BARRIER_READY: ready, HERDR_FAKE_GET_BARRIER_RELEASE: release },
+    input: PACKET,
+  });
+  try {
+    await waitForFile(ready);
+    const retired = sasu(root, ["implement", "retire", "--slug", "fixture", "--issuer", "human", "--adopt", "user: retire this interrupted run"], { env });
+    assert.equal(retired.status, 0, retired.text);
+  } finally {
+    fs.writeFileSync(release, "release\n");
+  }
+  const resumed = await running.completion;
+  assert.notEqual(resumed.status, 0, resumed.text);
+  assert.match(resumed.text, /implement run is retired/);
+  assert.equal(fake.prompts().length, 0, "retirement at the deterministic lookup barrier prevents external input");
+  assert.equal(state(root).pendingDispatch.phase, "started", "failed recovery retains its exact pending record");
+});
+
+test("B2/B18: resumed handoff rechecks recovery authority after the final target lookup", async () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  assert.equal(dispatch(root, { ...env, HERDR_FAKE_PROMPT_FAIL: "1" }).status, 1);
+  const ready = path.join(root, "resume-handover-get.ready");
+  const release = path.join(root, "resume-handover-get.release");
+  const running = sasuAsync(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff"], {
+    env: { ...env, HERDR_FAKE_GET_BARRIER_TARGET: "w4G:p13", HERDR_FAKE_GET_BARRIER_READY: ready, HERDR_FAKE_GET_BARRIER_RELEASE: release },
+    input: PACKET,
+  });
+  try {
+    await waitForFile(ready);
+    fake.patchAgent("w4G:p12", { name: "observer", agent: "claude", agent_status: "working", pane_id: "w4G:p12", terminal_id: "term_replacement", agent_session: { value: "replacement-session" }, tokens: { activity: "2000" }, state_change_seq: 2 });
+    const handed = sasu(root, ["supervisor", "handover", "--slug", "fixture", "--approval", "user: replacement Observer takes over"], { env: { ...env, CLAUDE_SESSION_ID: "replacement-session" } });
+    assert.equal(handed.status, 0, handed.text);
+  } finally {
+    fs.writeFileSync(release, "release\n");
+  }
+  const resumed = await running.completion;
+  assert.notEqual(resumed.status, 0, resumed.text);
+  assert.match(resumed.text, /recovery authority or implementor identity changed/);
+  assert.equal(fake.prompts().length, 0, "the former Observer cannot submit input after approved handover");
+  assert.equal(state(root).pendingDispatch.observer.sessionId, "replacement-session");
+});
+
+test("B2: resumed handoff sends nothing when verification acquires the run during target lookup", async () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  assert.equal(dispatch(root, { ...env, HERDR_FAKE_PROMPT_FAIL: "1" }).status, 1);
+  const ready = path.join(root, "resume-verification-get.ready");
+  const release = path.join(root, "resume-verification-get.release");
+  const running = sasuAsync(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff"], {
+    env: { ...env, HERDR_FAKE_GET_BARRIER_TARGET: "w4G:p13", HERDR_FAKE_GET_BARRIER_READY: ready, HERDR_FAKE_GET_BARRIER_RELEASE: release },
+    input: PACKET,
+  });
+  try {
+    await waitForFile(ready);
+    const leased = state(root);
+    const attempt = attemptFixture({ id: "concurrent-verification" });
+    leased.verificationAttempts.push(attempt);
+    leased.activeVerification = {
+      token: "verification-token", attemptId: "concurrent-verification", pid: process.pid, hostname: "test-host",
+      startedAt: attempt.startedAt, inputFingerprint: attempt.inputFingerprint, prdSha256: attempt.prdSha256,
+      executionPids: [], pendingSpawns: 0,
+    };
+    fs.writeFileSync(path.join(root, STATE_PATH), `${JSON.stringify(leased, null, 2)}\n`);
+  } finally {
+    fs.writeFileSync(release, "release\n");
+  }
+  const resumed = await running.completion;
+  assert.notEqual(resumed.status, 0, resumed.text);
+  assert.match(resumed.text, /verification still active: concurrent-verification/);
+  assert.equal(fake.prompts().length, 0, "a verification lease acquired at the barrier prevents external input");
+  assert.equal(state(root).pendingDispatch.phase, "started");
 });
 
 test("D-04: a prepared live agent without a durably captured UUID is refused rather than adopted", () => {
