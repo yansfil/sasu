@@ -1,2 +1,0 @@
-T0=1789713044575
-T1(text visible in pane)=1789713045194 delta_ms=619

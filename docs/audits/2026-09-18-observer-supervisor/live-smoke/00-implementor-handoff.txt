@@ -1,4 +1,0 @@
-ROLE: Implementor (supervisor live smoke test).
-PIPELINE: none. Do NOT run any sasu command and do NOT read any skill.
-TASK: in this directory, create notes.txt containing exactly one line "smoke", then run `git add notes.txt && git -c user.name=smoke -c user.email=smoke@example.test -c commit.gpgsign=false commit -q -m "Smoke note"`. Then reply "done" and stop. Do nothing else and wait.
-RETURN CONTRACT: the word done.

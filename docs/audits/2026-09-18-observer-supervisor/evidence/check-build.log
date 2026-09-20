@@ -1,5 +1,0 @@
-
-> sasu-cli@0.11.0 build
-> node scripts/build.mjs
-
-build=0

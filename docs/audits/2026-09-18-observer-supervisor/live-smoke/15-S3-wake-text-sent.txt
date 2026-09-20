@@ -1,6 +1,0 @@
-SASU_WAKE
-observer: 47b6846e-7ad3-4139-9e3b-58a5378c0647
-run: smoke instance 8460154b-0417-4461-9fa8-32fbc4c54cb2
-reason: settled
-  settled: implementor smoke-impl has been done since 2026-09-18T06:28:26.153Z; possibly transient, confirm before acting
-inspect: sasu implement status --slug smoke --digest
