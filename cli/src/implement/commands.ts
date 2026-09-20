@@ -21,7 +21,7 @@ import { assertNoActiveVerification, recoverVerification, cancelVerificationExec
 import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEscalation, renderDiagnosis, solverPrompt, validateDiagnosis } from "./solver";
 import { closePreparedSpawn, getAgent, herdrCapabilities, isAgentAlive, promptAgent, readPane, spawnImplementor, type SpawnPlacement } from "./herdr";
 import { currentObserverIdentity, newRunInstanceId } from "../supervisor/commands";
-import { captureEnrollmentGeneration, readIndex, reconcileEnrollmentAuthority, type SupervisorIndex } from "../supervisor/index";
+import { captureEnrollmentGeneration, readIndex, reconcileEnrollmentAuthority, recipientAuthorityKey, type SupervisorIndex } from "../supervisor/index";
 import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest } from "../supervisor/digest";
 import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
@@ -570,11 +570,11 @@ function restoreSupervisionAfterPartialDispatch(state: ImplementState, pending: 
   }
 }
 
-function desiredEnrollment(state: ImplementState): { runInstanceId: string; recoveryOwner: "supervisor" | "task-factory" } | null {
+function desiredEnrollment(state: ImplementState): { runInstanceId: string; recoveryOwner: "supervisor" | "task-factory"; recipientAuthorityKey: string } | null {
   const pending = state.pendingDispatch ?? null;
-  if (pending !== null) return { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner };
+  if (pending !== null) return { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner, recipientAuthorityKey: recipientAuthorityKey(pending.observer) };
   const supervision = state.supervision ?? null;
-  return supervision === null ? null : { runInstanceId: supervision.runInstanceId, recoveryOwner: supervision.recoveryOwner };
+  return supervision === null ? null : { runInstanceId: supervision.runInstanceId, recoveryOwner: supervision.recoveryOwner, recipientAuthorityKey: recipientAuthorityKey(supervision.observer) };
 }
 
 function enrollmentAt(index: SupervisorIndex, statePath: string): SupervisorIndex["entries"][number] | undefined {
@@ -583,7 +583,9 @@ function enrollmentAt(index: SupervisorIndex, statePath: string): SupervisorInde
 
 function enrollmentMatches(index: SupervisorIndex, statePath: string, desired: ReturnType<typeof desiredEnrollment>): boolean {
   const current = enrollmentAt(index, statePath);
-  return desired === null ? current === undefined : current?.runInstanceId === desired.runInstanceId;
+  return desired === null ? current === undefined : current?.runInstanceId === desired.runInstanceId
+    && current.recoveryOwner === desired.recoveryOwner
+    && current.recipientAuthorityKey === desired.recipientAuthorityKey;
 }
 
 function prerequisiteFingerprint(state: ImplementState): string {
@@ -651,7 +653,7 @@ export function repairPendingDispatchPrerequisites(projectRoot: string, statePat
     cause: `partial dispatch ${pending.runInstanceId} restored before executable handoff`,
   }).index;
   const validated = revalidatePendingHandoff(projectRoot, statePath, pending, "dispatch authority changed while navigation or enrollment was restored");
-  if (!enrollmentMatches(reconciled, statePath, { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner })) {
+  if (!enrollmentMatches(reconciled, statePath, { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner, recipientAuthorityKey: recipientAuthorityKey(pending.observer) })) {
     throw new DispatchRejected("dispatch enrollment changed while navigation was restored; no handoff input was sent");
   }
   return validated;

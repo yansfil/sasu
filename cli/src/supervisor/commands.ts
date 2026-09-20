@@ -5,7 +5,7 @@ import { recordEvent } from "../implement/events";
 import { loadState, nowIso, persistState, resolveStatePath } from "../implement/store";
 import type { ImplementCommandResult, ImplementState, ObserverIdentity } from "../implement/types";
 import { currentHerdrRole } from "../runs/session";
-import { captureEnrollmentGeneration, readIndex, reconcileEnrollmentAuthority, type EnrollmentAuthority, type SupervisorIndex } from "./index";
+import { captureEnrollmentGeneration, readIndex, reconcileEnrollmentAuthority, recipientAuthorityKey, type EnrollmentAuthority, type SupervisorIndex } from "./index";
 import { installLaunchAgent, launchAgentStatus, uninstallLaunchAgent, type LaunchAgentSpec } from "./launchd";
 import { indexPath, launchdLogPath, tickLogPath, TICK_INTERVAL_MS } from "./paths";
 import { herdrForTick, rotateLog, runTick } from "./tick";
@@ -48,6 +48,14 @@ export function currentObserverIdentity(env: NodeJS.ProcessEnv = process.env, he
   const agent = looked.agent;
   if (agent.sessionId === null || agent.terminalId === null) return { identity: null, problem: `herdr reports no session UUID or terminal id for pane ${paneId}; the Observer cannot be recorded, so a wake could never be verified` };
   return { identity: { runtime: agent.kind, sessionId: agent.sessionId, terminalId: agent.terminalId, paneId, hostScope: env["HERDR_SOCKET_PATH"]?.trim() || "default", recordedAt: nowIso() }, problem: null };
+}
+
+function sameObserverAuthority(left: ObserverIdentity, right: ObserverIdentity): boolean {
+  return left.runtime === right.runtime
+    && left.sessionId === right.sessionId
+    && left.terminalId === right.terminalId
+    && left.paneId === right.paneId
+    && left.hostScope === right.hostScope;
 }
 
 function tick(env: NodeJS.ProcessEnv): ImplementCommandResult {
@@ -148,7 +156,7 @@ export interface SupervisorCommandHooks {
   herdr?: HerdrEnvironment;
 }
 
-async function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.ProcessEnv, hooks: SupervisorCommandHooks = {}): Promise<ImplementCommandResult> {
+function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.ProcessEnv, hooks: SupervisorCommandHooks = {}): ImplementCommandResult {
   if (currentHerdrRole(env) === "implementor") throw new Error("a marked implementor pane cannot become the Observer");
   const approval = flag(args, "approval")?.trim() ?? "";
   if (approval === "") throw new Error("handover requires --approval \"<the user's verbatim words>\"");
@@ -186,7 +194,7 @@ async function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.P
   hooks.afterHandoverPersist?.();
   const authorityOf = (current: ImplementState): EnrollmentAuthority | null => {
     const active = current.pendingDispatch ?? current.supervision ?? null;
-    return active === null ? null : { runInstanceId: active.runInstanceId, recoveryOwner: active.recoveryOwner };
+    return active === null ? null : { runInstanceId: active.runInstanceId, recoveryOwner: active.recoveryOwner, recipientAuthorityKey: recipientAuthorityKey(active.observer) };
   };
   reconcileEnrollmentAuthority(supervisorIndex, {
     statePath,
@@ -197,7 +205,8 @@ async function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.P
   });
   const current = loadState(projectRoot, { state: statePath }).state;
   const currentRecord = current.pendingDispatch ?? current.supervision ?? null;
-  if (currentRecord === null || currentRecord.observer.sessionId !== observer.identity.sessionId || currentRecord.observer.paneId !== observer.identity.paneId) {
+  const currentObserver = currentRecord?.observer ?? null;
+  if (currentObserver === null || !sameObserverAuthority(currentObserver, observer.identity)) {
     throw new Error("handover authority changed after persistence; the current enrollment was reconciled but this handover is no longer authoritative");
   }
   return result("handover", true, `run ${current.topicSlug} is now observed by session ${observer.identity.sessionId} in pane ${observer.identity.paneId}; wakes and partial recovery resume on the next action`, { observer: observer.identity, handovers: current.pendingDispatch?.handovers?.length ?? current.supervision?.handovers.length ?? 0, pendingPhase: current.pendingDispatch?.phase ?? null });

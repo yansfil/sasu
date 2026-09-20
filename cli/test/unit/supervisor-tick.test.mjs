@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { appendLog, LOG_CAP_BYTES, LOG_EVENT_CAP_BYTES, MAX_UNKNOWN_WAKE_ATTEMPTS, MAX_WAKE_BYTES, processIncarnation, rotateLog, runTick, TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP, TICK_DEADLINE_MS } from "../../dist/supervisor/tick.js";
-import { readIndex, enrollRun, MISSING_TICKS_BEFORE_CLEANUP, updateIndex } from "../../dist/supervisor/index.js";
+import { readIndex, enrollRun as enrollRunRaw, MISSING_TICKS_BEFORE_CLEANUP, recipientAuthorityKey, updateIndex } from "../../dist/supervisor/index.js";
 import { MAX_RUN_STATE_BYTES } from "../../dist/supervisor/facts.js";
 import { WAKE_MARKER } from "../../dist/supervisor/wake.js";
 import { agent, fakeTickHerdr, implementorIdentity, IMPLEMENTOR_PANE, makeSupervisedRun, OBSERVER_PANE, OBSERVER_SESSION, observerIdentity, patchState } from "../helpers/supervised-run.mjs";
@@ -20,6 +20,16 @@ const silent = () => {};
 
 function tick(index, herdr, now, extra = {}) {
   return runTick({ indexFile: index, herdr: herdr.herdr, now: () => now, log: silent, ...extra });
+}
+
+function enrollRun(index, entry) {
+  let recipientKey = null;
+  try {
+    const state = JSON.parse(fs.readFileSync(entry.statePath, "utf8"));
+    const active = state.pendingDispatch ?? state.supervision ?? null;
+    recipientKey = active === null ? null : recipientAuthorityKey(active.observer);
+  } catch {}
+  return enrollRunRaw(index, { ...entry, recipientAuthorityKey: recipientKey });
 }
 
 test("engineering 10/15: a log rotation failure is surfaced instead of silently growing the sink", () => {
@@ -852,6 +862,53 @@ test("engineering 11: a handover that replaces a committed reservation sends not
       fs.linkSync = originalLink;
     }
   }
+});
+
+test("engineering 11: a recipient mismatch reconciles before delivery and cannot spend the old generation", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  const oldGeneration = readIndex(index).entries[0].enrollmentId;
+  patchState(run.statePath, (state) => {
+    state.supervision.observer = observerIdentity({ sessionId: "observer-new", terminalId: "term-new", paneId: "observer-pane-new" });
+  });
+  const herdr = fakeTickHerdr({
+    agents: {
+      oldObserver: observer(),
+      newObserver: observer({ sessionId: "observer-new", terminalId: "term-new", paneId: "observer-pane-new" }),
+      impl: implementor({ status: "blocked" }),
+    },
+  });
+
+  const first = tick(index, herdr, T0 + MIN);
+  assert.equal(first.runs[0].action, "deferred");
+  assert.match(first.runs[0].detail, /reconciled current authority/);
+  assert.equal(herdr.prompts.length, 0, "the mismatched generation cannot submit to its replacement recipient");
+  const rebound = readIndex(index).entries[0];
+  assert.notEqual(rebound.enrollmentId, oldGeneration);
+  assert.equal(rebound.recipientAuthorityKey, recipientAuthorityKey(observerIdentity({ sessionId: "observer-new", terminalId: "term-new", paneId: "observer-pane-new" })));
+
+  assert.equal(tick(index, herdr, T0 + 2 * MIN).runs[0].action, "sent");
+  assert.deepEqual(herdr.prompts.map((prompt) => prompt.target), ["observer-pane-new"]);
+});
+
+test("engineering 1/4/11: a legacy recipient-less enrollment fails closed without reopening uncertainty", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRunRaw(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  updateIndex(index, (current) => {
+    current.entries[0].pendingWake = { episode: "blocked:1", attempts: MAX_UNKNOWN_WAKE_ATTEMPTS, at: "2026-09-18T10:00:00.000Z", operationId: null, status: "unknown" };
+  });
+  const before = readIndex(index).entries[0];
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "blocked" }) } });
+
+  const outcome = tick(index, herdr, T0 + MIN);
+  assert.equal(outcome.runs[0].action, "failed");
+  assert.match(outcome.runs[0].detail, /recipient binding/);
+  assert.equal(herdr.prompts.length, 0);
+  const after = readIndex(index).entries[0];
+  assert.equal(after.enrollmentId, before.enrollmentId);
+  assert.equal(after.pendingWake.attempts, MAX_UNKNOWN_WAKE_ATTEMPTS, "migration cannot erase a possibly spent external-effect budget");
 });
 
 test("D-09: interacting wake reasons keep independent episode acknowledgements", () => {

@@ -283,20 +283,43 @@ test("D-04: identity and enrollment persist before handoff, and a failed handoff
   assert.deepEqual(fake.prompts().map((entry) => [entry.target, entry.text]), [["w4G:p13", PACKET]]);
 });
 
-test("B2/B18: an approved Observer handover transfers partial-handoff recovery authority", () => {
+test("B2/B18: an approved Observer handover transfers partial-handoff recovery authority", async () => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
-  const { env, fake } = herdrEnv(root);
+  const { env, fake, home } = herdrEnv(root);
   assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
   const failed = dispatch(root, { ...env, HERDR_FAKE_PROMPT_FAIL: "1" });
   assert.equal(failed.status, 1, failed.text);
   assert.equal(state(root).pendingDispatch.phase, "started");
+  const supervisorIndex = path.join(home, ".sasu", "supervisor", "index.json");
+  const priorEnrollmentId = readIndex(supervisorIndex).entries[0].enrollmentId;
+  updateIndex(supervisorIndex, (index) => {
+    index.entries[0].pendingWake = { episode: "blocked:1", attempts: 2, at: "2026-09-20T15:00:00.000Z", operationId: null, status: "unknown" };
+    index.entries[0].lastFailure = { at: "2026-09-20T15:00:00.000Z", detail: "old Observer delivery budget exhausted" };
+  });
 
   fake.patchAgent("w4G:p12", { name: "observer", agent: "claude", agent_status: "working", pane_id: "w4G:p12", terminal_id: "term_replacement", agent_session: { value: "replacement-session" }, tokens: { activity: "2000" }, state_change_seq: 2 });
   const replacementEnv = { ...env, CLAUDE_SESSION_ID: "replacement-session" };
+  const interrupted = await runSupervisorCommand(root, {
+    positional: ["supervisor", "handover"],
+    flags: new Map([["slug", "fixture"], ["approval", "user: replacement Observer takes over"]]),
+  }, replacementEnv, {
+    herdr: { env: replacementEnv },
+    afterHandoverPersist: () => { throw new Error("simulated interruption after handover persistence"); },
+  });
+  assert.equal(interrupted.ok, false);
+  assert.equal(state(root).pendingDispatch.observer.sessionId, "replacement-session", "the retry begins from durable recipient authority");
+  assert.equal(readIndex(supervisorIndex).entries[0].enrollmentId, priorEnrollmentId, "the interrupted attempt did not reach index reconciliation");
   const handed = sasu(root, ["supervisor", "handover", "--slug", "fixture", "--approval", "user: replacement Observer takes over"], { env: replacementEnv });
   assert.equal(handed.status, 0, handed.text);
   assert.equal(state(root).pendingDispatch.observer.sessionId, "replacement-session");
+  const replacementEnrollment = readIndex(supervisorIndex).entries[0];
+  assert.notEqual(replacementEnrollment.enrollmentId, priorEnrollmentId, "recipient authority change starts a new delivery generation");
+  assert.equal(replacementEnrollment.pendingWake, null, "the former Observer's uncertain-delivery budget cannot starve the replacement");
+  assert.equal(replacementEnrollment.lastFailure, null);
+  const repeated = sasu(root, ["supervisor", "handover", "--slug", "fixture", "--approval", "user: same Observer retries handover"], { env: replacementEnv });
+  assert.equal(repeated.status, 0, repeated.text);
+  assert.equal(readIndex(supervisorIndex).entries[0].enrollmentId, replacementEnrollment.enrollmentId, "same-recipient retry keeps the replacement delivery generation");
 
   const resumed = sasu(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff"], { env: replacementEnv, input: PACKET });
   assert.equal(resumed.status, 0, resumed.text);
@@ -328,6 +351,44 @@ test("B2/B18: approved handover transfers a planned dispatch before supervision 
   const recovered = sasu(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff"], { env: replacementEnv });
   assert.equal(recovered.status, 0, recovered.text);
   assert.equal(state(root).ownerSessionId, "replacement-session", "the transferred Observer can begin the next dispatch without a second adoption");
+});
+
+test("engineering 10: a refused handover resolves to the structured command outcome", async () => {
+  const root = fs.realpathSync(makeProject());
+  const { env } = herdrEnv(root);
+  const refused = await runSupervisorCommand(root, {
+    positional: ["supervisor", "handover"],
+    flags: new Map(),
+  }, env);
+
+  assert.equal(refused.ok, false);
+  assert.equal(refused.exitCode, 2);
+  assert.match(refused.message, /requires --approval/);
+});
+
+test("D-06/engineering 4: handover reports refusal when the committed Observer identity changes", async () => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const { env, fake } = herdrEnv(root);
+  assert.equal(sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env }).status, 0);
+  assert.equal(dispatch(root, env).status, 0);
+  fake.patchAgent("w4G:p12", { name: "observer", agent: "claude", agent_status: "idle", pane_id: "w4G:p12", terminal_id: "term_replacement", agent_session: { value: "replacement-session" }, tokens: { activity: "2000" }, state_change_seq: 2 });
+
+  const handed = await runSupervisorCommand(root, {
+    positional: ["supervisor", "handover"],
+    flags: new Map([["slug", "fixture"], ["approval", "user: replacement Observer takes over"]]),
+  }, { ...env, CLAUDE_SESSION_ID: "replacement-session" }, {
+    herdr: { env: { ...env, CLAUDE_SESSION_ID: "replacement-session" } },
+    afterHandoverPersist: () => {
+      const changed = state(root);
+      changed.supervision.observer.terminalId = "term_after_handover";
+      changed.supervision.observer.hostScope = "socket-after-handover";
+      fs.writeFileSync(path.join(root, STATE_PATH), `${JSON.stringify(changed, null, 2)}\n`);
+    },
+  });
+
+  assert.equal(handed.ok, false);
+  assert.match(handed.message, /handover authority changed after persistence/);
 });
 
 test("B18/engineering 11/13: handover cannot replace a newer dispatch enrollment after its state commit", async () => {

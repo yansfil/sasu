@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { getAgent, promptAgent, type AgentLookup, type HerdrEnvironment, type PromptOutcome } from "../implement/herdr";
 import { decideRun, episodeKey, judgeObserver, type Candidate, type Decision } from "./decide";
 import { readRun, type ReadRun } from "./facts";
-import { MISSING_TICKS_BEFORE_CLEANUP, readIndex, updateIndex, type IndexEntry, type SupervisorIndex, type WakeRecord } from "./index";
+import { MISSING_TICKS_BEFORE_CLEANUP, readIndex, reconcileEnrollmentAuthority, recipientAuthorityKey, updateIndex, type EnrollmentAuthority, type IndexEntry, type SupervisorIndex, type WakeRecord } from "./index";
 import { renderWake, type WakeLine } from "./wake";
 
 export interface TickHerdr {
@@ -176,6 +176,15 @@ function sameObserver(a: ReadRun["supervision"]["observer"], b: ReadRun["supervi
   return a.sessionId === b.sessionId && a.terminalId === b.terminalId && a.paneId === b.paneId && a.hostScope === b.hostScope;
 }
 
+function enrollmentAuthority(run: ReadRun): EnrollmentAuthority {
+  const active = run.state.pendingDispatch ?? run.state.supervision ?? run.supervision;
+  return {
+    runInstanceId: active.runInstanceId,
+    recoveryOwner: active.recoveryOwner,
+    recipientAuthorityKey: recipientAuthorityKey(active.observer),
+  };
+}
+
 function executeTick(options: TickOptions, executorOperationId: string, tickNow: number, tickStartedMonotonic: number): TickResult {
   const monotonicNow = options.monotonicNow ?? options.now ?? (() => performance.now());
   const at = new Date(tickNow).toISOString();
@@ -319,6 +328,40 @@ function executeTick(options: TickOptions, executorOperationId: string, tickNow:
       continue;
     }
     const run = loaded.run;
+    const authority = enrollmentAuthority(run);
+    if (entry.recipientAuthorityKey === null) {
+      // A pre-recipient-key record may already have spent an uncertainty
+      // budget against an unrecorded Observer. Resetting it automatically can
+      // repeat that external effect. Fail closed until an approved handover or
+      // the owning recovery flow binds a fresh recipient generation.
+      const detail = "legacy enrollment has no recipient binding; delivery is stopped until approved Observer handover or the owning recovery flow reconciles it";
+      addUpdate(entry, (held) => { held.lastFailure = { at, detail }; });
+      results.push({ statePath: entry.statePath, slug: run.facts.slug, decision: null, action: "failed", detail });
+      log({ event: "supervisor.run.failed", statePath: entry.statePath, enrollmentId: entry.enrollmentId, slug: run.facts.slug, detail, at });
+      continue;
+    }
+    if (entry.runInstanceId !== authority.runInstanceId
+      || entry.recoveryOwner !== authority.recoveryOwner
+      || entry.recipientAuthorityKey !== authority.recipientAuthorityKey) {
+      try {
+        reconcileEnrollmentAuthority(options.indexFile, {
+          statePath: entry.statePath,
+          expectedEnrollmentId: entry.enrollmentId,
+          readAuthority: () => enrollmentAuthority(readRun(entry.statePath)),
+          at,
+          cause: "tick reconciled enrollment to current dispatch and Observer authority before delivery",
+        });
+        const detail = "enrollment authority changed or lacked a recipient binding; reconciled current authority and deferred delivery to the next tick";
+        results.push({ statePath: entry.statePath, slug: run.facts.slug, decision: null, action: "deferred", detail });
+        log({ event: "supervisor.enrollment.reconciled", statePath: entry.statePath, enrollmentId: entry.enrollmentId, slug: run.facts.slug, at });
+      } catch (error) {
+        const detail = `enrollment authority reconciliation failed before delivery: ${error instanceof Error ? error.message : String(error)}`;
+        addUpdate(entry, (held) => { held.lastFailure = { at, detail }; });
+        results.push({ statePath: entry.statePath, slug: run.facts.slug, decision: null, action: "failed", detail });
+        log({ event: "supervisor.run.failed", statePath: entry.statePath, enrollmentId: entry.enrollmentId, slug: run.facts.slug, detail, at });
+      }
+      continue;
+    }
     let decision: Decision;
     try {
       const implementorScope = run.supervision.implementor.hostScope;

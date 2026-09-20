@@ -21,6 +21,8 @@ export interface IndexEntry {
   runInstanceId: string;
   /** Changes on every enrollment, even when the state path is reused. */
   enrollmentId: string;
+  /** Digest of the exact Observer routing authority this generation belongs to. */
+  recipientAuthorityKey: string | null;
   recoveryOwner: RecoveryOwner;
   addedAt: string;
   missingTicks: number;
@@ -69,6 +71,12 @@ export function emptyIndex(): SupervisorIndex {
 const legacyEnrollmentId = (entry: Record<string, unknown>): string =>
   `legacy-${crypto.createHash("sha256").update(`${String(entry["statePath"])}\0${String(entry["runInstanceId"])}\0${String(entry["addedAt"] ?? "")}`).digest("hex").slice(0, 24)}`;
 
+export function recipientAuthorityKey(identity: { runtime: string; sessionId: string; terminalId: string; paneId: string; hostScope: string }): string {
+  return crypto.createHash("sha256")
+    .update([identity.runtime, identity.sessionId, identity.terminalId, identity.paneId, identity.hostScope].join("\0"))
+    .digest("hex");
+}
+
 function optionalTimestamp(value: unknown, label: string, file: string): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) throw new Error(`supervisor index ${label} is not a timestamp: ${file}`);
@@ -88,6 +96,8 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
     if (typeof record["runInstanceId"] !== "string" || record["runInstanceId"] === "" || record["runInstanceId"].length > 256) throw new Error(`supervisor index entry ${record["statePath"]} has no valid runInstanceId: ${file}`);
     if (!Number.isInteger(record["missingTicks"]) || (record["missingTicks"] as number) < 0) throw new Error(`supervisor index entry ${record["statePath"]} has an invalid missingTicks: ${file}`);
     if (record["recoveryOwner"] !== "supervisor" && record["recoveryOwner"] !== "task-factory") throw new Error(`supervisor index entry ${record["statePath"]} has no recoveryOwner: ${file}`);
+    const recipientKey = record["recipientAuthorityKey"] ?? null;
+    if (recipientKey !== null && (typeof recipientKey !== "string" || !/^[0-9a-f]{64}$/.test(recipientKey))) throw new Error(`supervisor index entry ${record["statePath"]} has invalid recipientAuthorityKey: ${file}`);
     const enrollmentId = typeof record["enrollmentId"] === "string" && record["enrollmentId"] !== "" ? record["enrollmentId"] : legacyEnrollmentId(record);
     const acknowledgements = record["acknowledgements"] !== null && typeof record["acknowledgements"] === "object" && !Array.isArray(record["acknowledgements"])
       ? record["acknowledgements"] as Partial<Record<WakeReason, string>> : {};
@@ -108,7 +118,7 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
     const terminalFailureTicks = record["terminalFailureTicks"] === undefined ? 0 : record["terminalFailureTicks"];
     if (!Number.isInteger(terminalFailureTicks) || Number(terminalFailureTicks) < 0) throw new Error(`supervisor index entry ${record["statePath"]} has invalid terminalFailureTicks: ${file}`);
     return {
-      statePath: record["statePath"], runInstanceId: record["runInstanceId"], enrollmentId,
+      statePath: record["statePath"], runInstanceId: record["runInstanceId"], enrollmentId, recipientAuthorityKey: recipientKey,
       recoveryOwner: record["recoveryOwner"], addedAt: typeof record["addedAt"] === "string" ? record["addedAt"] : "1970-01-01T00:00:00.000Z",
       missingTicks: record["missingTicks"] as number,
       terminalFailureTicks: Number(terminalFailureTicks),
@@ -295,7 +305,7 @@ export function updateIndex(file: string, mutate: (index: SupervisorIndex) => vo
   throw new Error(`supervisor index at ${file} kept changing underneath this writer; nothing was written after ${attempts} attempts`);
 }
 
-export function enrollRun(file: string, entry: { statePath: string; runInstanceId: string; recoveryOwner: RecoveryOwner; at: string }): SupervisorIndex {
+export function enrollRun(file: string, entry: { statePath: string; runInstanceId: string; recipientAuthorityKey?: string | null; recoveryOwner: RecoveryOwner; at: string }): SupervisorIndex {
   // Retries of this one enrollment preserve its identity. A competing
   // writer may advance the revision after our link, and replaying must not
   // create a second logical enrollment for the same intent.
@@ -306,6 +316,7 @@ export function enrollRun(file: string, entry: { statePath: string; runInstanceI
     index.entries = index.entries.filter((existing) => existing.statePath !== entry.statePath);
     index.entries.push({
       statePath: entry.statePath, runInstanceId: entry.runInstanceId, enrollmentId, recoveryOwner: entry.recoveryOwner,
+      recipientAuthorityKey: entry.recipientAuthorityKey ?? null,
       addedAt: entry.at, missingTicks: 0, terminalFailureTicks: 0, lastWake: null, acknowledgements: {}, lastAcknowledgedAt: null, pendingWake: null,
       lastProcessedAt: null, lastFailure: null, lastObservation: null,
     });
@@ -315,6 +326,7 @@ export function enrollRun(file: string, entry: { statePath: string; runInstanceI
 export interface EnrollmentAuthority {
   runInstanceId: string;
   recoveryOwner: RecoveryOwner;
+  recipientAuthorityKey: string;
 }
 
 export function captureEnrollmentGeneration(file: string, statePath: string): string | null {
@@ -323,14 +335,18 @@ export function captureEnrollmentGeneration(file: string, statePath: string): st
 
 function sameEnrollmentAuthority(left: EnrollmentAuthority | null, right: EnrollmentAuthority | null): boolean {
   if (left === null || right === null) return left === right;
-  return left.runInstanceId === right.runInstanceId && left.recoveryOwner === right.recoveryOwner;
+  return left.runInstanceId === right.runInstanceId
+    && left.recoveryOwner === right.recoveryOwner
+    && left.recipientAuthorityKey === right.recipientAuthorityKey;
 }
 
 function enrollmentMatchesAuthority(index: SupervisorIndex, statePath: string, desired: EnrollmentAuthority | null): boolean {
   const current = index.entries.find((entry) => entry.statePath === statePath);
   return desired === null
     ? current === undefined
-    : current?.runInstanceId === desired.runInstanceId && current.recoveryOwner === desired.recoveryOwner;
+    : current?.runInstanceId === desired.runInstanceId
+      && current.recoveryOwner === desired.recoveryOwner
+      && current.recipientAuthorityKey === desired.recipientAuthorityKey;
 }
 
 /**
@@ -392,12 +408,14 @@ export function unenrollRun(file: string, entry: { statePath: string; runInstanc
  * names without resetting a matching enrollment. Recovery can commit state
  * and index only as two ordered writes; the round-two recovery incident left
  * the newer Observer unenrolled when the stale writer changed the index
- * first. Reconciliation after the state CAS makes retries converge, while a
- * same-instance handover keeps its newer enrollment id and acknowledgements.
+ * first. Reconciliation after the state CAS makes retries converge. The
+ * recipient digest makes a persisted handover retry rotate an old recipient's
+ * delivery generation once, while a stale handover preserves any generation
+ * already bound to the current dispatch and Observer.
  */
 export function reconcileRunEnrollment(file: string, input: {
   statePath: string;
-  desired: { runInstanceId: string; recoveryOwner: RecoveryOwner } | null;
+  desired: { runInstanceId: string; recoveryOwner: RecoveryOwner; recipientAuthorityKey?: string | null } | null;
   /** Enrollment generation observed before the caller began prerequisite writes. */
   expectedEnrollmentId?: string | null;
   at: string;
@@ -407,7 +425,11 @@ export function reconcileRunEnrollment(file: string, input: {
   return updateIndex(file, (index) => {
     const existing = index.entries.find((entry) => entry.statePath === input.statePath);
     const currentEnrollmentId = existing?.enrollmentId ?? null;
-    const wouldReplaceGeneration = input.desired === null || existing?.runInstanceId !== input.desired.runInstanceId;
+    const desiredRecipientKey = input.desired?.recipientAuthorityKey ?? null;
+    const wouldReplaceGeneration = input.desired === null
+      || existing?.runInstanceId !== input.desired.runInstanceId
+      || existing?.recoveryOwner !== input.desired.recoveryOwner
+      || existing?.recipientAuthorityKey !== desiredRecipientKey;
     // A replacement dispatch persists state before enrolling. If it lands
     // while an older recovery is repairing navigation, the older intent no
     // longer owns the enrollment generation and must not undo the new run.
@@ -418,10 +440,9 @@ export function reconcileRunEnrollment(file: string, input: {
       index.removed.push({ at: input.at, statePath: input.statePath, cause: input.cause });
       return;
     }
-    if (existing?.runInstanceId === input.desired.runInstanceId) {
-      existing.recoveryOwner = input.desired.recoveryOwner;
-      return;
-    }
+    if (existing?.runInstanceId === input.desired.runInstanceId
+      && existing.recoveryOwner === input.desired.recoveryOwner
+      && existing.recipientAuthorityKey === desiredRecipientKey) return;
     if (existing === undefined && index.entries.length >= MAX_INDEX_ENTRIES) {
       throw new Error(`supervisor index entry cap ${MAX_INDEX_ENTRIES} reached; retire or remove a watched run before reconciling recovery`);
     }
@@ -430,6 +451,7 @@ export function reconcileRunEnrollment(file: string, input: {
       statePath: input.statePath,
       runInstanceId: input.desired.runInstanceId,
       enrollmentId,
+      recipientAuthorityKey: desiredRecipientKey,
       recoveryOwner: input.desired.recoveryOwner,
       addedAt: input.at,
       missingTicks: 0,
