@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { parseImplementState } from "../implement/store";
 import type { ImplementState, SupervisionRecord } from "../implement/types";
 import type { RunFacts } from "./decide";
@@ -36,7 +37,11 @@ export function runFacts(state: ImplementState, supervision: SupervisionRecord):
     lastEventAt,
     lastEventId: lastEvent?.id ?? 0,
     lastEscalateId: escalate?.id ?? null,
-    lastPlan: plan === undefined ? null : { id: plan.id, path: plan.subject ?? "" },
+    // The plan lives in the tree the Implementor edits, which for an isolated
+    // run is the worktree, not the record tree the Observer reads from; the
+    // wake carries the absolute path so the Observer opens the right file
+    // (measured 2026-09-21: a relative path pointed at an empty record dir).
+    lastPlan: plan === undefined ? null : { id: plan.id, path: path.resolve(state.worktree?.path ?? state.projectRoot, plan.subject ?? "") },
     dispatchedAt,
     patrolIntervalMs: supervision.patrolIntervalMs,
     observer: supervision.observer,

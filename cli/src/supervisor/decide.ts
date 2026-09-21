@@ -22,7 +22,7 @@ export interface RunFacts {
   lastEventId: number;
   /** Id of the newest `escalate` event, or null. */
   lastEscalateId: number | null;
-  /** The newest `plan` event, or null when the Implementor registered none. */
+  /** The newest `plan` event with the absolute path of its file, or null when the Implementor registered none. */
   lastPlan: { id: number; path: string } | null;
   dispatchedAt: number;
   patrolIntervalMs: number;

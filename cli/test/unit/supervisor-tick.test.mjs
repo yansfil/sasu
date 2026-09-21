@@ -911,6 +911,27 @@ test("engineering 1/4/11: a legacy recipient-less enrollment fails closed withou
   assert.equal(after.pendingWake.attempts, MAX_UNKNOWN_WAKE_ATTEMPTS, "migration cannot erase a possibly spent external-effect budget");
 });
 
+test("plan: a registered plan wakes the working Observer's run once, and the wake names the file where the Implementor wrote it", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  // An isolated run edits its worktree, so the plan lives there and not in
+  // the record tree the Observer reads from (measured 2026-09-21).
+  const worktree = path.join(run.root, "wt");
+  fs.mkdirSync(path.join(worktree, "agents/runs/fixture"), { recursive: true });
+  patchState(run.statePath, (state) => {
+    state.worktree = { path: worktree, branch: "probe" };
+    const id = Math.max(0, ...state.events.map((event) => event.id)) + 1;
+    state.events.push({ id, at: "2026-09-18T10:01:00.000Z", kind: "plan", actor: "implementor", subject: "agents/runs/fixture/plan.md", summary: "execution plan" });
+  });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "working" }) } });
+  const first = tick(index, herdr, T0 + 2 * MIN);
+  assert.match(first.runs[0].detail, /plan/);
+  assert.equal(herdr.prompts.length, 1);
+  assert.match(herdr.prompts[0].text, new RegExp(`plan \\d+ registered: ${worktree.replaceAll("/", "\\/")}/agents/runs/fixture/plan\\.md`));
+  assert.equal(tick(index, herdr, T0 + 3 * MIN).runs[0].action, "none", "the same plan event is answered once");
+});
+
 test("D-09: interacting wake reasons keep independent episode acknowledgements", () => {
   const index = indexFile();
   const run = makeSupervisedRun();
