@@ -29,12 +29,14 @@ export function runFacts(state: ImplementState, supervision: SupervisionRecord):
   const dispatchedAt = Date.parse(supervision.dispatchedAt);
   if (!Number.isFinite(dispatchedAt)) throw new Error(`run ${state.topicSlug} has an invalid dispatchedAt`);
   const escalate = [...state.events].reverse().find((event) => event.kind === "escalate");
+  const plan = [...state.events].reverse().find((event) => event.kind === "plan");
   return {
     slug: state.topicSlug,
     status: state.status,
     lastEventAt,
     lastEventId: lastEvent?.id ?? 0,
     lastEscalateId: escalate?.id ?? null,
+    lastPlan: plan === undefined ? null : { id: plan.id, path: plan.subject ?? "" },
     dispatchedAt,
     patrolIntervalMs: supervision.patrolIntervalMs,
     observer: supervision.observer,

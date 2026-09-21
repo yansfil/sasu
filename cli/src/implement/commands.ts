@@ -897,7 +897,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       { ...dispatched, dispatchId: recordId, slug: state.topicSlug, runInstanceId, observer: observer.identity, patrolIntervalMs, recoveryOwner, enrolled: true, enrollProblem: null },
       [
         ...(dispatched.parentLineage === "reported" ? [] : [`Lineage was not recorded: ${dispatched.parentLineage.unreported}`]),
-        `The supervisor tick wakes this session when the implementor settles, blocks, escalates, stalls, disappears or finishes, and on patrol; nothing else needs arming.`,
+        `The supervisor tick wakes this session when the implementor settles, blocks, escalates, registers a plan, stalls, disappears or finishes, and on patrol; nothing else needs arming.`,
         `On a wake, read \`sasu implement status --slug ${state.topicSlug} --digest\` and \`herdr agent read ${dispatched.agent} --source recent-unwrapped --lines 120\` for diagnosis only.`,
       ],
     );
@@ -1509,6 +1509,29 @@ function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   return result("amend", true, `amendment ${outcome.record.id} sealed; full review freshness invalidated`, { amendment: outcome.record });
 }
 
+/**
+ * Register the execution plan the Implementor wrote before its first source
+ * change. The only effect is a `plan` event: the supervisor tick wakes the
+ * Observer once per plan event, so the plan reaches the Observer within one
+ * tick interval without the Implementor ending its turn. This is the one
+ * runtime-agnostic path from a working Implementor to the Observer, because
+ * herdr's own `agent prompt` is keystrokes into whatever the Observer is
+ * typing (2026-09-21). Absence is not a signal: the tick reads nothing into
+ * a run that never registers a plan (D-11).
+ */
+function plan(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state); assertRunOwnership(statePath, state, args);
+  const target = normalizeProjectPath(requireWorkRoot(state), requiredFlag(args, "path"));
+  if (!fs.existsSync(target.absolute) || !fs.statSync(target.absolute).isFile()) throw new Error(`plan file not found: ${target.relative}`);
+  const bytes = fs.readFileSync(target.absolute);
+  if (bytes.toString("utf8").trim() === "") throw new Error(`plan file is empty: ${target.relative}`);
+  const digest = sha256(bytes).slice(0, 12);
+  const event = recordEvent(state, { kind: "plan", actor: resolveIssuer(flag(args, "issuer")), subject: target.relative, summary: `execution plan ${target.relative} (${digest})`, at: nowIso() });
+  persistState(statePath, state);
+  return result("plan", true, `plan ${event.id} registered: ${target.relative}; the supervisor tick wakes the Observer once for it`, { event });
+}
+
 function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state); assertRunOwnership(statePath, state, args);
@@ -1801,11 +1824,12 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "dispatch") return dispatch(projectRoot, args);
     if (subcommand === "status") return status(projectRoot, args);
     if (subcommand === "artifact") return artifact(projectRoot, args);
+    if (subcommand === "plan") return plan(projectRoot, args);
     if (subcommand === "amend") return amend(projectRoot, args);
     if (subcommand === "escalate") return await escalate(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "verify") return await verify(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, dispatch, status, artifact, amend, escalate, retire, or verify" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, dispatch, status, artifact, plan, amend, escalate, retire, or verify" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const check = error instanceof VerbRejected || error instanceof AmendmentRejected || error instanceof EscalateRejected ? error.check : "transition";

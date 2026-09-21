@@ -18,10 +18,16 @@ The plan is written inside the approved `Technical structure`; it never redesign
 5. Give each slice its likely files and the check that shows it works.
    Do not restate acceptance criteria; the Behaviors rows already carry them.
 
-Write it to `agents/runs/<slug>/plan.md` and print it as ordinary text.
-Then, when the packet names an `OBSERVER` and the runtime has `SendMessage`, send it there in one message headed `PLAN <slug>: agents/runs/<slug>/plan.md`, and continue in the same turn without waiting for a reply.
-A missing tool, a missing `OBSERVER` line, or a failed send changes nothing: continue, and the Observer reads the file on its next patrol.
-It is run bookkeeping: not CLI state, not verify input, and not a gate the Observer approves.
+Write it to `agents/runs/<slug>/plan.md`, print it as ordinary text, and register it:
+
+```sh
+sasu implement plan --path agents/runs/<slug>/plan.md
+```
+
+Then continue in the same turn.
+The command records one `plan` event; under Herdr the supervisor tick wakes the Observer once for it within a tick interval, whatever runtime the Implementor is.
+The plan is run bookkeeping: not verify input and not a gate the Observer approves.
+A rewritten plan is registered again and wakes the Observer again; a run that never registers one is not a signal of anything.
 The shape:
 
 ```text

@@ -283,7 +283,7 @@ export function parseImplementState(text: string): ImplementState {
     assertIsoTimestamp(artifact.observedAt, "artifacts[].observedAt");
   }
   ledger(candidate.events, "events");
-  for (const event of candidate.events) enumValue(event.kind, ["amendment", "escalate", "artifact", "verify", "dispatch", "handover"], "events[].kind");
+  for (const event of candidate.events) enumValue(event.kind, ["amendment", "escalate", "artifact", "verify", "dispatch", "handover", "plan"], "events[].kind");
   if (candidate.supervision !== undefined && candidate.supervision !== null) {
     const supervision = candidate.supervision as unknown as Record<string, unknown>;
     assertRecord(supervision, "supervision");

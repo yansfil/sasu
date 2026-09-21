@@ -76,9 +76,8 @@ ORIGINAL INVOCATION: <verbatim user message>
 GOAL AND CONTEXT: <implementation goal and operational facts not represented in the PRD>
 AUTHORITY: <autonomous defaults and hard stops>
 SOURCE: <cwd and ready PRD path>
-OBSERVER: <this session's own name as the `ListAgents` header prints it; omit when the runtime has no ListAgents>
 DIRTY ATTRIBUTION: <pre-existing|run-owned, when `sasu implement intake` asked>
-RETURN CONTRACT: plan.md printed before the first source write; then status, paths, assumptions, verdicts, timing, unresolved items
+RETURN CONTRACT: `sasu implement plan` before the first source write; then status, paths, assumptions, verdicts, timing, unresolved items
 SASU_HANDOFF
 ```
 
@@ -125,9 +124,8 @@ The packet must contain:
 - `GOAL AND CONTEXT`: the implementation goal and operational facts that are not represented in the ready PRD.
 - `AUTHORITY`: reversible in-scope defaults are autonomous; hard-stop classes remain blocked.
 - `SOURCE`: repository cwd and the ready PRD path.
-- `OBSERVER`: this session's own cross-session name, read from the `ListAgents` header before dispatch, so the Implementor can send its plan without ending a turn; omitted when the runtime has no `ListAgents`.
 - `DIRTY ATTRIBUTION`: injected by the helper when the Spec Owner selected `pre-existing` or `run-owned`; absent only after intake reported clean or `commit-first` was resolved into a clean tree.
-- `RETURN CONTRACT`: the execution plan printed before the first source write (`execution-planning.md`), then final status, paths, assumptions, verification verdicts, timing, and unresolved items.
+- `RETURN CONTRACT`: the execution plan registered with `sasu implement plan` before the first source write (`execution-planning.md`), then final status, paths, assumptions, verification verdicts, timing, and unresolved items.
 
 Do not replace the PRD with a vague summary such as "implement what we discussed".
 The ready PRD is the canonical implementation contract; accepted and rejected product decisions belong there rather than in a second handoff narrative.
@@ -153,12 +151,14 @@ It wakes the recorded Observer for exactly these reasons:
 | `settled` | the Implementor has been idle or done for at least one tick interval; the wake says it may be transient |
 | `blocked` | herdr reports the Implementor blocked |
 | `escalate` | an `escalate` event was recorded |
+| `plan` | a `plan` event was recorded by `sasu implement plan`; once per event, the Implementor keeps working |
 | `stall` | no `state.json` event AND no herdr lifecycle activity for 10 minutes; a working Implementor is activity |
 | `implementor-gone` | the Implementor's pane is empty or holds another agent |
 | `terminal` | the run was retired; it leaves the index after this wake |
 | `patrol` | the Implementor is working and the Observer has not looked for the run's patrol interval (default 15 minutes, `dispatch --patrol <minutes>`) |
 
 Artifact, verify, dispatch and amendment events do not wake; they only reset the stall clock.
+A missing plan event is not a reason either: the tick reads nothing into its absence (D-11).
 Each condition is answered once per episode; a working Observer is not interrupted and receives the same condition on the next tick it is idle; several runs watched by one Observer arrive in one wake.
 
 Before every wake the tick compares `agent get` on the recorded Observer pane with the recorded session UUID and terminal.
@@ -187,9 +187,8 @@ It answers only the recorded Observer session; another session that receives a s
 Then read the pane tail with `herdr agent read <implementor-name> --source recent-unwrapped --lines 120`, for diagnosis only.
 On the first `patrol` wake also read `agents/runs/<slug>/plan.md`: it is the Implementor's declared order and slice boundaries, the one place a wrong reading of the structure or a missing existing helper is visible before the code shows it.
 
-A cross-session message headed `PLAN <slug>:` from the Implementor is the same plan arriving early, without a tick.
-Treat it as a wake with no digest: read the file, and either end the turn or answer one line with `SendMessage` to the message's `from`, which queues for the Implementor's next tool round instead of typing into its pane.
-Its absence means nothing; a Codex Implementor cannot send it and the patrol reads the file regardless.
+A `plan` wake names the file in its detail line.
+Read it, and either end the turn or give one line of direction; the Implementor is working, so the direction lands in its composer and is read at its next prompt.
 From those two, choose one of three: it is fine and the turn ends; one line of direction to the Implementor; or stop.
 Use Sasu state, not transcript keywords, as the source of truth.
 

@@ -14,7 +14,7 @@ const OBSERVER = { runtime: "claude", sessionId: "obs-uuid", terminalId: "term_o
 
 function facts(overrides = {}) {
   return {
-    slug: "fixture", status: "active", lastEventAt: T0, lastEventId: 3, lastEscalateId: null,
+    slug: "fixture", status: "active", lastEventAt: T0, lastEventId: 3, lastEscalateId: null, lastPlan: null,
     dispatchedAt: T0, patrolIntervalMs: 15 * MIN, observer: OBSERVER,
     implementor: { paneId: "w2:p1", agent: "impl", sessionId: "impl-uuid", terminalId: "term_impl", hostScope: "sock", recordedAt: new Date(T0).toISOString() },
     ...overrides,
@@ -79,6 +79,17 @@ test("B8/D-09: an unaccepted wake does not count as answered, so bounded deliver
     ["blocked"],
     "an unknown outcome remains due; the tick layer applies the two-attempt delivery cap",
   );
+});
+
+test("plan: a registered plan wakes once per plan event while the implementor keeps working, and a run without one wakes for nothing", () => {
+  const none = decide({}, found({ status: "working" }), T0 + MIN);
+  assert.deepEqual(reasons(none), [], "no plan event is not a signal");
+  const first = decide({ lastPlan: { id: 4, path: "agents/runs/fixture/plan.md" } }, found({ status: "working" }), T0 + MIN);
+  assert.deepEqual(reasons(first), ["plan"]);
+  assert.match(first.due[0].detail, /agents\/runs\/fixture\/plan\.md/);
+  const wake = { at: new Date(T0 + MIN).toISOString(), reasons: ["plan"], episode: episodeKey(first.due), outcome: "accepted", path: "session-match", code: "submitted" };
+  assert.deepEqual(reasons(decide({ lastPlan: { id: 4, path: "agents/runs/fixture/plan.md" } }, found({ status: "working" }), T0 + 2 * MIN, { lastWake: wake })), [], "the same plan is not repeated");
+  assert.deepEqual(reasons(decide({ lastPlan: { id: 9, path: "agents/runs/fixture/plan.md" } }, found({ status: "working" }), T0 + 2 * MIN, { lastWake: wake })), ["plan"], "a rewritten plan is a new episode");
 });
 
 test("B8: an escalate event wakes once per event", () => {

@@ -112,12 +112,12 @@ export interface VerificationReportIdentity {
   reportSha256: string;
 }
 export type IssuerLabel = "implementor" | "observer" | "human";
-export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify" | "dispatch" | "handover";
+export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify" | "dispatch" | "handover" | "plan";
 export interface ImplementEvent {
   id: number; at: string; kind: ImplementEventKind; actor: IssuerLabel;
   subject: string | null; summary: string;
 }
-export type IssuedCommand = "artifact" | "verify" | "escalate" | "amend" | "retire";
+export type IssuedCommand = "artifact" | "plan" | "verify" | "escalate" | "amend" | "retire";
 export type VerbRejectionCheck = "arguments" | "authority" | "transition";
 export interface VerbRecord {
   id: number;

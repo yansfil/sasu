@@ -22,6 +22,8 @@ export interface RunFacts {
   lastEventId: number;
   /** Id of the newest `escalate` event, or null. */
   lastEscalateId: number | null;
+  /** The newest `plan` event, or null when the Implementor registered none. */
+  lastPlan: { id: number; path: string } | null;
   dispatchedAt: number;
   patrolIntervalMs: number;
   observer: ObserverIdentity;
@@ -141,6 +143,12 @@ export function decideRun(facts: RunFacts, observed: Observed, wakeMemory: WakeM
     }
     if (facts.lastEscalateId !== null) {
       candidates.push({ reason: "escalate", episode: String(facts.lastEscalateId), detail: `escalate event ${facts.lastEscalateId} is recorded` });
+    }
+    // A registered plan wakes once per plan event: the Implementor keeps
+    // working, and the Observer reads the file it names. A run with no plan
+    // event is not a fact the tick reads anything into (D-11).
+    if (facts.lastPlan !== null) {
+      candidates.push({ reason: "plan", episode: String(facts.lastPlan.id), detail: `plan ${facts.lastPlan.id} registered: ${facts.lastPlan.path}` });
     }
     // Stall: the event log AND herdr activity have both been silent for the
     // threshold (B6). A working agent is activity by definition; an

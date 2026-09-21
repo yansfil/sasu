@@ -139,6 +139,7 @@ High-risk changes require the repository's independent specialist review and exp
 | `dispatch` | `--name`, `--prd` | Observer only by structural Herdr rule; after `start`; records the Observer and enrolls the run with the supervisor tick |
 | `status` | optional `--state` or `--slug` | any role, read-only |
 | `artifact` | kind, path, description | implementor, human |
+| `plan` | `--path` | implementor, human; records the execution plan, wakes the Observer once under Herdr |
 | `amend` | human approval and reason | human |
 | `escalate` | reason | observer, human |
 | `retire` | active run | implementor, human |

@@ -55,6 +55,8 @@ Usage:
   sasu implement escalate --reason "<what the implementor is stuck on>" [--target <finding-or-issue-ref>] [--agent <herdr-agent>] [--json]
     (bounded read-only diagnosis and context recovery; unavailable while a verify execution lease is live.)
   sasu implement artifact (--kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<observation>" | --manifest <json-file>) [--source "<collector and method>"] [--collected-at <ISO-time>] [--target "<observed target>"] [--environment "<environment>"] [--refs "<B1,B2,...>"] [--json]
+  sasu implement plan     --path <plan-file> [--json]
+    (records the execution plan written before the first source change; under Herdr the supervisor tick wakes the Observer once per plan event.)
   sasu implement status   [--slug <topic> | --state <path>] [--digest] [--json]
     (--digest prints deterministic facts since dispatch for the run's recorded Observer session; other sessions are refused.)
   sasu implement verify   [--slug <topic> | --state <path>] [--json]

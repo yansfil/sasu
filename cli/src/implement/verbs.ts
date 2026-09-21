@@ -58,6 +58,7 @@ export class VerbRejected extends Error {
  */
 export const COMMAND_AUTHORITY: Record<IssuedCommand, IssuerLabel[]> = {
   artifact: ["implementor", "human"],
+  plan: ["implementor", "human"],
   verify: ["implementor", "human"],
   retire: ["implementor", "human"],
   escalate: ["observer", "human"],
