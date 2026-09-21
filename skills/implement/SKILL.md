@@ -59,6 +59,7 @@ sasu implement start --prd <approved-prd-path>
 Under Herdr the Observer runs `start` before it dispatches, and the Implementor's pane opens in the tree the run edits: the Implementor never runs `start` itself, and its bare `sasu implement ...` commands already resolve the run.
 Outside Herdr the session that will implement runs `start` and works in the returned worktree when one is created.
 Read the complete approved PRD and its decisions before editing.
+Write the execution plan from `references/execution-planning.md` before the first source change.
 Implement every required behavior and perform actual browser, native, API, database, CLI, or document observation appropriate to the product.
 Register material evidence with `sasu implement artifact`.
 
