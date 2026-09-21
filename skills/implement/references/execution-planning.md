@@ -1,5 +1,11 @@
 # Execution Planning
 
+## Contents
+
+- [Plan Before The First Write](#plan-before-the-first-write)
+- [Intermediate Commits](#intermediate-commits)
+- [Verification](#verification)
+
 Read the complete PRD and its decision sources before implementing.
 The PRD owns requirements and approved structure; `state.json` owns execution history, evidence identity, run authority, and the current deterministic report identity.
 Requirement IDs are references, not a task ledger.
@@ -39,7 +45,50 @@ UNKNOWNS:  <structure the PRD names that the code does not have, or an open deci
 ```
 
 An `UNKNOWNS` line that changes the approved structure is an `OBSERVER_BLOCK` before the first write, not an assumption to build on.
-When the plan turns out wrong mid-run, rewrite the file and say so in one line; nothing checks conformance to it.
+When the plan turns out wrong mid-run, rewrite the file and say so in one line, register it again, and continue; nothing checks conformance to it.
+
+### Example
+
+A PRD with five Behaviors rows:
+
+```text
+B1 a comment posted on an article appears in its list at once
+B2 the article's author receives a notification
+B3 opening the notification lands on that comment
+B4 a comment on my own article sends me nothing
+B5 deleting a comment removes its notification
+```
+
+Sliced by layer, nothing is observable until the fourth step and the check for each is "the table exists" or "it builds":
+
+```text
+1. comments table   2. notifications table   3. both APIs   4. comment box UI   5. bell UI
+```
+
+Sliced by behavior, every step leaves something a person can try, and each is one commit:
+
+```text
+SLICES:    1. B1     - comments schema + POST + list render - risk: this data shape is the base of everything else - files: db/…, api/comments.ts, ui/CommentBox.tsx - check: post a comment in the browser and see it
+           2. B2, B4 - notifications schema + trigger on comment creation + self-exclusion rule - depends on 1 - risk: trigger inside or outside the transaction - check: comment on another author's article, bell shows 1; on my own, 0
+           3. B3     - notification deep link to the comment - depends on 2 - independent of 4 - check: click scrolls to the comment
+           4. B5     - delete cascade - depends on 2 - independent of 3 - check: bell shows 0 after delete
+```
+
+B2 and B4 share a slice because B4 is one line inside B2's trigger and is not a working state on its own.
+The notifications table is used by B2, B3, and B5, and it is created by the first slice that needs it, not by a slice of its own.
+
+### Work that is not a Behaviors row
+
+The rows are the unit of observation; some work has no row and still has a place.
+
+- Shared shape: a type, a table, or a module boundary several slices depend on is built by the first slice that needs it.
+  When that shape is expensive to reverse, name it in the plan under that slice so the choice is deliberate, not a side effect of getting slice 1 to pass.
+- Preparatory refactoring: when the existing code makes the first slice tangled, a slice `0.` may reshape it first.
+  It changes no behavior, its check is the existing suite staying green, and it is its own commit, so the diff that adds behavior stays readable.
+- Structure the PRD names without a row, such as a migration or a config key, belongs to the first slice that needs it.
+- A pure structure slice, with no row and no runnable surface, is allowed only when it has a real check of its own: a command that can be run, a test that can be red.
+  "The table exists" and "it builds" are not checks.
+- Work in no row and no structure section, such as an abstraction for later or an unrelated cleanup, is not planned; it goes to Follow-up improvements.
 
 Use focused tests where a plausible regression justifies their cost.
 The final sealed project suites remain mandatory and are executed by verify.
