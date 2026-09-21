@@ -76,6 +76,7 @@ ORIGINAL INVOCATION: <verbatim user message>
 GOAL AND CONTEXT: <implementation goal and operational facts not represented in the PRD>
 AUTHORITY: <autonomous defaults and hard stops>
 SOURCE: <cwd and ready PRD path>
+OBSERVER: <this session's own name as the `ListAgents` header prints it; omit when the runtime has no ListAgents>
 DIRTY ATTRIBUTION: <pre-existing|run-owned, when `sasu implement intake` asked>
 RETURN CONTRACT: plan.md printed before the first source write; then status, paths, assumptions, verdicts, timing, unresolved items
 SASU_HANDOFF
@@ -124,6 +125,7 @@ The packet must contain:
 - `GOAL AND CONTEXT`: the implementation goal and operational facts that are not represented in the ready PRD.
 - `AUTHORITY`: reversible in-scope defaults are autonomous; hard-stop classes remain blocked.
 - `SOURCE`: repository cwd and the ready PRD path.
+- `OBSERVER`: this session's own cross-session name, read from the `ListAgents` header before dispatch, so the Implementor can send its plan without ending a turn; omitted when the runtime has no `ListAgents`.
 - `DIRTY ATTRIBUTION`: injected by the helper when the Spec Owner selected `pre-existing` or `run-owned`; absent only after intake reported clean or `commit-first` was resolved into a clean tree.
 - `RETURN CONTRACT`: the execution plan printed before the first source write (`execution-planning.md`), then final status, paths, assumptions, verification verdicts, timing, and unresolved items.
 
@@ -184,6 +186,10 @@ It reports deterministic facts since dispatch - elapsed time, the Implementor's 
 It answers only the recorded Observer session; another session that receives a stray wake is refused and nothing changes.
 Then read the pane tail with `herdr agent read <implementor-name> --source recent-unwrapped --lines 120`, for diagnosis only.
 On the first `patrol` wake also read `agents/runs/<slug>/plan.md`: it is the Implementor's declared order and slice boundaries, the one place a wrong reading of the structure or a missing existing helper is visible before the code shows it.
+
+A cross-session message headed `PLAN <slug>:` from the Implementor is the same plan arriving early, without a tick.
+Treat it as a wake with no digest: read the file, and either end the turn or answer one line with `SendMessage` to the message's `from`, which queues for the Implementor's next tool round instead of typing into its pane.
+Its absence means nothing; a Codex Implementor cannot send it and the patrol reads the file regardless.
 From those two, choose one of three: it is fine and the turn ends; one line of direction to the Implementor; or stop.
 Use Sasu state, not transcript keywords, as the source of truth.
 
