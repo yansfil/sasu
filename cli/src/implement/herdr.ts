@@ -164,6 +164,13 @@ function herdrErrorCode(stderr: string): string | null {
  */
 const AGENT_START_BUSY_RETRY_MS = 1_000;
 const AGENT_START_BUSY_TIMEOUT_MS = 30_000;
+const CODEX_INITIALIZATION_TIMEOUT_MS = 30_000;
+const CODEX_INITIALIZATION_POLL_MS = 250;
+
+// Codex 0.156.0 creates/reports its session at its first turn, not at the
+// empty composer (observed 2026-09-24). Initialize only the session at launch;
+// executable handoff still waits for durable identity and final revalidation.
+const CODEX_INITIALIZATION_PROMPT = "Session initialization only. Reply with READY and end this turn. Do not use tools, read or edit files, run commands, start implementation, or dispatch agents. The actual task will arrive separately after the coordinator verifies your session identity.";
 
 export function environmentCapabilities(environment: HerdrEnvironment): HerdrCapabilities {
   const env = environment.env ?? process.env;
@@ -270,7 +277,33 @@ function nativeAgentArgs(kind: string, model?: string, effort?: string): string[
     if (kind === "codex") args.push("--config", `model_reasoning_effort="${effort}"`);
     else args.push("--effort", effort);
   }
+  if (kind === "codex") args.push(CODEX_INITIALIZATION_PROMPT);
   return args.length === 0 ? [] : ["--", ...args];
+}
+
+function initializedCodex(prepared: PreparedSpawn, environment: HerdrEnvironment): AgentLookup {
+  const clock = environment.clock ?? defaultClock;
+  const deadline = clock.now() + CODEX_INITIALIZATION_TIMEOUT_MS;
+  let terminalId: string | null = null;
+  let sessionId: string | null = null;
+  while (clock.now() < deadline) {
+    const observed = getAgent(prepared.paneId, environment, deadline - clock.now());
+    if (observed.kind !== "found") return observed;
+    const agent = observed.agent;
+    if (agent.paneId !== prepared.paneId || agent.name !== prepared.name || agent.kind !== "codex" || agent.terminalId === null) {
+      return { kind: "unavailable", detail: "Codex initialization target is missing or no longer matches the created pane" };
+    }
+    terminalId ??= agent.terminalId;
+    if (agent.terminalId !== terminalId || (sessionId !== null && agent.sessionId !== sessionId)) {
+      return { kind: "unavailable", detail: "Codex initialization identity changed; refusing the replacement" };
+    }
+    sessionId ??= agent.sessionId;
+    if (agent.status === "blocked") return { kind: "unavailable", detail: "Codex initialization is blocked; inspect the retained pane" };
+    if (sessionId !== null && (agent.status === "idle" || agent.status === "done")) return observed;
+    const remaining = deadline - clock.now();
+    if (remaining > 0) clock.sleep(Math.min(CODEX_INITIALIZATION_POLL_MS, remaining));
+  }
+  return { kind: "unavailable", detail: "Codex initialization did not produce a settled, identified session within 30 seconds; inspect the retained pane" };
 }
 
 /**
@@ -533,7 +566,9 @@ export function spawnImplementor(
       : `herdr pane report-metadata ${created} failed (${declared.status ?? "no status"}): ${(declared.stderr || declared.stdout).trim()}; the row will show as a root, not under ${dispatcher}`,
   };
 
-  const observed = getAgent(created, { ...environment, run });
+  const observed = kind === "codex"
+    ? initializedCodex(prepared, { ...environment, run })
+    : getAgent(created, { ...environment, run });
   if (observed.kind !== "found" || observed.agent.paneId !== created || observed.agent.name !== input.name
     || observed.agent.sessionId === null || observed.agent.terminalId === null) {
     const detail = observed.kind === "found"

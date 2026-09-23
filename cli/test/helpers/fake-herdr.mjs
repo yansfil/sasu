@@ -57,6 +57,14 @@ if (key === "agent start") {
   const file = process.env.HERDR_FAKE_AGENTS_FILE;
   const current = file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
   current[pane] = { name, agent: kind, agent_status: "working", pane_id: pane, terminal_id: "term_impl", agent_session: { value: "impl-session" }, tokens: { activity: String(Date.now()) }, state_change_seq: 1 };
+  // Codex reports its session only after a first turn. The native initial
+  // prompt initializes it without delivering the executable handoff.
+  if (kind === "codex") {
+    const separator = argv.indexOf("--");
+    const initialPrompt = separator !== -1 && !argv[argv.length - 1].startsWith("--") && argv[argv.length - 1].includes("Session initialization only.");
+    current[pane].agent_status = "idle";
+    if (!initialPrompt) delete current[pane].agent_session;
+  }
   if (file) fs.writeFileSync(file, JSON.stringify(current));
   answer({ result: { type: "agent_started" } });
 }
