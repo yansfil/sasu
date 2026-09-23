@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Registers (or removes) the two optional git-safety hooks in both runtimes.
+// Registers (or removes) the optional recovery hook in both runtimes.
 //
 //   node scripts/hooks/install.mjs              register
 //   node scripts/hooks/install.mjs --uninstall  remove
@@ -14,39 +14,55 @@ import path from "node:path";
 import os from "node:os";
 
 const HOOK_DIR = path.resolve(import.meta.dirname);
-const CHECKPOINT = path.join(HOOK_DIR, "git-checkpoint.sh");
-const WORKTREE = path.join(HOOK_DIR, "worktree-create.sh");
+const CHECKPOINT = path.join(HOOK_DIR, "git-checkpoint.mjs");
+const OWNED_MARKERS = ["git-checkpoint.sh", "git-checkpoint.mjs", "worktree-create.sh"];
 
-// Claude Code has a worktree lifecycle event; Codex does not.
+function shellQuote(value) {
+  const text = String(value);
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(text)) return text;
+  return `'${text.replace(/'/g, "'\\''")}'`;
+}
+
 const TARGETS = [
   {
     runtime: "claude",
     file: path.join(os.homedir(), ".claude", "settings.json"),
     events: {
-      Stop: { command: CHECKPOINT, timeout: 20, statusMessage: "Checkpointing…" },
-      WorktreeCreate: { command: WORKTREE, timeout: 300, statusMessage: "Preparing worktree…" },
+      Stop: { command: `node ${shellQuote(CHECKPOINT)}`, timeout: 20, statusMessage: "Saving recovery snapshot…" },
     },
   },
   {
     runtime: "codex",
     file: path.join(os.homedir(), ".codex", "hooks.json"),
     events: {
-      Stop: { command: CHECKPOINT, timeout: 20 },
+      Stop: { command: `node ${shellQuote(CHECKPOINT)}`, timeout: 20 },
     },
   },
 ];
 
-const isOurs = matcher =>
-  Array.isArray(matcher?.hooks) &&
-  matcher.hooks.some(h => typeof h?.command === "string" && h.command.startsWith(HOOK_DIR));
+function withoutOwnedCommands(matcher) {
+  if (!matcher || !Array.isArray(matcher.hooks)) return matcher;
+  const hooks = matcher.hooks.filter(h => !(typeof h?.command === "string" && OWNED_MARKERS.some(marker => h.command.includes(marker))));
+  return hooks.length > 0 ? { ...matcher, hooks } : null;
+}
+
+function stripOwned(matchers) {
+  return matchers.map(withoutOwnedCommands).filter(Boolean);
+}
 
 function apply(target, uninstall) {
   const config = fs.existsSync(target.file) ? JSON.parse(fs.readFileSync(target.file, "utf8")) : {};
   if (!config.hooks || typeof config.hooks !== "object") config.hooks = {};
   const before = JSON.stringify(config.hooks);
 
+  for (const event of Object.keys(config.hooks)) {
+    const existing = Array.isArray(config.hooks[event]) ? config.hooks[event] : [];
+    const kept = stripOwned(existing);
+    if (kept.length) config.hooks[event] = kept;
+    else delete config.hooks[event];
+  }
   for (const [event, entry] of Object.entries(target.events)) {
-    const kept = (Array.isArray(config.hooks[event]) ? config.hooks[event] : []).filter(m => !isOurs(m));
+    const kept = Array.isArray(config.hooks[event]) ? config.hooks[event] : [];
     const next = uninstall ? kept : [...kept, { hooks: [{ type: "command", ...entry }] }];
     if (next.length) config.hooks[event] = next;
     else delete config.hooks[event];
@@ -61,8 +77,6 @@ function apply(target, uninstall) {
 }
 
 const uninstall = process.argv.includes("--uninstall");
-for (const script of [CHECKPOINT, WORKTREE]) {
-  if (!uninstall && !fs.existsSync(script)) throw new Error(`missing hook script: ${script}`);
-}
+if (!uninstall && !fs.existsSync(CHECKPOINT)) throw new Error(`missing hook script: ${CHECKPOINT}`);
 const results = TARGETS.map(t => apply(t, uninstall));
 console.log(JSON.stringify({ action: uninstall ? "uninstall" : "install", results }, null, 2));

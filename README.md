@@ -144,9 +144,24 @@ The skill installer registers two advisory runtime hooks:
 
 Neither hook stages files, commits, blocks a turn, or changes verification state.
 
-Standalone Git checkpoint hooks remain opt-in:
+The standalone recovery checkpoint hook remains opt-in:
 
 ```sh
 node scripts/hooks/install.mjs
 node scripts/hooks/install.mjs --uninstall
+```
+
+On `Stop`, it snapshots eligible uncommitted files into one hidden `refs/sasu/checkpoints/<worktree-id>` ref per worktree.
+It does not stage the real index, move `HEAD`, create a branch commit, or replace the normal semantic commits encouraged by `commit_reminder.mjs`.
+Secret-like files and regular files larger than 10 MB are excluded.
+Its structured log rotates at 1 MB under `~/.sasu/hooks.jsonl`.
+The installer also retires the older branch-commit checkpoint and Claude-only `WorktreeCreate` hook while preserving unrelated hooks.
+
+List and inspect recovery snapshots with Git:
+
+```sh
+git for-each-ref refs/sasu/checkpoints --format='%(refname)'
+git diff HEAD refs/sasu/checkpoints/<worktree-id>
+git restore --source=refs/sasu/checkpoints/<worktree-id> -- path/to/file
+git switch -c recover-work refs/sasu/checkpoints/<worktree-id>
 ```
