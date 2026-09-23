@@ -94,6 +94,17 @@ export function createSpawnPane(record: SpawnIntent, placement: { workspace: str
   return pane["pane_id"];
 }
 
+export function confirmSpawnPane(record: SpawnIntent, placement: { workspace: string; cwd: string }): void {
+  if (record.pane === null) throw new HcoordError("spawn_uncertain", "the spawn intent has no pane ID to inspect");
+  const result = runHerdrCommand(["pane", "get", record.pane], 2000, scopeEnv(record.hostScope));
+  if (result.status !== 0) throw new HcoordError("spawn_uncertain", "the recorded pane is unavailable; inspect it before resuming", { pane: record.pane });
+  const data = herdrJson(result.stdout);
+  const pane = (data["result"] as Record<string, unknown> | undefined)?.["pane"] as Record<string, unknown> | undefined;
+  if (pane?.["pane_id"] !== undefined && pane["pane_id"] !== record.pane || pane?.["workspace_id"] !== placement.workspace || pane?.["cwd"] !== placement.cwd) {
+    throw new HcoordError("identity_conflict", "the pane does not match the parent's workspace and cwd", { pane: record.pane });
+  }
+}
+
 export function inspectSpawnedAgent(record: SpawnIntent): { session: string; instance: string; runtime: Participant["runtime"] } | null {
   if (record.pane === null) return null;
   const found = getAgent(record.pane, { env: scopeEnv(record.hostScope) }, 2000);
@@ -108,7 +119,7 @@ export function startSpawnedAgent(record: SpawnIntent): void {
   if (record.pane === null) throw new HcoordError("invalid_state", "spawn intent has no pane");
   validateSpawnSpec(record.name, record.kind);
   const result = runHerdrCommand(["agent", "start", record.name, "--kind", record.kind, "--pane", record.pane, "--timeout", "10000", ...(record.nativeArgs.length ? ["--", ...record.nativeArgs] : [])], 12_000, scopeEnv(record.hostScope));
-  if (result.status !== 0) throw new HcoordError("spawn_uncertain", "Herdr did not confirm agent start; inspect the saved pane before retry", { pane: record.pane });
+  if (result.status !== 0) throw new HcoordError("spawn_uncertain", "Herdr did not confirm agent start; inspect the saved pane before retry", { intent: record.key, pane: record.pane, unfinishedStep: "agent_start" });
 }
 
 export function discoverLocalAgents(registered: Participant[], project: string | null, hostScope = "default"): { items: Array<Record<string, unknown>>; partialFailures: string[] } {

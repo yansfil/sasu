@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
-import { API_VERSION, HcoordError, MAX_CONNECTIONS, MAX_MESSAGE_BYTES, MAX_QUEUE, own, put, type Ledger } from "./model";
+import { API_VERSION, HcoordError, MAX_CONNECTIONS, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, own, put, type Ledger } from "./model";
 import { event } from "./model";
 import { execute } from "./service";
-import { createSpawnPane, discoverLocalAgents, guardedDeliveryAvailable, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, startSpawnedAgent, submitGuarded, validateLocalBinding } from "./herdr";
+import { confirmSpawnPane, createSpawnPane, discoverLocalAgents, guardedDeliveryAvailable, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, startSpawnedAgent, submitGuarded, validateLocalBinding } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
 import { notifyHuman } from "./platform";
@@ -59,18 +59,34 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     try { fs.writeFileSync(lockFile, `${process.pid}\n`, { flag: "wx", mode: 0o600 }); lockOwned = true; return; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
     const recovery = `${lockFile}.recovery`;
-    try { fs.mkdirSync(recovery, { mode: 0o700 }); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new HcoordError("startup_in_progress", "another daemon is starting or recovering; retry after it finishes"); throw error; }
-    try {
-      const pid = Number(fs.readFileSync(lockFile, "utf8").trim());
-      if (Number.isSafeInteger(pid) && pid > 0) {
-        try { process.kill(pid, 0); throw new HcoordError("already_running", "coordinator daemon is running or starting"); }
-        catch (error) { if (!(error instanceof HcoordError) && (error as NodeJS.ErrnoException).code !== "ESRCH") throw error; if (error instanceof HcoordError) throw error; }
+    const owner = `${recovery}/owner`;
+    const alive = (pid: number): boolean => {
+      if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+      try { process.kill(pid, 0); return true; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
+    };
+    let recoveryOwned = false;
+    for (let attempt = 0; attempt < 3 && !recoveryOwned; attempt += 1) {
+      try { fs.mkdirSync(recovery, { mode: 0o700 }); recoveryOwned = true; }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        let ownerPid: number | null = null;
+        try { ownerPid = Number(fs.readFileSync(owner, "utf8").trim()); }
+        catch (readError) { if ((readError as NodeJS.ErrnoException).code !== "ENOENT") throw readError; }
+        if (ownerPid !== null ? alive(ownerPid) : Date.now() - fs.statSync(recovery).mtimeMs < 10_000) throw new HcoordError("startup_in_progress", "another daemon is starting or recovering; retry after it finishes");
+        try { if (ownerPid !== null) fs.unlinkSync(owner); fs.rmdirSync(recovery); }
+        catch (cleanupError) { if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT") throw cleanupError; }
       }
+    }
+    if (!recoveryOwned) throw new HcoordError("startup_in_progress", "another daemon is recovering; retry after it finishes");
+    try {
+      fs.writeFileSync(owner, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
+      const pid = Number(fs.readFileSync(lockFile, "utf8").trim());
+      if (alive(pid)) throw new HcoordError("already_running", "coordinator daemon is running or starting");
       fs.unlinkSync(lockFile);
       fs.writeFileSync(lockFile, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
       lockOwned = true;
-    } finally { fs.rmdirSync(recovery); }
+    } finally { if (fs.existsSync(owner)) fs.unlinkSync(owner); fs.rmdirSync(recovery); }
   };
   acquireLock();
   try {
@@ -93,25 +109,40 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
   };
   const spawnAgent = (args: Record<string, unknown>, at: string): unknown => {
     let intent = commit("agent.spawn.reserve", args, at) as SpawnIntent;
+    const reconcilePane = args["reconcilePane"];
+    if (reconcilePane !== null && reconcilePane !== undefined && (typeof reconcilePane !== "string" || reconcilePane.trim() === "")) throw new HcoordError("invalid_argument", "--reconcile-pane requires an exact pane ID");
+    if (intent.pane !== null && reconcilePane !== null && reconcilePane !== undefined && reconcilePane !== intent.pane) throw new HcoordError("identity_conflict", "the spawn intent already owns a different pane", { intent: intent.key, pane: intent.pane });
     if (intent.status === "complete") return { intent, participant: ledger.participants[intent.participant!], watch: ledger.watches[intent.participant!] ?? null };
     let createdNow = false;
     if (intent.pane === null) {
-      if (intent.status !== "reserved") throw new HcoordError("spawn_uncertain", "tab creation outcome is unknown; no duplicate tab was created", { intent: intent.key, pane: null });
       const parent = ledger.participants[intent.parent]!;
       const placement = parentPlacement(parent);
-      intent = commit("agent.spawn.unknown", { intent: intent.key, reason: "tab creation reserved; outcome pending" }, at) as SpawnIntent;
-      const pane = createSpawnPane(intent, placement);
-      intent = commit("agent.spawn.pane", { intent: intent.key, pane }, new Date().toISOString()) as SpawnIntent;
-      createdNow = true;
+      if (intent.status !== "reserved") {
+        if (typeof reconcilePane !== "string" || reconcilePane.trim() === "") throw new HcoordError("spawn_uncertain", "tab creation outcome is unknown; inspect the original tab and retry this intent with --reconcile-pane <exact-pane-id>", { intent: intent.key, pane: null, unfinishedStep: "record_pane" });
+        confirmSpawnPane({ ...intent, pane: reconcilePane }, placement);
+        const found = inspectSpawnedAgent({ ...intent, pane: reconcilePane });
+        if (found === null && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "pane is confirmed but has no agent; retry with --reconcile-pane and --resume-start after inspecting it", { intent: intent.key, pane: reconcilePane, unfinishedStep: "agent_start" });
+        intent = commit("agent.spawn.pane", { intent: intent.key, pane: reconcilePane }, new Date().toISOString()) as SpawnIntent;
+      } else {
+        if (reconcilePane !== null && reconcilePane !== undefined) throw new HcoordError("invalid_argument", "a new spawn intent cannot reconcile an existing pane");
+        intent = commit("agent.spawn.unknown", { intent: intent.key, reason: "tab creation reserved; outcome pending" }, at) as SpawnIntent;
+        const pane = createSpawnPane(intent, placement);
+        try { intent = commit("agent.spawn.pane", { intent: intent.key, pane }, new Date().toISOString()) as SpawnIntent; }
+        catch (error) { throw new HcoordError("spawn_uncertain", "tab was created but pane recording failed; inspect the saved pane and repair storage before reconciling this intent", { intent: intent.key, pane, unfinishedStep: "record_pane", code: error instanceof HcoordError ? error.code : "storage_failed" }); }
+        createdNow = true;
+      }
     }
     let identity = inspectSpawnedAgent(intent);
     if (identity === null) {
-      if (!createdNow) throw new HcoordError("spawn_uncertain", "saved pane has no confirmed agent; inspect it before resuming agent start", { intent: intent.key, pane: intent.pane });
+      if (!createdNow && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "saved pane has no confirmed agent; inspect it and retry this intent with --resume-start", { intent: intent.key, pane: intent.pane, unfinishedStep: "agent_start" });
+      if (!createdNow) confirmSpawnPane(intent, parentPlacement(ledger.participants[intent.parent]!));
+      if (ledger.events.length >= MAX_EVENTS) throw new HcoordError("capacity", "event history has no room to record the resumed agent; resolve retention before starting it", { intent: intent.key, pane: intent.pane });
       startSpawnedAgent(intent);
       identity = inspectSpawnedAgent(intent);
       if (identity === null) throw new HcoordError("spawn_uncertain", "agent start returned but execution identity is unavailable", { intent: intent.key, pane: intent.pane });
     }
-    return commit("agent.spawn.complete", { intent: intent.key, runtimeSession: identity.session, instance: identity.instance, runtime: identity.runtime, project: ledger.participants[intent.parent]?.project }, new Date().toISOString());
+    try { return commit("agent.spawn.complete", { intent: intent.key, runtimeSession: identity.session, instance: identity.instance, runtime: identity.runtime, project: ledger.participants[intent.parent]?.project }, new Date().toISOString()); }
+    catch (error) { throw new HcoordError("spawn_uncertain", "agent exists but registration failed; inspect the saved pane and retry this intent after repairing storage", { intent: intent.key, pane: intent.pane, unfinishedStep: "register_agent", code: error instanceof HcoordError ? error.code : "storage_failed" }); }
   };
   const registerSasuRun = (args: Record<string, unknown>, at: string): unknown => {
     const run = String(args["run"] ?? ""), project = String(args["project"] ?? "");

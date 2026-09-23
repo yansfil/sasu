@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { emptyLedger } from "../../dist/hcoord/model.js";
+import { emptyLedger, MAX_EVENTS } from "../../dist/hcoord/model.js";
 import { execute } from "../../dist/hcoord/service.js";
 import { loadLedger } from "../../dist/hcoord/store.js";
 import { callDaemon } from "../../dist/hcoord/transport.js";
@@ -75,6 +75,9 @@ test("caller IDs cannot address inherited records or mutate policy prototypes", 
   assert.throws(() => run("agent.spawn.reserve", { parent: parent.id, intent: "bad-name", machine: "local", session: "s", name: "Bad Name", kind: "codex", nativeArgs: [] }), { code: "invalid_argument" });
   assert.throws(() => run("agent.spawn.reserve", { parent: parent.id, intent: "bad-kind", machine: "local", session: "s", name: "valid", kind: "other", nativeArgs: [] }), { code: "unsupported_runtime" });
   assert.equal(Object.keys(state.spawnIntents).length, 1, "invalid spawn leaves no reserved external effect");
+  state.events.length = MAX_EVENTS - 3;
+  assert.throws(() => run("agent.spawn.reserve", { parent: parent.id, intent: "no-capacity", machine: "local", session: "s", name: "valid", kind: "codex", nativeArgs: [] }), { code: "capacity" });
+  assert.equal(Object.hasOwn(state.spawnIntents, "no-capacity"), false, "a pane is never created without capacity to record its result");
 });
 
 test("watch handover preserves one unchecked cycle and graph history", () => {
@@ -82,7 +85,7 @@ test("watch handover preserves one unchecked cycle and graph history", () => {
   const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;
   const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "idle" });
   const target = register("target"), first = register("first"), second = register("second");
-  run("watch.start", { target: target.id, observer: first.id, actor: first.id, intervalMs: 1000 });
+  run("watch.start", { target: target.id, observer: first.id, actor: "human", intervalMs: 1000 });
   run("tick", {}, "2026-09-01T00:00:01.000Z");
   const cycle = state.watches[target.id].cycle;
   const original = Object.values(state.requests).find((item) => item.intent.startsWith("watch:"));
@@ -101,26 +104,51 @@ test("watch handover preserves one unchecked cycle and graph history", () => {
   assert.equal(original.deliveries[1].status, "superseded");
 });
 
-test("a replied watch cycle remains unchecked through observer handover", () => {
+test("only watch check closes a cycle, including an older replied cycle", () => {
   const at = "2026-09-01T00:00:00.000Z", state = emptyLedger(at);
   const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;
   const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "idle" });
   const target = register("target"), first = register("first"), second = register("second");
-  run("watch.start", { target: target.id, observer: first.id, actor: first.id, intervalMs: 1000 });
+  run("watch.start", { target: target.id, observer: first.id, actor: "human", intervalMs: 1000 });
   run("tick", {}, "2026-09-01T00:00:01.000Z");
   const cycle = state.watches[target.id].cycle;
   const checkRequest = Object.values(state.requests).find((item) => item.intent.startsWith("watch:"));
-  run("request.reply", { id: checkRequest.id, body: "Observed", respondent: first.id, recordedBy: first.id });
+  assert.throws(() => run("request.reply", { id: checkRequest.id, body: "Observed", respondent: first.id, recordedBy: first.id }), { code: "conflict" });
+  assert.throws(() => run("request.cancel", { id: checkRequest.id, actor: "human" }), { code: "conflict" });
+  assert.equal(checkRequest.deliveries.length, 1, "reply cannot prompt the watched child");
+  checkRequest.status = "answered";
+  checkRequest.answeredAt = "2026-09-01T00:00:01.000Z";
+  checkRequest.answer = "older stored reply";
   assert.equal(state.watches[target.id].cycle, cycle, "reply does not check the cycle");
   run("watch.assign", { target: target.id, observer: second.id, actor: first.id, expectedGeneration: "1" });
   assert.equal(state.watches[target.id].cycle, cycle);
   assert.equal(checkRequest.deliveries.at(-1).phase, "watch_check");
   assert.equal(checkRequest.deliveries.at(-1).recipient, second.id);
-  run("tick", {}, "2026-09-01T00:00:02.000Z");
+  checkRequest.deliveries.at(-1).status = "accepted";
+  run("tick", { observedTargets: [] }, "2026-10-03T00:00:00.000Z");
+  assert.ok(state.requests[checkRequest.id], "delivery acceptance cannot prune an unchecked watch cycle");
+  assert.equal(state.watches[target.id].cycle, cycle);
+  run("tick", {}, "2026-10-03T00:00:01.000Z");
   assert.equal(Object.values(state.requests).filter((item) => item.intent.startsWith("watch:")).length, 1);
-  run("watch.check", { target: target.id, cycle, actor: second.id });
+  run("watch.check", { target: target.id, cycle, actor: second.id }, "2026-10-03T00:00:02.000Z");
   assert.equal(state.watches[target.id].cycle, null);
-  assert.equal(checkRequest.deliveries.at(-1).status, "superseded");
+  assert.equal(checkRequest.deliveries.at(-1).status, "acknowledged");
+});
+
+test("watch ownership distinguishes human handover from observer confirmation", () => {
+  const state = emptyLedger("2026-09-01T00:00:00.000Z");
+  const run = (operation, args = {}, at = "2026-09-01T00:00:00.000Z") => execute(state, operation, args, at).value;
+  const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "idle" });
+  const target = register("target"), first = register("first"), second = register("second");
+  assert.throws(() => run("watch.start", { target: target.id, observer: first.id, actor: first.id }), { code: "forbidden" });
+  run("watch.start", { target: target.id, observer: first.id, actor: "human", intervalMs: 1000 });
+  run("tick", {}, "2026-09-01T00:00:01.000Z");
+  const cycle = state.watches[target.id].cycle;
+  assert.throws(() => run("watch.check", { target: target.id, cycle, actor: "human" }), { code: "forbidden" });
+  run("watch.stop", { target: target.id, actor: "human" });
+  assert.throws(() => run("watch.start", { target: target.id, observer: second.id, actor: second.id }), { code: "forbidden" });
+  run("watch.assign", { target: target.id, observer: second.id, actor: "human", expectedGeneration: "1" });
+  assert.equal(state.watches[target.id].observer, second.id);
 });
 
 test("request intent checks the full routing policy and notify-only has no question", () => {

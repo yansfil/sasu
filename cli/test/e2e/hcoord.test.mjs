@@ -22,15 +22,16 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   if(!row){process.stderr.write(JSON.stringify({error:{code:'agent_not_found'}}));process.exitCode=1;}
   else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:row.name,agent:'codex',agent_session:{value:row.session},terminal_id:row.instance,agent_status:status,input_guard:process.env.HCOORD_FAKE_GUARD==='1'&&process.env.HCOORD_FAKE_INPUT_GUARD!=='0'?'test-guard':undefined}}}));}
 } else if(process.argv[2]==='pane' && process.argv[3]==='get') {
-  process.stdout.write(JSON.stringify({result:{type:'pane_info',pane:{workspace_id:'test-workspace',cwd:process.env.HOME}}}));
+  if(target?.endsWith('-pane') && !['parent-pane','child-pane'].includes(target) && !fs.existsSync(path.join(process.env.HOME,target.slice(0,-5)+'.tab'))){process.stderr.write('pane missing');process.exitCode=1;}
+  else process.stdout.write(JSON.stringify({result:{type:'pane_info',pane:{pane_id:target,workspace_id:'test-workspace',cwd:process.env.HOME}}}));
 } else if(process.argv[2]==='tab' && process.argv[3]==='create') {
   const label=process.argv[process.argv.indexOf('--label')+1], marker=path.join(process.env.HOME,label+'.tab');
   if(fs.existsSync(marker)){process.stderr.write('duplicate tab');process.exitCode=9;}
   else {fs.writeFileSync(marker,'1');process.stdout.write(JSON.stringify({result:{root_pane:{pane_id:label+'-pane'}}}));}
 } else if(process.argv[2]==='agent' && process.argv[3]==='start') {
   const name=process.argv[4], pane=process.argv[process.argv.indexOf('--pane')+1];
-  fs.writeFileSync(path.join(process.env.HOME,pane+'.started'),'1');
-  process.stdout.write(JSON.stringify({result:{agent:{name,pane_id:pane}}}));
+  if(process.env.HCOORD_FAKE_START_FAIL==='1'){process.stderr.write('start outcome unknown');process.exitCode=8;}
+  else {fs.writeFileSync(path.join(process.env.HOME,pane+'.started'),'1');process.stdout.write(JSON.stringify({result:{agent:{name,pane_id:pane}}}));}
 } else if(process.argv[2]==='agent' && process.argv[3]==='prompt') {
   if(process.argv[4]==='--help') process.stdout.write('Usage: herdr agent prompt <TARGET> <TEXT>'+(process.env.HCOORD_FAKE_GUARD==='1'?' --expected-input-guard <GUARD>':''));
   else if(process.env.HCOORD_FAKE_GUARD==='1' && process.argv[process.argv.indexOf('--expected-input-guard')+1]==='test-guard') {
@@ -106,7 +107,11 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   const sasuArgs = ["sasu", "register", "--run", "run-one", "--project", home, "--observer-name", "parent", "--observer-pane", "parent-pane", "--observer-session", "one", "--observer-instance", "a", "--implementor-name", "child", "--implementor-pane", "child-pane", "--implementor-session", "two", "--implementor-instance", "b"];
   await stop();
   env.HCOORD_FAKE_INPUT_GUARD = "0";
+  fs.writeFileSync(path.join(home, ".hcoord", "api.sock.lock"), "99999999\n");
+  fs.mkdirSync(path.join(home, ".hcoord", "api.sock.lock.recovery"));
+  fs.writeFileSync(path.join(home, ".hcoord", "api.sock.lock.recovery", "owner"), "99999999\n");
   await start();
+  assert.equal(ok("daemon", "status").stale, undefined, "abandoned lock recovery does not block restart");
   assert.equal(command(...sasuArgs).status, 1, "exact Observer guard is required even when the prompt flag exists");
   assert.equal(ok("status").counts.sasuRuns, 0);
   await stop();
@@ -118,17 +123,22 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(ok("status").counts.sasuRuns, 1);
   assert.ok(ok("status").usage.ledgerBytes > 0);
   ok("config", "set", "--key", "remindMs", "--value", "1s");
-  ok("config", "set", "--key", "escalateMs", "--value", "2s");
+  ok("config", "set", "--key", "escalateMs", "--value", "2m");
   const relayReminder = ok("request", "send", "--from", child.id, "--to", "human", "--intermediary", parent.id, "--body", "Confirm relay", "--intent", "relay-reminder");
   ok("request", "reply", relayReminder.id, "--body", "Yes", "--as", "human");
   let reminded;
-  for (let attempt = 0; attempt < 160; attempt += 1) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     reminded = ok("request", "show", relayReminder.id);
-    if (reminded.deliveries.some((delivery) => delivery.phase === "relay_problem" && delivery.recipient === parent.id && delivery.status === "accepted") &&
-        reminded.deliveries.some((delivery) => delivery.phase === "relay_problem" && delivery.recipient === "human" && delivery.status === "accepted")) break;
+    if (reminded.deliveries.some((delivery) => delivery.phase === "relay_problem" && delivery.recipient === parent.id && delivery.status === "accepted")) break;
     await wait(100);
   }
   assert.equal(reminded.deliveries.some((delivery) => delivery.phase === "relay_problem" && delivery.recipient === parent.id && delivery.status === "accepted"), true, "parent receives the 15-minute policy reminder on a shortened test clock");
+  ok("config", "set", "--key", "escalateMs", "--value", "1s");
+  for (let attempt = 0; attempt < 300; attempt += 1) {
+    reminded = ok("request", "show", relayReminder.id);
+    if (reminded.deliveries.some((delivery) => delivery.phase === "relay_problem" && delivery.recipient === "human" && delivery.status === "accepted")) break;
+    await wait(100);
+  }
   assert.equal(reminded.deliveries.some((delivery) => delivery.phase === "relay_problem" && delivery.recipient === "human" && delivery.status === "accepted"), true, "human receives the relay escalation on a shortened test clock");
   ok("request", "relay", relayReminder.id, "--actor", parent.id, "--body", "Yes");
   ok("config", "set", "--key", "remindMs", "--value", "15m");
@@ -146,6 +156,33 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   const unobserved = ok("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "solo", "--intent", "spawn-2", "--no-watch");
   assert.equal(unobserved.watch, null);
   assert.equal(ok("graph").creation.find((edge) => edge.child === unobserved.participant.id).parent, parent.id);
+  await stop();
+  env.HCOORD_FAKE_START_FAIL = "1";
+  await start();
+  const partialArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "partial", "--intent", "partial-start"];
+  const partial = JSON.parse(command(...partialArgs).stdout);
+  assert.equal(partial.error.code, "spawn_uncertain");
+  assert.equal(partial.error.detail.pane, "partial-pane");
+  assert.equal(partial.error.detail.unfinishedStep, "agent_start");
+  assert.equal(JSON.parse(command(...partialArgs).stdout).error.code, "spawn_uncertain", "retry does not repeat an uncertain start");
+  await stop();
+  delete env.HCOORD_FAKE_START_FAIL;
+  await start();
+  const resumed = ok(...partialArgs, "--resume-start");
+  assert.equal(resumed.intent.pane, "partial-pane");
+  assert.equal(fs.readFileSync(path.join(home, "partial.tab"), "utf8"), "1", "resume reuses the original pane");
+  await stop();
+  const ledgerFile = path.join(home, ".hcoord", "ledger.json");
+  const interrupted = JSON.parse(fs.readFileSync(ledgerFile, "utf8"));
+  interrupted.spawnIntents["reconcile-1"] = { ...resumed.intent, key: "reconcile-1", name: "reconciled", status: "unknown", pane: null, participant: null, reason: "pane recording interrupted" };
+  fs.writeFileSync(ledgerFile, `${JSON.stringify(interrupted)}\n`);
+  fs.writeFileSync(path.join(home, "reconciled.tab"), "1");
+  await start();
+  const reconcileArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "reconciled", "--intent", "reconcile-1"];
+  assert.equal(JSON.parse(command(...reconcileArgs).stdout).error.detail.unfinishedStep, "record_pane");
+  const reconciled = ok(...reconcileArgs, "--reconcile-pane", "reconciled-pane", "--resume-start");
+  assert.equal(reconciled.intent.pane, "reconciled-pane");
+  assert.equal(fs.readFileSync(path.join(home, "reconciled.tab"), "utf8"), "1", "reconciliation does not create a second tab");
   const sent = ok("request", "send", "--from", child.id, "--to", "human", "--intermediary", parent.id, "--body", "Which option?", "--intent", "choice-1");
   assert.equal(ok("request", "send", "--from", child.id, "--to", "human", "--intermediary", parent.id, "--body", "Which option?", "--intent", "choice-1").id, sent.id);
   assert.equal(command("request", "send", "--from", child.id, "--to", "human", "--body", "Other?", "--intent", "choice-1").status, 1);
@@ -176,7 +213,8 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(adapter("reply", adapterRequest.id, "Changed answer").status, 1);
   assert.equal(ok("request", "show", adapterRequest.id).answer, "Approved A");
   ok("watch", "stop", child.id, "--actor", parent.id);
-  ok("watch", "start", child.id, "--observer", parent.id, "--interval", "1s");
+  assert.equal(JSON.parse(command("watch", "start", child.id, "--observer", parent.id, "--interval", "1s").stdout).error.code, "forbidden", "a stopped watch has no active owner to restart it");
+  ok("watch", "start", child.id, "--observer", parent.id, "--actor", "human", "--interval", "1s");
   assert.equal(ok("graph").watch.filter((item) => item.target === child.id).length, 2);
   fs.writeFileSync(path.join(home, "child-pane.status"), "done");
   let watch;

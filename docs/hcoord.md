@@ -16,9 +16,13 @@ The service reserves an unknown outcome before sending external input and never 
 Register an existing exact Herdr pane with `hcoord agent register --machine local --session <session> --instance <terminal-id> --pane <pane-id> --name <name>`.
 Use the returned participant ID in `hcoord agent spawn --parent <id> --machine local --session <session> --name worker --intent <stable-key> -- <Herdr agent-start args>`.
 The spawn intent must remain the same on retry; an uncertain tab or start requires inspection of the saved pane before a new external effect.
+If the pane ID was saved but agent start remains uncertain, inspect that pane and retry the same spawn with `--resume-start`.
+If tab creation returned a pane ID but saving it failed, repair the reported storage problem, inspect that pane, and retry the same intent with `--reconcile-pane <pane-id> --resume-start`.
 `--no-watch` skips automatic watch assignment while preserving creation lineage and explicit requests.
 `hcoord agent list --json`, `hcoord watch list --json`, `hcoord graph --json`, and `hcoord events --follow` provide discovery and IDE data.
 `--project` filters a list and does not confer watch authority.
+Only the assigned observer can confirm a watch cycle with `watch check`; `request reply` cannot close a watch request or prompt the watched child.
+A human can assign an unowned or stopped watch, while the recorded parent may start its own child's first watch.
 
 ## Human answer and delivery
 

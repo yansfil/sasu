@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_BODY_BYTES, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, own, put, validateSpawnSpec, type Delivery, type Ledger, type Participant, type Request, type Watch } from "./model";
+import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, own, put, validateSpawnSpec, type Delivery, type Ledger, type Participant, type Request, type Watch } from "./model";
 
 type Args = Record<string, unknown>;
 export interface Outcome { value: unknown; changed: boolean }
@@ -40,13 +40,17 @@ const integerMs = (args: Args, key: string): number => {
 };
 const timed = (at: string, ms: number): string => new Date(Date.parse(at) + ms).toISOString();
 const pendingRelay = (item: Request): boolean => item.status === "answered" && item.intermediary !== null && item.relayBody === null;
-const terminalRequest = (item: Request): boolean => item.status === "canceled" || (item.status === "answered" && !pendingRelay(item) && item.deliveries.every((delivery) => {
+const uncheckedWatchRequest = (state: Ledger, item: Request): boolean => {
+  const watch = own(state.watches, item.from);
+  return watch?.cycle !== null && watch !== undefined && item.intent.startsWith(`watch:${watch.target}:`) && item.intent.endsWith(`:${watch.cycle}`);
+};
+const terminalRequest = (state: Ledger, item: Request): boolean => !uncheckedWatchRequest(state, item) && (item.status === "canceled" || (item.status === "answered" && !pendingRelay(item) && item.deliveries.every((delivery) => {
   const phase = delivery.phase ?? "request";
   return phase === "request" ? ["accepted", "acknowledged", "failed", "superseded"].includes(delivery.status)
     : phase === "delivery_problem" || phase === "relay_problem" || phase === "watch_check" ? ["accepted", "acknowledged", "superseded"].includes(delivery.status)
     : delivery.status === "acknowledged" || delivery.status === "superseded";
 }))
-  || (!item.requiresReply && item.deliveries.length > 0 && item.deliveries.every((delivery) => delivery.status === "accepted" || delivery.status === "acknowledged"));
+  || (!item.requiresReply && item.deliveries.length > 0 && item.deliveries.every((delivery) => delivery.status === "accepted" || delivery.status === "acknowledged")));
 const queueDelivery = (item: Request, recipient: string, at: string, phase: Delivery["phase"] = "request"): Delivery => {
   const delivery: Delivery = { id: id("d"), requestId: item.id, recipient, phase, status: "pending", reason: null, reservedAt: at, attemptedAt: null, acceptedAt: null, acknowledgedAt: null, runtimeCode: null };
   item.deliveries.push(delivery);
@@ -64,7 +68,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
   if (operation === "status") return { changed: false, value: {
     schema: state.schema, at, lastUpdatedAt: state.updatedAt, eventCursor: state.seq, counts: {
       agents: Object.keys(state.participants).length, watches: Object.values(state.watches).filter((w) => w.status === "active").length,
-      requests: Object.values(state.requests).filter((r) => !terminalRequest(r)).length, events: state.events.length, sasuRuns: Object.keys(state.sasuRuns).length,
+      requests: Object.values(state.requests).filter((r) => !terminalRequest(state, r)).length, events: state.events.length, sasuRuns: Object.keys(state.sasuRuns).length,
     }, caps: { agents: MAX_AGENTS, requests: MAX_REQUESTS, spawnIntents: MAX_SPAWN_INTENTS, watchHistory: MAX_WATCH_HISTORY, events: 20000, ledgerBytes: 64 * 1024 * 1024, messageBytes: MAX_MESSAGE_BYTES, connections: 64, queuedOperations: MAX_QUEUE }, config: state.config,
   } };
   if (operation === "config.set") {
@@ -110,6 +114,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     }
     if (Object.keys(state.participants).length >= MAX_AGENTS) throw new HcoordError("capacity", `participant limit ${MAX_AGENTS} reached`);
     if (Object.keys(state.spawnIntents).length >= MAX_SPAWN_INTENTS) throw new HcoordError("capacity", `spawn intent limit ${MAX_SPAWN_INTENTS} reached; uncertain outcomes remain inspectable`);
+    if (MAX_EVENTS - state.events.length < 4) throw new HcoordError("capacity", "event history has insufficient room for a complete spawn; resolve retention before creating a pane");
     const record = { key, parent: parent.id, machine, hostScope: parent.hostScope, session, name, kind, nativeArgs, noWatch: args["noWatch"] === true, status: "reserved" as const, pane: null, participant: null, reason: null, at };
     put(state.spawnIntents, key, record);
     event(state, at, "agent.spawn_reserved", parent.id, key);
@@ -179,7 +184,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const previous = own(state.watches, target.id);
     const actor = required(args, "actor");
     if (previous?.status === "active") authority(actor, [previous.observer]);
-    else if (operation === "watch.assign" && actor !== "human") throw new HcoordError("forbidden", "a missing observer can be assigned only by a human");
+    else if (actor !== "human" && !(operation === "watch.start" && previous === undefined && target.parent === actor && observer.id === actor)) throw new HcoordError("forbidden", "a missing observer can be assigned only by a human, except a parent starting its own child's first watch");
     if (operation === "watch.start" && previous?.status === "active") throw new HcoordError("conflict", "watch is already active; use watch assign with its current generation");
     if (operation === "watch.assign" && previous?.status === "active" && previous.observer === observer.id) throw new HcoordError("conflict", "the observer is unchanged; inspect the active watch instead");
     const expected = optional(args, "expectedGeneration");
@@ -218,7 +223,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const target = required(args, "target"), actor = required(args, "actor"), cycle = required(args, "cycle");
     const watch = own(state.watches, target);
     if (!watch || watch.status !== "active") throw new HcoordError("not_found", "active watch does not exist");
-    authority(actor, [watch.observer]);
+    if (actor !== watch.observer) throw new HcoordError("forbidden", "only the assigned observer can confirm this watch cycle");
     if (watch.cycle !== cycle) throw new HcoordError("conflict", "cycle is not the current unchecked cycle", { currentCycle: watch.cycle });
     const checkRequest = watchRequest(state, watch);
     watch.checkedAt = at; watch.cycle = null; watch.dueAt = timed(at, watch.intervalMs);
@@ -265,6 +270,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
   }
   if (operation === "request.reply") {
     const item = request(state, required(args, "id")), answer = body(args), respondent = required(args, "respondent"), recordedBy = required(args, "recordedBy");
+    if (uncheckedWatchRequest(state, item)) throw new HcoordError("conflict", "watch requests require the assigned observer's watch check; reply cannot close a cycle");
     if (respondent !== "human") person(state, respondent);
     if (recordedBy !== "human") person(state, recordedBy);
     if (respondent !== item.to && !(respondent === "human" && item.escalatedAt !== null)) throw new HcoordError("forbidden", "reply must name the assigned recipient or an escalated human");
@@ -302,6 +308,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
   if (operation === "request.cancel") {
     const item = request(state, required(args, "id"));
     authority(required(args, "actor"), [item.from]);
+    if (uncheckedWatchRequest(state, item) && own(state.watches, item.from)?.status === "active") throw new HcoordError("conflict", "an active watch cycle cannot be canceled as a question; use watch check, stop, or assign");
     if (item.status === "canceled") return { changed: false, value: item };
     if (item.status === "answered") throw new HcoordError("conflict", "answered request cannot be canceled");
     item.status = "canceled"; item.canceledAt = at;
@@ -356,12 +363,12 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (args["runRetention"] !== false) {
       const before = Date.parse(at) - state.config.retentionMs;
       for (const [key, item] of Object.entries(state.requests)) {
-        if (terminalRequest(item) && Date.parse(item.answeredAt ?? item.canceledAt ?? item.createdAt) < before) { delete state.requests[key]; state.prunedBefore = at; changed = true; }
+        if (terminalRequest(state, item) && Date.parse(item.answeredAt ?? item.canceledAt ?? item.createdAt) < before) { delete state.requests[key]; state.prunedBefore = at; changed = true; }
       }
       const requestRefs = new Set<string>(), unresolvedRefs = new Set<string>();
       for (const item of Object.values(state.requests)) for (const agent of [item.from, item.to, item.intermediary]) if (agent !== null && agent !== "human") {
         requestRefs.add(agent);
-        if (!terminalRequest(item)) unresolvedRefs.add(agent);
+        if (!terminalRequest(state, item)) unresolvedRefs.add(agent);
       }
       for (const [key, watch] of Object.entries(state.watches)) if (watch.status === "stopped" && watch.stoppedAt !== null && Date.parse(watch.stoppedAt) < before && !unresolvedRefs.has(key) && (watch.observer === null || !unresolvedRefs.has(watch.observer))) { delete state.watches[key]; state.prunedBefore = at; changed = true; }
       const history = state.watchHistory.filter((watch) => watch.stoppedAt === null || Date.parse(watch.stoppedAt) >= before || unresolvedRefs.has(watch.target) || (watch.observer !== null && unresolvedRefs.has(watch.observer)));
