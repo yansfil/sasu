@@ -234,8 +234,10 @@ test("a stopped older answered cycle remains available for explicit checking", (
   checkRequest.status = "answered";
   checkRequest.answeredAt = "2026-09-01T00:00:01.000Z";
   checkRequest.answer = "older stored reply";
+  checkRequest.respondent = "human";
+  checkRequest.intermediary = observer.id;
   checkRequest.deliveries[0].status = "accepted";
-  for (const status of ["pending", "deferred", "unknown"]) checkRequest.deliveries.push({ ...checkRequest.deliveries[0], id: `legacy-answer-${status}`, recipient: target.id, phase: "answer", status, reason: status === "unknown" ? "old answer outcome unknown" : null });
+  for (const status of ["pending", "deferred", "unknown", "accepted"]) checkRequest.deliveries.push({ ...checkRequest.deliveries[0], id: `legacy-answer-${status}`, recipient: target.id, phase: "answer", status, reason: status === "unknown" ? "old answer outcome unknown" : null });
   run("watch.stop", { target: target.id, actor: "human" }, "2026-09-01T00:00:02.000Z");
   run("tick", { observedTargets: [] }, "2026-10-03T00:00:00.000Z");
   assert.ok(state.requests[checkRequest.id]);
@@ -247,11 +249,39 @@ test("a stopped older answered cycle remains available for explicit checking", (
   assert.equal(checkRequest.deliveries.find((delivery) => delivery.id === "legacy-answer-deferred").status, "superseded");
   assert.equal(checkRequest.deliveries.find((delivery) => delivery.id === "legacy-answer-unknown").status, "unknown");
   assert.equal(checkRequest.deliveries.find((delivery) => delivery.id === "legacy-answer-unknown").actionClosedAt, "2026-10-03T00:00:02.000Z");
+  assert.equal(checkRequest.deliveries.find((delivery) => delivery.id === "legacy-answer-accepted").status, "accepted");
+  assert.equal(checkRequest.deliveries.find((delivery) => delivery.id === "legacy-answer-accepted").actionClosedAt, "2026-10-03T00:00:02.000Z");
   assert.equal(run("inbox").some((item) => item.requestId === checkRequest.id), false);
+  assert.throws(() => run("request.relay", { id: checkRequest.id, actor: observer.id, body: "Late relay" }), { code: "conflict" });
   run("tick", { observedTargets: [] }, "2026-10-03T00:00:03.000Z");
   assert.ok(state.requests[checkRequest.id], "actual watch check starts the resolution retention window");
   run("tick", { observedTargets: [] }, "2026-11-05T00:00:00.000Z");
   assert.equal(state.requests[checkRequest.id], undefined);
+});
+
+test("a checked older relayed cycle schedules no new delivery reminders", () => {
+  const at = "2026-09-01T00:00:00.000Z", state = emptyLedger(at);
+  const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;
+  const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "idle" });
+  const target = register("target"), observer = register("observer");
+  run("watch.start", { target: target.id, observer: observer.id, actor: "human", intervalMs: 1000 });
+  run("tick", {}, "2026-09-01T00:00:01.000Z");
+  const cycle = state.watches[target.id].cycle;
+  const checkRequest = Object.values(state.requests).find((item) => item.intent.startsWith("watch:"));
+  checkRequest.status = "answered";
+  checkRequest.answeredAt = "2026-09-01T00:00:01.000Z";
+  checkRequest.answer = "older stored reply";
+  checkRequest.intermediary = observer.id;
+  checkRequest.relayBody = "older relay";
+  checkRequest.relayAt = "2026-09-01T00:00:02.000Z";
+  checkRequest.deliveries.push({ ...checkRequest.deliveries[0], id: "legacy-relay", phase: "relay", recipient: target.id, status: "pending" });
+  run("watch.stop", { target: target.id, actor: "human" });
+  run("watch.start", { target: target.id, observer: observer.id, actor: "human" });
+  run("watch.check", { target: target.id, cycle, actor: observer.id }, "2026-09-01T00:00:03.000Z");
+  assert.equal(checkRequest.deliveries.find((delivery) => delivery.id === "legacy-relay").status, "superseded");
+  run("tick", { observedTargets: [] }, "2026-09-01T01:00:00.000Z");
+  assert.equal(checkRequest.deliveries.some((delivery) => delivery.phase === "delivery_problem"), false);
+  assert.equal(run("inbox").some((item) => item.requestId === checkRequest.id), false);
 });
 
 test("a stopped watch can release its canceled request and relation after retention", () => {

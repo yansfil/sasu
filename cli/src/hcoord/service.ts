@@ -39,7 +39,7 @@ const integerMs = (args: Args, key: string): number => {
   return number;
 };
 const timed = (at: string, ms: number): string => new Date(Date.parse(at) + ms).toISOString();
-const pendingRelay = (item: Request): boolean => item.status === "answered" && item.intermediary !== null && item.relayBody === null;
+const pendingRelay = (item: Request): boolean => item.status === "answered" && item.intermediary !== null && item.relayBody === null && !item.watchCheckedAt;
 const legacyWatchIntent = (watch: Watch, item: Request): boolean => {
   const parts = item.intent.split(":");
   return item.from === watch.target && parts.length === 4 && parts[0] === "watch" && parts[1] === watch.target && /^\d+$/.test(parts[2] ?? "") && parts[3] === watch.cycle;
@@ -251,7 +251,8 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     for (const delivery of checkRequest.deliveries) {
       const phase = delivery.phase ?? "request";
       if (phase === "watch_check" && delivery.recipient === actor && delivery.status === "accepted") { delivery.status = "acknowledged"; delivery.acknowledgedAt = at; }
-      else if (delivery.status === "unknown" || delivery.status === "failed") { const prior = delivery.reason ?? `prior delivery ${delivery.status}`; delivery.actionClosedAt = at; delivery.reason = `${prior}; watch cycle checked, no further submission needed`; }
+      else if (delivery.status === "unknown" || delivery.status === "failed") { const prior = delivery.reason ?? `prior delivery ${delivery.status}`; delivery.reason = `${prior}; watch cycle checked, no further submission needed`; }
+      delivery.actionClosedAt = at;
     }
     event(state, at, "watch.checked", target, cycle, { observer: watch.observer });
     return { changed: true, value: watch };
@@ -317,6 +318,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const item = request(state, required(args, "id")), actor = required(args, "actor"), relay = body(args);
     authority(actor, [item.intermediary]);
     if (item.status !== "answered") throw new HcoordError("conflict", "only an answered request may be relayed");
+    if (item.watchCheckedAt) throw new HcoordError("conflict", "watch cycle was checked; its old answer no longer needs relay");
     if (item.intermediary === null) throw new HcoordError("conflict", "request has no intermediary to relay its answer");
     if (item.relayBody !== null) {
       if (item.relayBody !== relay) throw new HcoordError("conflict", "a different relay is already recorded");
@@ -465,7 +467,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
           event(state, at, "request.relay_reminded", item.id, item.intent);
         }
       }
-      if (item.status === "answered" && item.relayBody !== null && item.relayAt !== null && item.deliveries.some((delivery) => delivery.phase === "relay" && delivery.status !== "acknowledged")) {
+      if (item.status === "answered" && !item.watchCheckedAt && item.relayBody !== null && item.relayAt !== null && item.deliveries.some((delivery) => delivery.phase === "relay" && delivery.status !== "acknowledged")) {
         const age = Date.parse(at) - Date.parse(item.relayAt);
         if (age >= state.config.remindMs && !item.deliveryRemindedAt) {
           item.deliveryRemindedAt = at; reminders += 1; changed = true;
