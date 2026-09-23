@@ -26,10 +26,12 @@ The spawn intent must remain the same on retry; an uncertain tab or start requir
 The notification carries only the request ID; the human opens `hcoord inbox` and `hcoord request show <id>` to read the question.
 `hcoord request reply <id> --as human --body 'A로 진행'` records the literal answer with respondent and recorder separated.
 An agent that records a human reply supplies `--recorded-by <agent-id>` and must use the ID of the request the human actually answered.
-The parent uses `hcoord request relay <id> --actor <parent-id> --body 'A로 진행'`, and the child uses `hcoord request ack <id> --actor <child-id>` after accepting delivery.
+The parent uses `hcoord request relay <id> --actor <parent-id> --body 'A로 진행'`, and the child uses `hcoord request ack <id> --actor <child-id> --delivery <delivery-id>` after accepting delivery.
+When one recipient receives several phases of a request, `--delivery` identifies the exact receipt; without it the command acknowledges the newest accepted delivery.
 Answer, relay, delivery acceptance, acknowledgment, and task success remain separate facts.
 `request cancel` stops future reminders and unsent delivery; a late reply remains in history without reopening the request.
 An unresolved relay or delivery problem stays visible in `hcoord inbox` with a next action.
+If the child has not acknowledged a relayed answer, the parent gets one reminder after 15 minutes and the human inbox receives a delivery problem after 30 minutes.
 
 The executable [channel adapter example](../examples/hcoord/channel-adapter.mjs) accepts `notify`, `notify-only`, and `reply` with the same request ID.
 An external provider may feed its event notification to `notify` and its authenticated callback to `reply`; the example does not install a provider or store credentials.
@@ -38,7 +40,8 @@ Duplicate answers fail without overwriting the first, a canceled request records
 
 ## Sasu transition and support
 
-`hcoord sasu enable` opts new Sasu dispatches into coordinator registration after the daemon is running.
+`hcoord sasu enable` opts new Sasu dispatches into coordinator registration only when the daemon is running and Herdr advertises guarded prompt support.
+Each dispatch also checks the exact Observer's input guard before a child is created; an unavailable guard refuses the hcoord-owned run.
 An existing run keeps its legacy supervisor owner; Sasu dispatch pins each new run's owner before creating the child and refuses fallback if the selected coordinator is unavailable.
 This work does not enable the marker or touch the live supervisor automatically.
 The legacy supervisor must remain installed while any legacy run is active.

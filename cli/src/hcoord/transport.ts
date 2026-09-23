@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
-import { API_VERSION, HcoordError, MAX_CONNECTIONS, type Ledger } from "./model";
+import { API_VERSION, HcoordError, MAX_CONNECTIONS, MAX_QUEUE, own, put, type Ledger } from "./model";
 import { event } from "./model";
 import { execute } from "./service";
-import { createSpawnPane, discoverLocalAgents, inspectDelivery, inspectSpawnedAgent, parentPlacement, startSpawnedAgent, submitGuarded, validateLocalBinding } from "./herdr";
+import { createSpawnPane, discoverLocalAgents, guardedDeliveryAvailable, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, startSpawnedAgent, submitGuarded, validateLocalBinding } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
 import { notifyHuman } from "./platform";
@@ -52,15 +52,38 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
   fs.chmodSync(dataDir(home), 0o700);
   let ledger = loadLedger(home);
   const socketFile = socketPath(home);
+  const lockFile = `${socketFile}.lock`;
+  let lockOwned = false, socketOwned = false;
+  const acquireLock = (): void => {
+    try { fs.writeFileSync(lockFile, `${process.pid}\n`, { flag: "wx", mode: 0o600 }); lockOwned = true; return; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+    const recovery = `${lockFile}.recovery`;
+    try { fs.mkdirSync(recovery, { mode: 0o700 }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new HcoordError("startup_in_progress", "another daemon is starting or recovering; retry after it finishes"); throw error; }
+    try {
+      const pid = Number(fs.readFileSync(lockFile, "utf8").trim());
+      if (Number.isSafeInteger(pid) && pid > 0) {
+        try { process.kill(pid, 0); throw new HcoordError("already_running", "coordinator daemon is running or starting"); }
+        catch (error) { if (!(error instanceof HcoordError) && (error as NodeJS.ErrnoException).code !== "ESRCH") throw error; if (error instanceof HcoordError) throw error; }
+      }
+      fs.unlinkSync(lockFile);
+      fs.writeFileSync(lockFile, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
+      lockOwned = true;
+    } finally { fs.rmdirSync(recovery); }
+  };
+  acquireLock();
+  try {
   if (fs.existsSync(socketFile)) {
     try { await callDaemon("status", {}, home); throw new HcoordError("already_running", "coordinator daemon is already running"); }
     catch (error) { if (!(error instanceof HcoordError) || error.code !== "daemon_down") throw error; }
     fs.unlinkSync(socketFile);
   }
   let connections = 0;
+  let queuedOperations = 0;
   let processing = Promise.resolve();
   let tickPending = false;
   let closing = false;
+  let lastRetentionAt = 0;
   const commit = (operation: string, args: Record<string, unknown>, at: string): unknown => {
     const next = structuredClone(ledger);
     const outcome = execute(next, operation, args, at);
@@ -92,17 +115,19 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
   const registerSasuRun = (args: Record<string, unknown>, at: string): unknown => {
     const run = String(args["run"] ?? ""), project = String(args["project"] ?? "");
     if (run === "" || project === "") throw new HcoordError("invalid_argument", "run and project are required");
-    const observerBinding = validateLocalBinding("local", String(args["observerSession"] ?? ""), String(args["observerInstance"] ?? ""), String(args["observerPane"] ?? ""), String(args["observerHostScope"] ?? "default"));
-    const implementorBinding = validateLocalBinding("local", String(args["implementorSession"] ?? ""), String(args["implementorInstance"] ?? ""), String(args["implementorPane"] ?? ""), String(args["implementorHostScope"] ?? "default"));
+    const observerBinding = validateLocalBinding("local", String(args["observerSession"] ?? ""), String(args["observerInstance"] ?? ""), String(args["observerPane"] ?? ""), String(args["observerHostScope"] ?? "default"), String(args["observerName"] ?? ""));
+    const implementorBinding = validateLocalBinding("local", String(args["implementorSession"] ?? ""), String(args["implementorInstance"] ?? ""), String(args["implementorPane"] ?? ""), String(args["implementorHostScope"] ?? "default"), String(args["implementorName"] ?? ""));
+    const observerCapability = guardedDeliveryAvailable({ machine: "local", hostScope: String(args["observerHostScope"] ?? "default"), session: String(args["observerSession"] ?? ""), instance: String(args["observerInstance"] ?? ""), pane: String(args["observerPane"] ?? "") });
+    if (!observerCapability.ready) throw new HcoordError("unsupported_runtime", `Sasu Observer wake cannot use guarded delivery: ${observerCapability.reason}`);
     const next = structuredClone(ledger);
     const observer = execute(next, "agent.register", { machine: "local", hostScope: args["observerHostScope"], session: args["observerSession"], instance: args["observerInstance"], name: args["observerName"], pane: args["observerPane"], project, runtime: observerBinding.runtime }, at).value as { id: string };
     const implementor = execute(next, "agent.register", { machine: "local", hostScope: args["implementorHostScope"], session: args["implementorSession"], instance: args["implementorInstance"], name: args["implementorName"], pane: args["implementorPane"], project, parent: observer.id, runtime: implementorBinding.runtime }, at).value as { id: string };
-    const prior = next.sasuRuns[run];
+    const prior = own(next.sasuRuns, run);
     if (prior && (prior.observer !== observer.id || prior.implementor !== implementor.id || prior.project !== project)) throw new HcoordError("intent_conflict", "Sasu run is already bound to another execution", { run });
     const current = next.watches[implementor.id];
     if (current?.status === "active" && current.observer !== observer.id) throw new HcoordError("conflict", "Sasu implementor has another active observer");
     const watch = current?.status === "active" ? current : execute(next, "watch.start", { target: implementor.id, observer: observer.id, actor: "human" }, at).value;
-    if (!prior) next.sasuRuns[run] = { observer: observer.id, implementor: implementor.id, project, registeredAt: at };
+    if (!prior) put(next.sasuRuns, run, { observer: observer.id, implementor: implementor.id, project, registeredAt: at });
     saveLedger(next, home); ledger = next;
     return { run, observer, implementor, watch, owner: "hcoord" };
   };
@@ -113,6 +138,14 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
       for (const delivery of item.deliveries) {
         if (examined >= 1) return;
         if (delivery.status !== "pending" && delivery.status !== "deferred") continue;
+        if (item.status === "answered" && (delivery.phase ?? "request") === "request") {
+          const next = structuredClone(ledger);
+          const current = next.requests[item.id]!.deliveries.find((entry) => entry.id === delivery.id)!;
+          current.status = "superseded";
+          current.reason = "original request was answered before submission";
+          saveLedger(next, home); ledger = next;
+          continue;
+        }
         if (delivery.attemptedAt !== null && Date.now() - Date.parse(delivery.attemptedAt) < 5000) continue;
         examined += 1;
         if (delivery.recipient === "human") {
@@ -133,7 +166,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
           saveLedger(finished, home); ledger = finished;
           continue;
         }
-        const recipient = ledger.participants[delivery.recipient];
+        const recipient = own(ledger.participants, delivery.recipient);
         if (!recipient) {
           const next = structuredClone(ledger);
           const current = next.requests[item.id]!.deliveries.find((entry) => entry.id === delivery.id)!;
@@ -145,7 +178,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
         const at = new Date().toISOString();
         const next = structuredClone(ledger);
         const current = next.requests[item.id]!.deliveries.find((entry) => entry.id === delivery.id)!;
-        const target = next.participants[delivery.recipient]!;
+        const target = own(next.participants, delivery.recipient)!;
         const inspection = inspectDelivery(recipient);
         current.attemptedAt = at;
         target.runtime = inspection.runtime;
@@ -178,12 +211,19 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     if (connections > MAX_CONNECTIONS) { socket.end(`${JSON.stringify({ ok: false, error: { code: "capacity", message: `connection limit ${MAX_CONNECTIONS} reached` }, observedAt: new Date().toISOString() })}\n`); connections -= 1; return; }
     socket.setTimeout(35_000, () => socket.destroy());
     let input = "";
+    let received = false;
     socket.on("close", () => { connections -= 1; });
     socket.on("data", (chunk: Buffer) => {
+      if (received) return;
       input += chunk.toString("utf8");
       if (Buffer.byteLength(input) > MAX_MESSAGE_BYTES) { socket.destroy(); return; }
       const newline = input.indexOf("\n");
       if (newline < 0) return;
+      if (input.slice(newline + 1).trim() !== "") { socket.end(`${JSON.stringify({ ok: false, error: { code: "protocol", message: "one request per connection is allowed" }, observedAt: new Date().toISOString() })}\n`); return; }
+      received = true;
+      socket.pause();
+      if (queuedOperations >= MAX_QUEUE) { socket.end(`${JSON.stringify({ ok: false, error: { code: "capacity", message: `queued operation limit ${MAX_QUEUE} reached` }, observedAt: new Date().toISOString() })}\n`); return; }
+      queuedOperations += 1;
       const line = input.slice(0, newline);
       input = "";
       processing = processing.then(async () => {
@@ -198,15 +238,15 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
             result = { ok: true, value: { stopped: true }, observedAt: at };
             closing = true;
           } else {
-            if (decoded.operation.startsWith("agent.spawn.") || decoded.operation === "tick") throw new HcoordError("forbidden", "operation is daemon-internal");
+            if (decoded.operation.startsWith("agent.spawn.") || decoded.operation === "tick" || decoded.operation === "agent.observe") throw new HcoordError("forbidden", "operation is daemon-internal");
             if (decoded.operation === "agent.register") {
-              const binding = validateLocalBinding(String(decoded.args["machine"] ?? ""), String(decoded.args["session"] ?? ""), String(decoded.args["instance"] ?? ""), typeof decoded.args["pane"] === "string" ? decoded.args["pane"] : null, String(decoded.args["hostScope"] ?? "default"));
+              const binding = validateLocalBinding(String(decoded.args["machine"] ?? ""), String(decoded.args["session"] ?? ""), String(decoded.args["instance"] ?? ""), typeof decoded.args["pane"] === "string" ? decoded.args["pane"] : null, String(decoded.args["hostScope"] ?? "default"), String(decoded.args["name"] ?? ""));
               decoded.args["runtime"] = binding.runtime;
             }
             let value = decoded.operation === "agent.spawn" ? spawnAgent(decoded.args, at) : decoded.operation === "sasu.register" ? registerSasuRun(decoded.args, at) : commit(decoded.operation, decoded.args, at);
             if (decoded.operation === "status") {
               value = { ...(value as object), usage: { ledgerBytes: fs.existsSync(ledgerPath(home)) ? fs.statSync(ledgerPath(home)).size : 0,
-                connections, queuedDeliveries: Object.values(ledger.requests).reduce((sum, item) => sum + item.deliveries.filter((delivery) => delivery.status === "pending" || delivery.status === "deferred").length, 0),
+                connections, queuedOperations, queuedDeliveries: Object.values(ledger.requests).reduce((sum, item) => sum + item.deliveries.filter((delivery) => delivery.status === "pending" || delivery.status === "deferred").length, 0),
                 uncertainSpawns: Object.values(ledger.spawnIntents).filter((intent) => intent.status === "unknown").length } };
             }
             if (decoded.operation === "agent.list") {
@@ -218,17 +258,21 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
             result = { ok: true, value, observedAt: at };
           }
         } catch (error) {
-          const reason = error instanceof HcoordError ? error : new HcoordError("internal", "coordinator operation failed; inspect daemon stderr");
-          if (!(error instanceof HcoordError)) process.stderr.write(`${JSON.stringify({ event: "hcoord.operation_failed", at, error: String(error) })}\n`);
+          const reason = error instanceof HcoordError ? error : error instanceof SyntaxError ? new HcoordError("protocol", "request JSON is invalid") : new HcoordError("internal", "coordinator operation failed; inspect daemon stderr");
+          if (!(error instanceof HcoordError)) process.stderr.write(`${JSON.stringify({ event: "hcoord.operation_failed", at, code: error instanceof SyntaxError ? "invalid_json" : "internal" })}\n`);
           result = { ok: false, error: { code: reason.code, message: reason.message, ...(reason.detail ? { detail: reason.detail } : {}) }, observedAt: at };
         }
         socket.end(`${JSON.stringify(result)}\n`);
         if (closing) server.close();
-      });
+      }).catch(() => {
+        process.stderr.write(`${JSON.stringify({ event: "hcoord.operation_failed", at: new Date().toISOString(), code: "internal" })}\n`);
+        if (!socket.destroyed) socket.end(`${JSON.stringify({ ok: false, error: { code: "internal", message: "coordinator operation failed; inspect daemon log" }, observedAt: new Date().toISOString() })}\n`);
+      }).finally(() => { queuedOperations -= 1; });
     });
   });
   try {
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(socketFile, () => { server.off("error", reject); resolve(); }); });
+    socketOwned = true;
     fs.chmodSync(socketFile, 0o600);
     const onSignal = (): void => { if (!closing) { closing = true; server.close(); } };
     process.once("SIGTERM", onSignal);
@@ -236,12 +280,35 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     const timer = setInterval(() => {
       if (tickPending) return;
       tickPending = true;
-      processing = processing.then(() => { const at = new Date().toISOString(); const next: Ledger = structuredClone(ledger); const outcome = execute(next, "tick", {}, at); if (outcome.changed) { saveLedger(next, home); ledger = next; } processOutbox(); }).catch((error) => { process.stderr.write(`${JSON.stringify({ event: "hcoord.tick_failed", at: new Date().toISOString(), error: String(error) })}\n`); }).finally(() => { tickPending = false; });
+      processing = processing.then(() => {
+        const at = new Date().toISOString();
+        const next: Ledger = structuredClone(ledger);
+        const due = Object.values(next.watches).filter((watch) => watch.status === "active" && Date.parse(watch.dueAt) <= Date.parse(at)).sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt)).slice(0, 4);
+        const observedTargets: string[] = [];
+        for (const watch of due) {
+          const participant = own(next.participants, watch.target);
+          if (!participant) throw new HcoordError("corrupt_ledger", "active watch target is missing");
+          const observed = inspectParticipant(participant);
+          execute(next, "agent.observe", { id: participant.id, runtime: observed.runtime, connection: observed.connection, reason: observed.reason }, at);
+          observedTargets.push(participant.id);
+        }
+        const oldestUnwatched = Object.values(next.participants).filter((person) => person.runtime !== "done" && next.watches[person.id]?.status !== "active" && Date.parse(at) - Date.parse(person.observedAt) >= 300_000).sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt))[0];
+        if (oldestUnwatched) {
+          const observed = inspectParticipant(oldestUnwatched);
+          execute(next, "agent.observe", { id: oldestUnwatched.id, runtime: observed.runtime, connection: observed.connection, reason: observed.reason }, at);
+        }
+        const runRetention = Date.parse(at) - lastRetentionAt >= 3_600_000;
+        const outcome = execute(next, "tick", { observedTargets, runRetention }, at);
+        if (outcome.changed || observedTargets.length > 0 || oldestUnwatched) { saveLedger(next, home); ledger = next; }
+        if (runRetention) lastRetentionAt = Date.parse(at);
+        processOutbox();
+      }).catch((error) => { process.stderr.write(`${JSON.stringify({ event: "hcoord.tick_failed", at: new Date().toISOString(), code: error instanceof HcoordError ? error.code : "internal" })}\n`); }).finally(() => { tickPending = false; });
     }, 1000);
     await new Promise<void>((resolve) => server.once("close", resolve));
     clearInterval(timer);
     process.off("SIGTERM", onSignal);
     process.off("SIGINT", onSignal);
     await processing;
-  } finally { try { if (fs.existsSync(socketFile)) fs.unlinkSync(socketFile); } catch { /* report only through original error */ } }
+  } finally { try { if (socketOwned && fs.existsSync(socketFile)) fs.unlinkSync(socketFile); } catch { /* report only through original error */ } }
+  } finally { try { if (lockOwned && fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch { /* report only through original error */ } }
 }

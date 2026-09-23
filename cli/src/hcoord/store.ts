@@ -21,7 +21,16 @@ export function loadLedger(home = os.homedir()): Ledger {
   const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
   if (parsed === null || typeof parsed !== "object" || (parsed as Ledger).schema !== SCHEMA) throw new HcoordError("version_mismatch", `unsupported ledger schema; expected ${SCHEMA}`);
   const ledger = parsed as Ledger;
-  if (!Number.isSafeInteger(ledger.seq) || !Array.isArray(ledger.events) || typeof ledger.requests !== "object" || typeof ledger.participants !== "object" || typeof ledger.watches !== "object") throw new HcoordError("corrupt_ledger", "ledger structure is invalid; no data was changed");
+  const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
+  if (!Number.isSafeInteger(ledger.seq) || !Array.isArray(ledger.events) || !record(ledger.config) ||
+      !record(ledger.requests) || !record(ledger.participants) || !record(ledger.watches) ||
+      !record(ledger.spawnIntents) || (ledger.sasuRuns !== undefined && !record(ledger.sasuRuns)) ||
+      (ledger.watchHistory !== undefined && !Array.isArray(ledger.watchHistory)) ||
+      Object.values(ledger.requests).some((request) => !record(request) || !Array.isArray(request.deliveries) || !Array.isArray(request.lateAnswers)) ||
+      Object.values(ledger.watches).some((watch) => !record(watch) || typeof watch.target !== "string" || typeof watch.generation !== "number")) {
+    throw new HcoordError("corrupt_ledger", "ledger structure is invalid; no data was changed");
+  }
+  ledger.watchHistory ??= [];
   ledger.sasuRuns ??= {};
   return ledger;
 }

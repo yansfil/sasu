@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import os from "node:os";
+import { guardedPromptSupport, runHerdrCommand } from "../implement/herdr";
 import { HcoordError } from "./model";
 import { platformSupport, startDaemon } from "./platform";
 import { callDaemon, runDaemon, staleRead, type WireResult } from "./transport";
@@ -35,7 +36,6 @@ function route(args: Parsed): { operation: string; data: Record<string, unknown>
   if (topic === "config" && action === "set") return { operation: "config.set", data: { key: needed(args, "key"), value: duration(needed(args, "value")) } };
   if (topic === "agent" && action === "register") return { operation: "agent.register", data: { machine: needed(args, "machine"), hostScope: flag(args, "host-scope") ?? process.env["HERDR_SOCKET_PATH"] ?? "default", session: needed(args, "session"), instance: needed(args, "instance"), name: needed(args, "name"), project: flag(args, "project"), parent: flag(args, "parent"), pane: flag(args, "pane") } };
   if (topic === "agent" && action === "spawn") return { operation: "agent.spawn", data: { parent: needed(args, "parent"), machine: needed(args, "machine"), session: needed(args, "session"), name: needed(args, "name"), kind: flag(args, "kind") ?? "codex", intent: needed(args, "intent"), noWatch: args.flags.has("no-watch"), nativeArgs: args.tail } };
-  if (topic === "agent" && action === "observe") return { operation: "agent.observe", data: { id: target, runtime: needed(args, "runtime"), connection: needed(args, "connection") } };
   if (topic === "agent" && action === "list") return { operation: "agent.list", data: { project: flag(args, "project") } };
   if (topic === "agent" && action === "show") return { operation: "agent.show", data: { id: target } };
   if (topic === "watch" && action === "start") return { operation: "watch.start", data: { target, observer: needed(args, "observer"), actor: flag(args, "actor") ?? needed(args, "observer"), intervalMs: flag(args, "interval") ? duration(needed(args, "interval")) : undefined } };
@@ -47,7 +47,7 @@ function route(args: Parsed): { operation: string; data: Record<string, unknown>
   if (topic === "request" && action === "show") return { operation: "request.show", data: { id: target } };
   if (topic === "request" && action === "reply") return { operation: "request.reply", data: { id: target, body: needed(args, "body"), respondent: needed(args, "as"), recordedBy: flag(args, "recorded-by") ?? needed(args, "as") } };
   if (topic === "request" && action === "relay") return { operation: "request.relay", data: { id: target, body: needed(args, "body"), actor: needed(args, "actor") } };
-  if (topic === "request" && action === "ack") return { operation: "request.ack", data: { id: target, actor: needed(args, "actor") } };
+  if (topic === "request" && action === "ack") return { operation: "request.ack", data: { id: target, actor: needed(args, "actor"), delivery: flag(args, "delivery") } };
   if (topic === "request" && action === "cancel") return { operation: "request.cancel", data: { id: target, actor: needed(args, "actor") } };
   if (topic === "request" && action === "escalate") return { operation: "request.escalate", data: { id: target, actor: needed(args, "actor") } };
   if (topic === "inbox") return { operation: "inbox", data: {} };
@@ -73,6 +73,8 @@ export async function main(argv: string[]): Promise<number> {
     if (args.words[0] === "sasu" && args.words[1] === "enable") {
       const status = await callDaemon("status");
       if (!status.ok) { print(status, json); return 1; }
+      const capability = guardedPromptSupport({ run: (command) => runHerdrCommand(command, 2000) });
+      if (capability.supported !== true) throw new HcoordError("unsupported_runtime", "Herdr guarded agent delivery is unsupported or unconfirmed; Sasu transition remains disabled");
       fs.mkdirSync(dataDir(), { recursive: true, mode: 0o700 });
       fs.writeFileSync(sasuEnabledPath(), `${new Date().toISOString()}\n`, { mode: 0o600 });
       print({ ok: true, value: { enabled: true, newRunsOnly: true, existingRuns: "legacy supervisor retains ownership" }, observedAt: new Date().toISOString() }, json);

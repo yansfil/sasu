@@ -26,6 +26,7 @@ import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest } from "../supervisor/digest";
 import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
 import { sasuEnabledPath } from "../hcoord/store";
+import { guardedDeliveryAvailable } from "../hcoord/herdr";
 import { DispatchRejected, assertDispatchablePrd, assertNotImplementor, dispatchImplementor, parseEnvPairs, placementFor } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
@@ -49,9 +50,11 @@ function hcoordCommand(argv: string[]): Record<string, unknown> {
   catch { throw new DispatchRejected("hcoord returned invalid JSON; no legacy wake fallback was selected"); }
 }
 
-function assertHcoordReady(): void {
+function assertHcoordReady(observer: NonNullable<ReturnType<typeof currentObserverIdentity>["identity"]>): void {
   const status = hcoordCommand(["daemon", "status"]);
   if (status["ok"] !== true || (status["value"] as Record<string, unknown> | undefined)?.["stale"] === true) throw new DispatchRejected("hcoord is enabled but its daemon is stopped; start it before dispatch; no legacy wake fallback was selected");
+  const capability = guardedDeliveryAvailable({ machine: "local", hostScope: observer.hostScope, session: observer.sessionId, instance: observer.terminalId, pane: observer.paneId });
+  if (!capability.ready) throw new DispatchRejected(`hcoord cannot safely wake the exact Observer: ${capability.reason}; no legacy wake fallback was selected`);
 }
 
 function registerHcoordRun(run: string, project: string, observer: NonNullable<ReturnType<typeof currentObserverIdentity>["identity"]>, observerName: string, implementor: { paneId: string; name: string; sessionId: string; terminalId: string; hostScope: string }): void {
@@ -835,7 +838,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     const observer = currentObserverIdentity();
     if (observer.identity === null) throw new DispatchRejected(`the Observer cannot be recorded: ${observer.problem}`);
     const coordinationOwner = state.supervision?.coordinationOwner ?? (state.supervision ? "legacy" : fs.existsSync(sasuEnabledPath()) ? "hcoord" : "legacy");
-    if (coordinationOwner === "hcoord") assertHcoordReady();
+    if (coordinationOwner === "hcoord") assertHcoordReady(observer.identity);
     const observedAgent = getAgent(observer.identity.paneId);
     const observerName = observedAgent.kind === "found" ? observedAgent.agent.name ?? "observer" : "observer";
     const runInstanceId = newRunInstanceId();

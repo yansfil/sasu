@@ -67,9 +67,9 @@ test("hcoord transition registers a new run without legacy enrollment or wake", 
   const launchctl = installFakeLaunchctl(outside);
   const home = path.join(outside, "home");
   fs.mkdirSync(home, { recursive: true });
-  const base = { HOME: home, ...herdr.env, PATH: herdr.env.PATH, HERDR_FAKE_REQUIRED_SOCKET_PATH: "/tmp/fake.sock", LAUNCHCTL_FAKE_LOG: launchctl.env.LAUNCHCTL_FAKE_LOG, LAUNCHCTL_FAKE_STATE: launchctl.env.LAUNCHCTL_FAKE_STATE };
+  const base = { HOME: home, ...herdr.env, PATH: herdr.env.PATH, HERDR_FAKE_REQUIRED_SOCKET_PATH: "/tmp/fake.sock", HERDR_FAKE_GUARD_SUPPORT: "1", LAUNCHCTL_FAKE_LOG: launchctl.env.LAUNCHCTL_FAKE_LOG, LAUNCHCTL_FAKE_STATE: launchctl.env.LAUNCHCTL_FAKE_STATE };
   const observerEnv = { ...base, HERDR_ENV: "1", HERDR_PANE_ID: OBSERVER_PANE, HERDR_WORKSPACE_ID: "w4G", HERDR_SOCKET_PATH: "/tmp/fake.sock", CLAUDE_SESSION_ID: OBSERVER };
-  herdr.setAgents({ [OBSERVER_PANE]: observerAgent({ agent_status: "working" }) });
+  herdr.setAgents({ [OBSERVER_PANE]: observerAgent({ name: "observer", agent_status: "working", input_guard: "test-guard" }) });
   const daemon = spawn(process.execPath, [HCOORD, "daemon", "run"], { cwd: root, env: isolatedEnv(base), stdio: ["ignore", "ignore", "pipe"] });
   let daemonError = "";
   daemon.stderr.on("data", (chunk) => { daemonError += chunk; });
@@ -80,7 +80,7 @@ test("hcoord transition registers a new run without legacy enrollment or wake", 
   const socket = path.join(home, ".hcoord", "api.sock");
   for (let attempt = 0; attempt < 100 && !fs.existsSync(socket); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(fs.existsSync(socket), true, daemonError);
-  const hcoord = (...args) => spawnSync(process.execPath, [HCOORD, ...args, "--json"], { cwd: root, env: isolatedEnv(base), encoding: "utf8" });
+  const hcoord = (...args) => spawnSync(process.execPath, [HCOORD, ...args, "--json"], { cwd: root, env: isolatedEnv(observerEnv), encoding: "utf8" });
   assert.equal(hcoord("sasu", "enable").status, 0);
   const started = sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env: observerEnv });
   assert.equal(started.status, 0, started.text);

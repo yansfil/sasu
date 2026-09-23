@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -19,7 +20,7 @@ const target=process.argv[4];
 if(process.argv[2]==='agent' && process.argv[3]==='get') {
   const row=target==='parent-pane'?{name:'parent',session:'one',instance:'a'}:target==='child-pane'?{name:'child',session:'two',instance:'b'}:target?.endsWith('-pane') && fs.existsSync(path.join(process.env.HOME,target+'.started'))?{name:target.slice(0,-5),session:target+'-session',instance:target+'-instance'}:null;
   if(!row){process.stderr.write(JSON.stringify({error:{code:'agent_not_found'}}));process.exitCode=1;}
-  else process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:row.name,agent:'codex',agent_session:{value:row.session},terminal_id:row.instance,agent_status:'idle',input_guard:process.env.HCOORD_FAKE_GUARD==='1'?'test-guard':undefined}}}));
+  else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:row.name,agent:'codex',agent_session:{value:row.session},terminal_id:row.instance,agent_status:status,input_guard:process.env.HCOORD_FAKE_GUARD==='1'&&process.env.HCOORD_FAKE_INPUT_GUARD!=='0'?'test-guard':undefined}}}));}
 } else if(process.argv[2]==='pane' && process.argv[3]==='get') {
   process.stdout.write(JSON.stringify({result:{type:'pane_info',pane:{workspace_id:'test-workspace',cwd:process.env.HOME}}}));
 } else if(process.argv[2]==='tab' && process.argv[3]==='create') {
@@ -43,11 +44,14 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
 `, { mode: 0o755 });
   const env = { ...process.env, HOME: home, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
   delete env.HERDR_SOCKET_PATH;
+  delete env.HCOORD_FAKE_INPUT_GUARD;
+  env.HCOORD_FAKE_GUARD = "1";
   let daemon = null;
+  let daemonErrors = "";
   const start = async () => {
     daemon = spawn(process.execPath, [CLI, "daemon", "run"], { env, stdio: ["ignore", "ignore", "pipe"] });
     let error = "";
-    daemon.stderr.on("data", (chunk) => { error += chunk; });
+    daemon.stderr.on("data", (chunk) => { error += chunk; daemonErrors += chunk; });
     for (let attempt = 0; attempt < 500; attempt += 1) {
       if (fs.existsSync(path.join(home, ".hcoord", "api.sock"))) return;
       if (daemon.exitCode !== null) throw new Error(`daemon exited: ${error}`);
@@ -75,16 +79,47 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   };
   await start();
   assert.equal(fs.statSync(path.join(home, ".hcoord", "api.sock")).mode & 0o777, 0o600);
+  const competingDaemon = spawnSync(process.execPath, [CLI, "daemon", "run", "--json"], { env, encoding: "utf8" });
+  assert.equal(competingDaemon.status, 1);
+  assert.equal(JSON.parse(competingDaemon.stdout).error.code, "already_running");
+  assert.equal(ok("daemon", "status").stale, undefined, "a competing start preserves the original daemon socket");
+  const malformed = await new Promise((resolve, reject) => {
+    const socket = net.createConnection(path.join(home, ".hcoord", "api.sock"));
+    let received = "";
+    socket.on("connect", () => socket.write('{"body": SECRET_ABC}\n'));
+    socket.on("data", (chunk) => { received += chunk; });
+    socket.on("end", () => resolve(JSON.parse(received.trim())));
+    socket.on("error", reject);
+  });
+  assert.equal(malformed.error.code, "protocol");
+  assert.equal(daemonErrors.includes("SECRET_ABC"), false, "a parser failure does not copy request text to logs");
   assert.equal(ok("daemon", "status").platform.macos.localSocket, "verified_isolated");
   const parent = ok("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "parent", "--pane", "parent-pane");
   const child = ok("agent", "register", "--machine", "local", "--session", "two", "--instance", "b", "--name", "child", "--parent", parent.id, "--pane", "child-pane");
+  assert.equal(JSON.parse(command("agent", "register", "--machine", "remote", "--session", "one", "--instance", "a", "--name", "remote", "--pane", "parent-pane").stdout).error.code, "unsupported_remote");
+  assert.equal(command("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "wrong", "--pane", "parent-pane").status, 1);
+  env.HCOORD_FAKE_GUARD = "0";
+  assert.equal(command("sasu", "enable").status, 1, "Sasu cannot opt into an unsupported wake path");
+  assert.equal(fs.existsSync(path.join(home, ".hcoord", "sasu-enabled")), false);
+  env.HCOORD_FAKE_GUARD = "1";
   ok("sasu", "enable");
   const sasuArgs = ["sasu", "register", "--run", "run-one", "--project", home, "--observer-name", "parent", "--observer-pane", "parent-pane", "--observer-session", "one", "--observer-instance", "a", "--implementor-name", "child", "--implementor-pane", "child-pane", "--implementor-session", "two", "--implementor-instance", "b"];
+  await stop();
+  env.HCOORD_FAKE_INPUT_GUARD = "0";
+  await start();
+  assert.equal(command(...sasuArgs).status, 1, "exact Observer guard is required even when the prompt flag exists");
+  assert.equal(ok("status").counts.sasuRuns, 0);
+  await stop();
+  delete env.HCOORD_FAKE_INPUT_GUARD;
+  await start();
   const registeredRun = ok(...sasuArgs);
   assert.equal(registeredRun.owner, "hcoord");
   assert.equal(ok(...sasuArgs).watch.generation, registeredRun.watch.generation);
   assert.equal(ok("status").counts.sasuRuns, 1);
   assert.ok(ok("status").usage.ledgerBytes > 0);
+  await stop();
+  delete env.HCOORD_FAKE_GUARD;
+  await start();
   const spawned = ok("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "worker", "--intent", "spawn-1");
   assert.equal(spawned.participant.parent, parent.id);
   assert.equal(spawned.watch.observer, parent.id);
@@ -122,7 +157,10 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(ok("request", "show", adapterRequest.id).answer, "Approved A");
   assert.equal(adapter("reply", adapterRequest.id, "Changed answer").status, 1);
   assert.equal(ok("request", "show", adapterRequest.id).answer, "Approved A");
+  ok("watch", "stop", child.id, "--actor", parent.id);
   ok("watch", "start", child.id, "--observer", parent.id, "--interval", "1s");
+  assert.equal(ok("graph").watch.filter((item) => item.target === child.id).length, 2);
+  fs.writeFileSync(path.join(home, "child-pane.status"), "done");
   let watch;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     watch = ok("watch", "list").find((item) => item.target === child.id);
@@ -130,6 +168,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
     await wait(100);
   }
   assert.ok(watch.cycle);
+  assert.match(watch.observation, /done\/connected/, "the cycle includes a fresh exact Herdr observation");
   const cycleRequestId = ok("events").events.find((item) => item.type === "watch.cycle").detail.requestId;
   let cycleRequest;
   for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -142,9 +181,9 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(fs.existsSync(path.join(home, "UNSAFE_PROMPT")), false);
   ok("watch", "check", child.id, "--cycle", watch.cycle, "--actor", parent.id);
   assert.equal(ok("watch", "list").find((item) => item.target === child.id).cycle, null);
-  assert.equal(command("watch", "assign", child.id, "--observer", parent.id, "--actor", "human").status, 1);
-  assert.equal(command("watch", "assign", child.id, "--observer", parent.id, "--actor", "human", "--expected-generation", "0").status, 1);
-  assert.equal(ok("watch", "assign", child.id, "--observer", parent.id, "--actor", "human", "--expected-generation", "2").generation, 3);
+  assert.equal(command("watch", "assign", child.id, "--observer", spawned.participant.id, "--actor", "human").status, 1);
+  assert.equal(command("watch", "assign", child.id, "--observer", spawned.participant.id, "--actor", "human", "--expected-generation", "0").status, 1);
+  assert.equal(ok("watch", "assign", child.id, "--observer", spawned.participant.id, "--actor", "human", "--expected-generation", "2").generation, 3);
   await stop();
   const stale = ok("request", "show", sent.id);
   assert.equal(stale.stale, true);

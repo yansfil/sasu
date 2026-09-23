@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_BODY_BYTES, MAX_REQUESTS, MAX_SPAWN_INTENTS, type Delivery, type Ledger, type Participant, type Request, type Watch } from "./model";
+import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_BODY_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, own, put, type Delivery, type Ledger, type Participant, type Request, type Watch } from "./model";
 
 type Args = Record<string, unknown>;
 export interface Outcome { value: unknown; changed: boolean }
@@ -20,12 +20,12 @@ const body = (args: Args, key = "body"): string => {
   return value;
 };
 const person = (state: Ledger, agentId: string): Participant => {
-  const agent = state.participants[agentId];
+  const agent = own(state.participants, agentId);
   if (!agent) throw new HcoordError("not_found", `participant ${agentId} is not registered`);
   return agent;
 };
 const request = (state: Ledger, requestId: string): Request => {
-  const found = state.requests[requestId];
+  const found = own(state.requests, requestId);
   if (!found) throw new HcoordError("not_found", `request ${requestId} does not exist`);
   return found;
 };
@@ -40,24 +40,36 @@ const integerMs = (args: Args, key: string): number => {
 };
 const timed = (at: string, ms: number): string => new Date(Date.parse(at) + ms).toISOString();
 const pendingRelay = (item: Request): boolean => item.status === "answered" && item.intermediary !== null && item.relayBody === null;
-const terminalRequest = (item: Request): boolean => item.status === "canceled" || (item.status === "answered" && !pendingRelay(item))
+const terminalRequest = (item: Request): boolean => item.status === "canceled" || (item.status === "answered" && !pendingRelay(item) && item.deliveries.every((delivery) => {
+  const phase = delivery.phase ?? "request";
+  return phase === "request" ? ["accepted", "acknowledged", "failed", "superseded"].includes(delivery.status)
+    : phase === "delivery_problem" ? ["accepted", "acknowledged", "superseded"].includes(delivery.status)
+    : delivery.status === "acknowledged" || delivery.status === "superseded";
+}))
   || (!item.requiresReply && item.deliveries.length > 0 && item.deliveries.every((delivery) => delivery.status === "accepted" || delivery.status === "acknowledged"));
-const queueDelivery = (item: Request, recipient: string, at: string): Delivery => {
-  const delivery: Delivery = { id: id("d"), requestId: item.id, recipient, status: "pending", reason: null, reservedAt: at, attemptedAt: null, acceptedAt: null, acknowledgedAt: null, runtimeCode: null };
+const queueDelivery = (item: Request, recipient: string, at: string, phase: Delivery["phase"] = "request"): Delivery => {
+  const delivery: Delivery = { id: id("d"), requestId: item.id, recipient, phase, status: "pending", reason: null, reservedAt: at, attemptedAt: null, acceptedAt: null, acknowledgedAt: null, runtimeCode: null };
   item.deliveries.push(delivery);
   return delivery;
 };
+const retireUnsent = (item: Request, reason: string, phase?: Delivery["phase"]): void => {
+  for (const delivery of item.deliveries) if ((delivery.status === "pending" || delivery.status === "deferred") && (phase === undefined || (delivery.phase ?? "request") === phase)) {
+    delivery.status = "superseded";
+    delivery.reason = reason;
+  }
+};
+const watchRequest = (state: Ledger, watch: Watch): Request | undefined => watch.cycle === null ? undefined : Object.values(state.requests).find((item) => item.intent.startsWith(`watch:${watch.target}:`) && item.intent.endsWith(`:${watch.cycle}`));
 
 export function execute(state: Ledger, operation: string, args: Args, at: string): Outcome {
   if (operation === "status") return { changed: false, value: {
     schema: state.schema, at, lastUpdatedAt: state.updatedAt, eventCursor: state.seq, counts: {
       agents: Object.keys(state.participants).length, watches: Object.values(state.watches).filter((w) => w.status === "active").length,
       requests: Object.values(state.requests).filter((r) => !terminalRequest(r)).length, events: state.events.length, sasuRuns: Object.keys(state.sasuRuns).length,
-    }, caps: { agents: MAX_AGENTS, requests: MAX_REQUESTS, spawnIntents: MAX_SPAWN_INTENTS, events: 20000, ledgerBytes: 64 * 1024 * 1024, connections: 64 }, config: state.config,
+    }, caps: { agents: MAX_AGENTS, requests: MAX_REQUESTS, spawnIntents: MAX_SPAWN_INTENTS, watchHistory: MAX_WATCH_HISTORY, events: 20000, ledgerBytes: 64 * 1024 * 1024, connections: 64, queuedOperations: MAX_QUEUE }, config: state.config,
   } };
   if (operation === "config.set") {
     const key = required(args, "key") as keyof typeof DEFAULTS;
-    if (!(key in DEFAULTS)) throw new HcoordError("invalid_argument", `unknown policy ${key}`);
+    if (!Object.hasOwn(DEFAULTS, key)) throw new HcoordError("invalid_argument", `unknown policy ${key}`);
     const value = integerMs(args, "value");
     state.config[key] = value;
     event(state, at, "config.changed", key, null, { value });
@@ -68,7 +80,9 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const matches = Object.values(state.participants).filter((p) => p.machine === machine && p.hostScope === hostScope && p.session === session && p.instance === instance);
     if (matches.length) {
       const existing = matches[0]!;
-      if (existing.name !== name || existing.pane !== optional(args, "pane") || existing.parent !== optional(args, "parent")) throw new HcoordError("identity_conflict", "runtime identity already has a different name, pane, or parent; inspect the exact binding before changing it", { candidates: matches });
+      const project = optional(args, "project");
+      if (existing.name !== name || existing.pane !== optional(args, "pane") || existing.parent !== optional(args, "parent") || (project !== null && existing.project !== null && existing.project !== path.resolve(project))) throw new HcoordError("identity_conflict", "runtime identity already has a different name, pane, parent, or project; inspect the exact binding before changing it", { candidates: matches });
+      if (project !== null && existing.project === null) { existing.project = path.resolve(project); event(state, at, "agent.project_attached", existing.id); return { changed: true, value: existing }; }
       return { changed: false, value: existing };
     }
     const namesakes = Object.values(state.participants).filter((p) => p.machine === machine && p.hostScope === hostScope && p.session === session && p.name === name);
@@ -78,7 +92,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (parent !== null) person(state, parent);
     const participant: Participant = { id: id("a"), machine, hostScope, session, instance, name, project: optional(args, "project") === null ? null : path.resolve(optional(args, "project")!), parent,
       pane: optional(args, "pane"), runtime: (args["runtime"] as Participant["runtime"]) ?? "unknown", connection: "connected", observedAt: at };
-    state.participants[participant.id] = participant;
+    put(state.participants, participant.id, participant);
     event(state, at, "agent.registered", participant.id, null, { machine, session, instance, parent });
     return { changed: true, value: participant };
   }
@@ -88,7 +102,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const nativeArgs = args["nativeArgs"];
     if (!Array.isArray(nativeArgs) || nativeArgs.some((value) => typeof value !== "string")) throw new HcoordError("invalid_argument", "nativeArgs must be a string array");
     if (parent.machine !== machine || parent.session !== session) throw new HcoordError("identity_conflict", "parent is not bound to the selected machine and session");
-    const prior = state.spawnIntents[key];
+    const prior = own(state.spawnIntents, key);
     if (prior) {
       if (prior.parent !== parent.id || prior.machine !== machine || prior.session !== session || prior.name !== name || prior.kind !== kind || prior.noWatch !== (args["noWatch"] === true) || JSON.stringify(prior.nativeArgs) !== JSON.stringify(nativeArgs)) throw new HcoordError("intent_conflict", "spawn intent key already belongs to another operation", { participant: prior.participant, pane: prior.pane });
       return { changed: false, value: prior };
@@ -96,12 +110,12 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (Object.keys(state.participants).length >= MAX_AGENTS) throw new HcoordError("capacity", `participant limit ${MAX_AGENTS} reached`);
     if (Object.keys(state.spawnIntents).length >= MAX_SPAWN_INTENTS) throw new HcoordError("capacity", `spawn intent limit ${MAX_SPAWN_INTENTS} reached; uncertain outcomes remain inspectable`);
     const record = { key, parent: parent.id, machine, hostScope: parent.hostScope, session, name, kind, nativeArgs, noWatch: args["noWatch"] === true, status: "reserved" as const, pane: null, participant: null, reason: null, at };
-    state.spawnIntents[key] = record;
+    put(state.spawnIntents, key, record);
     event(state, at, "agent.spawn_reserved", parent.id, key);
     return { changed: true, value: record };
   }
   if (operation === "agent.spawn.pane") {
-    const record = state.spawnIntents[required(args, "intent")];
+    const record = own(state.spawnIntents, required(args, "intent"));
     if (!record) throw new HcoordError("not_found", "spawn intent does not exist");
     const pane = required(args, "pane");
     if (record.pane !== null && record.pane !== pane) throw new HcoordError("conflict", "spawn intent already owns another pane");
@@ -111,14 +125,14 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     return { changed: true, value: record };
   }
   if (operation === "agent.spawn.unknown") {
-    const record = state.spawnIntents[required(args, "intent")];
+    const record = own(state.spawnIntents, required(args, "intent"));
     if (!record || record.status === "complete") throw new HcoordError("conflict", "spawn intent is not reservable");
     record.status = "unknown"; record.reason = required(args, "reason");
     event(state, at, "agent.spawn_uncertain", record.parent, record.key, { pane: record.pane });
     return { changed: true, value: record };
   }
   if (operation === "agent.spawn.complete") {
-    const record = state.spawnIntents[required(args, "intent")];
+    const record = own(state.spawnIntents, required(args, "intent"));
     if (!record || record.pane === null) throw new HcoordError("not_found", "spawn pane is not recorded");
     if (record.status === "complete") return { changed: false, value: { intent: record, participant: state.participants[record.participant!] } };
     const runtimeSession = required(args, "runtimeSession"), instance = required(args, "instance");
@@ -127,7 +141,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const runtime = required(args, "runtime") as Participant["runtime"];
     if (!["working", "idle", "done", "unknown"].includes(runtime)) throw new HcoordError("invalid_argument", "spawn runtime observation is invalid");
     const participant: Participant = { id: id("a"), machine: record.machine, hostScope: record.hostScope, session: runtimeSession, instance, name: record.name, project: optional(args, "project"), parent: record.parent, pane: record.pane, runtime, connection: "connected", observedAt: at };
-    state.participants[participant.id] = participant;
+    put(state.participants, participant.id, participant);
     if (!record.noWatch) {
       const watch: Watch = { target: participant.id, observer: record.parent, generation: 1, status: "active", intervalMs: state.config.watchMs, dueAt: timed(at, state.config.watchMs), cycle: null, checkedAt: null, startedAt: at, stoppedAt: null, observation: null };
       state.watches[participant.id] = watch;
@@ -144,8 +158,8 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     participant.runtime = runtime as Participant["runtime"];
     participant.connection = connection as Participant["connection"];
     participant.observedAt = at;
-    const watch = state.watches[participant.id];
-    if (watch?.status === "active") watch.observation = `${runtime}/${connection} at ${at}`;
+    const watch = own(state.watches, participant.id);
+    if (watch?.status === "active") watch.observation = `${runtime}/${connection} at ${at}${optional(args, "reason") ? `: ${optional(args, "reason")}` : ""}`;
     return { changed: true, value: participant };
   }
   if (operation === "agent.list") {
@@ -160,22 +174,38 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const target = person(state, required(args, "target"));
     const observer = person(state, required(args, "observer"));
     if (target.id === observer.id) throw new HcoordError("invalid_argument", "a participant cannot watch itself");
-    const previous = state.watches[target.id];
+    const previous = own(state.watches, target.id);
     const actor = required(args, "actor");
     if (previous?.status === "active") authority(actor, [previous.observer]);
     else if (operation === "watch.assign" && actor !== "human") throw new HcoordError("forbidden", "a missing observer can be assigned only by a human");
+    if (operation === "watch.start" && previous?.status === "active") throw new HcoordError("conflict", "watch is already active; use watch assign with its current generation");
+    if (operation === "watch.assign" && previous?.status === "active" && previous.observer === observer.id) throw new HcoordError("conflict", "the observer is unchanged; inspect the active watch instead");
     const expected = optional(args, "expectedGeneration");
     if (operation === "watch.assign" && expected === null) throw new HcoordError("invalid_argument", "watch assignment requires the generation currently shown by watch list");
     if (expected !== null && Number(expected) !== (previous?.generation ?? 0)) throw new HcoordError("conflict", "watch generation changed; inspect current observer before retry", { current: previous });
     const intervalMs = args["intervalMs"] === undefined ? previous?.intervalMs ?? state.config.watchMs : integerMs(args, "intervalMs");
-    const watch: Watch = { target: target.id, observer: observer.id, generation: (previous?.generation ?? 0) + 1, status: "active", intervalMs, dueAt: timed(at, intervalMs), cycle: null, checkedAt: null, startedAt: at, stoppedAt: null, observation: null };
-    state.watches[target.id] = watch;
+    if (previous) {
+      if (state.watchHistory.length >= MAX_WATCH_HISTORY) throw new HcoordError("capacity", `watch history reached ${MAX_WATCH_HISTORY}; retain the existing assignment until old history expires`);
+      state.watchHistory.push({ ...previous, status: "stopped", stoppedAt: previous.stoppedAt ?? at });
+    }
+    const carriedRequest = previous ? watchRequest(state, previous) : undefined;
+    const carryCycle = previous?.cycle !== null && carriedRequest?.status === "open";
+    const watch: Watch = { target: target.id, observer: observer.id, generation: (previous?.generation ?? 0) + 1, status: "active", intervalMs,
+      dueAt: carryCycle ? previous!.dueAt : timed(at, intervalMs),
+      cycle: carryCycle ? previous!.cycle : null,
+      checkedAt: previous?.checkedAt ?? null, startedAt: at, stoppedAt: null, observation: previous?.observation ?? null };
+    if (carryCycle && carriedRequest) {
+      retireUnsent(carriedRequest, "watch assigned to another observer");
+      carriedRequest.to = observer.id;
+      queueDelivery(carriedRequest, observer.id, at);
+    }
+    put(state.watches, target.id, watch);
     event(state, at, previous ? "watch.assigned" : "watch.started", target.id, null, { observer: observer.id, generation: watch.generation });
     return { changed: true, value: watch };
   }
   if (operation === "watch.stop") {
     const target = required(args, "target"), actor = required(args, "actor");
-    const watch = state.watches[target];
+    const watch = own(state.watches, target);
     if (!watch || watch.status === "stopped") throw new HcoordError("not_found", "active watch does not exist");
     authority(actor, [watch.observer]);
     watch.status = "stopped"; watch.stoppedAt = at;
@@ -184,13 +214,13 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
   }
   if (operation === "watch.check") {
     const target = required(args, "target"), actor = required(args, "actor"), cycle = required(args, "cycle");
-    const watch = state.watches[target];
+    const watch = own(state.watches, target);
     if (!watch || watch.status !== "active") throw new HcoordError("not_found", "active watch does not exist");
     authority(actor, [watch.observer]);
     if (watch.cycle !== cycle) throw new HcoordError("conflict", "cycle is not the current unchecked cycle", { currentCycle: watch.cycle });
+    const checkRequest = watchRequest(state, watch);
     watch.checkedAt = at; watch.cycle = null; watch.dueAt = timed(at, watch.intervalMs);
-    const checkRequest = Object.values(state.requests).find((item) => item.intent === `watch:${target}:${watch.generation}:${cycle}`);
-    if (checkRequest?.status === "open") { checkRequest.status = "answered"; checkRequest.answeredAt = at; checkRequest.answer = "cycle checked"; checkRequest.respondent = actor; checkRequest.recordedBy = actor; }
+    if (checkRequest?.status === "open") { checkRequest.status = "answered"; checkRequest.answeredAt = at; checkRequest.answer = "cycle checked"; checkRequest.respondent = actor; checkRequest.recordedBy = actor; retireUnsent(checkRequest, "watch cycle checked"); }
     event(state, at, "watch.checked", target, cycle, { observer: watch.observer });
     return { changed: true, value: watch };
   }
@@ -202,23 +232,23 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const content = body(args);
     const prior = Object.values(state.requests).find((r) => r.from === from && r.intent === intent);
     if (prior) {
-      if (prior.to !== to || prior.body !== content) throw new HcoordError("intent_conflict", "intent key already belongs to a different request", { requestId: prior.id });
+      if (prior.to !== to || prior.body !== content || (prior.initialIntermediary !== undefined ? prior.initialIntermediary : prior.intermediary) !== optional(args, "intermediary") || prior.context !== optional(args, "context") || prior.waiting !== (args["waiting"] === true) || prior.requiresReply !== (args["notifyOnly"] !== true)) throw new HcoordError("intent_conflict", "intent key already belongs to a different request", { requestId: prior.id });
       return { changed: false, value: prior };
     }
     if (Object.keys(state.requests).length >= MAX_REQUESTS) throw new HcoordError("capacity", `request limit ${MAX_REQUESTS} reached; existing requests remain intact`);
-    const item: Request = { id: id("r"), intent, from, to, intermediary: optional(args, "intermediary"), body: content, context: optional(args, "context"), status: "open",
+    const item: Request = { id: id("r"), intent, from, to, intermediary: optional(args, "intermediary"), initialIntermediary: optional(args, "intermediary"), body: content, context: optional(args, "context"), status: "open",
       requiresReply: args["notifyOnly"] !== true, waiting: args["waiting"] === true, createdAt: at, answeredAt: null, answer: null, respondent: null, recordedBy: null,
-      canceledAt: null, lateAnswers: [], relayBody: null, relayAt: null, escalatedAt: null, remindedAt: null, relayRemindedAt: null, relayEscalatedAt: null, deliveries: [] };
+      canceledAt: null, lateAnswers: [], relayBody: null, relayAt: null, escalatedAt: null, remindedAt: null, relayRemindedAt: null, relayEscalatedAt: null, deliveryRemindedAt: null, deliveryEscalatedAt: null, deliveries: [] };
     if (item.intermediary !== null) person(state, item.intermediary);
     queueDelivery(item, to, at);
-    state.requests[item.id] = item;
+    put(state.requests, item.id, item);
     event(state, at, "request.created", item.id, intent, { from, to, waiting: item.waiting, requiresReply: item.requiresReply });
     return { changed: true, value: item };
   }
   if (operation === "request.show") {
     const item = request(state, required(args, "id"));
     const uncertain = item.deliveries.filter((delivery) => delivery.status === "unknown");
-    const deferred = item.deliveries.filter((delivery) => delivery.status === "deferred" || delivery.status === "failed");
+    const deferred = item.deliveries.filter((delivery) => delivery.status === "deferred" || (delivery.status === "failed" && !(item.status === "answered" && (delivery.phase ?? "request") === "request")));
     const nextAction = item.status === "canceled" ? "inspect late answers; cancellation does not undo accepted delivery"
       : pendingRelay(item) ? "intermediary must inspect the original answer and relay it; inspect blocked delivery first"
       : uncertain.length ? "inspect unknown submission before attempting another external effect"
@@ -240,8 +270,8 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     }
     item.status = "answered"; item.answeredAt = at; item.answer = answer; item.respondent = respondent; item.recordedBy = recordedBy;
     if (respondent === "human" && item.to !== "human" && item.intermediary === null) item.intermediary = item.to;
-    for (const delivery of item.deliveries) if (delivery.recipient === "human" && (delivery.status === "pending" || delivery.status === "deferred")) { delivery.status = "failed"; delivery.reason = "request answered before notification"; }
-    if (item.intermediary !== null) queueDelivery(item, item.intermediary, at);
+    retireUnsent(item, "request answered before original submission", "request");
+    queueDelivery(item, item.intermediary ?? item.from, at, "answer");
     event(state, at, "request.answered", item.id, item.intent, { respondent, recordedBy });
     return { changed: true, value: item };
   }
@@ -255,7 +285,10 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       return { changed: false, value: item };
     }
     item.relayBody = relay; item.relayAt = at;
-    queueDelivery(item, item.from, at);
+    retireUnsent(item, "answer relayed before prior answer notice", "answer");
+    retireUnsent(item, "answer relayed before escalation notice", "request");
+    for (const delivery of item.deliveries) if (delivery.phase === "answer" && delivery.recipient === actor && delivery.status === "accepted") { delivery.status = "acknowledged"; delivery.acknowledgedAt = at; }
+    queueDelivery(item, item.from, at, "relay");
     event(state, at, "request.relayed", item.id, item.intent, { by: actor });
     return { changed: true, value: item };
   }
@@ -282,24 +315,27 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
   if (operation === "request.ack") {
     const item = request(state, required(args, "id"));
     const actor = required(args, "actor");
-    const acknowledged = [...item.deliveries].reverse().find((delivery) => delivery.status === "acknowledged" && delivery.recipient === actor);
-    if (acknowledged) return { changed: false, value: item };
-    const delivery = [...item.deliveries].reverse().find((d) => d.status === "accepted" && d.recipient === actor);
-    if (!delivery) throw new HcoordError("conflict", "there is no accepted delivery to acknowledge");
+    const deliveryId = optional(args, "delivery");
+    const delivery = deliveryId === null ? [...item.deliveries].reverse().find((d) => d.status === "accepted" && d.recipient === actor)
+      : item.deliveries.find((d) => d.id === deliveryId && d.recipient === actor);
+    if (delivery?.status === "acknowledged") return { changed: false, value: item };
+    if (!delivery && deliveryId === null && item.deliveries.some((d) => d.status === "acknowledged" && d.recipient === actor)) return { changed: false, value: item };
+    if (!delivery || delivery.status !== "accepted") throw new HcoordError("conflict", "there is no accepted delivery to acknowledge");
     delivery.status = "acknowledged"; delivery.acknowledgedAt = at;
+    if (delivery.phase === "relay") retireUnsent(item, "child acknowledged the relay", "delivery_problem");
     event(state, at, "delivery.acknowledged", item.id, item.intent, { deliveryId: delivery.id });
     return { changed: true, value: item };
   }
   if (operation === "inbox") {
     const items: Array<Record<string, unknown>> = [];
     for (const item of Object.values(state.requests)) {
-      if ((item.status === "open" && (item.to === "human" || item.escalatedAt !== null)) || pendingRelay(item)) items.push({ kind: pendingRelay(item) ? "relay_problem" : "question", requestId: item.id, createdAt: item.createdAt, from: item.from, to: item.to, status: item.status, nextAction: pendingRelay(item) ? "inspect parent delivery and relay the recorded answer" : "reply or cancel this request" });
-      if (item.status !== "canceled" && !pendingRelay(item) && item.deliveries.some((delivery) => delivery.status === "unknown" || delivery.status === "failed" || delivery.status === "deferred")) items.push({ kind: "delivery_problem", requestId: item.id, createdAt: item.createdAt, nextAction: "inspect delivery history and recipient identity" });
+      if ((item.status === "open" && item.requiresReply && (item.to === "human" || item.escalatedAt !== null)) || pendingRelay(item)) items.push({ kind: pendingRelay(item) ? "relay_problem" : "question", requestId: item.id, createdAt: item.createdAt, from: item.from, to: item.to, status: item.status, nextAction: pendingRelay(item) ? "inspect parent delivery and relay the recorded answer" : "reply or cancel this request" });
+      if (item.status !== "canceled" && !pendingRelay(item) && item.deliveries.some((delivery) => delivery.status === "unknown" || delivery.status === "deferred" || (delivery.status === "failed" && !(item.status === "answered" && (delivery.phase ?? "request") === "request")))) items.push({ kind: "delivery_problem", requestId: item.id, createdAt: item.createdAt, nextAction: "inspect delivery history and recipient identity" });
     }
-    for (const watch of Object.values(state.watches)) if (watch.status === "active" && (watch.observer === null || state.participants[watch.observer]?.connection === "unavailable")) items.push({ kind: "watch_unassigned", target: watch.target, observer: watch.observer, nextAction: "inspect current observer and assign explicitly" });
+    for (const watch of Object.values(state.watches)) if (watch.status === "active" && (watch.observer === null || own(state.participants, watch.observer)?.connection === "unavailable" || !own(state.participants, watch.observer))) items.push({ kind: "watch_unassigned", target: watch.target, observer: watch.observer, nextAction: "inspect current observer and assign explicitly" });
     return { changed: false, value: items };
   }
-  if (operation === "graph") return { changed: false, value: { participants: Object.values(state.participants), creation: Object.values(state.participants).filter((p) => p.parent).map((p) => ({ parent: p.parent, child: p.id })), watch: Object.values(state.watches), prunedBefore: state.prunedBefore } };
+  if (operation === "graph") return { changed: false, value: { participants: Object.values(state.participants), creation: Object.values(state.participants).filter((p) => p.parent).map((p) => ({ parent: p.parent, child: p.id })), watch: [...state.watchHistory, ...Object.values(state.watches)], prunedBefore: state.prunedBefore } };
   if (operation === "events") {
     const cursor = args["cursor"] === undefined ? 0 : Number(args["cursor"]);
     if (!Number.isSafeInteger(cursor) || cursor < 0) throw new HcoordError("invalid_argument", "cursor must be a nonnegative integer");
@@ -311,15 +347,46 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
   if (operation === "tick") {
     let cycles = 0, reminders = 0, escalations = 0;
     let changed = false;
-    const before = Date.parse(at) - state.config.retentionMs;
-    for (const [key, item] of Object.entries(state.requests)) {
-      if (terminalRequest(item) && Date.parse(item.answeredAt ?? item.canceledAt ?? item.createdAt) < before) { delete state.requests[key]; state.prunedBefore = at; changed = true; }
+    if (args["runRetention"] !== false) {
+      const before = Date.parse(at) - state.config.retentionMs;
+      for (const [key, item] of Object.entries(state.requests)) {
+        if (terminalRequest(item) && Date.parse(item.answeredAt ?? item.canceledAt ?? item.createdAt) < before) { delete state.requests[key]; state.prunedBefore = at; changed = true; }
+      }
+      const requestRefs = new Set<string>(), unresolvedRefs = new Set<string>();
+      for (const item of Object.values(state.requests)) for (const agent of [item.from, item.to, item.intermediary]) if (agent !== null && agent !== "human") {
+        requestRefs.add(agent);
+        if (!terminalRequest(item)) unresolvedRefs.add(agent);
+      }
+      for (const [key, watch] of Object.entries(state.watches)) if (watch.status === "stopped" && watch.stoppedAt !== null && Date.parse(watch.stoppedAt) < before && !unresolvedRefs.has(key) && (watch.observer === null || !unresolvedRefs.has(watch.observer))) { delete state.watches[key]; state.prunedBefore = at; changed = true; }
+      const history = state.watchHistory.filter((watch) => watch.stoppedAt === null || Date.parse(watch.stoppedAt) >= before || unresolvedRefs.has(watch.target) || (watch.observer !== null && unresolvedRefs.has(watch.observer)));
+      if (history.length !== state.watchHistory.length) { state.watchHistory = history; state.prunedBefore = at; changed = true; }
+      const watchRefs = new Set<string>();
+      for (const watch of [...Object.values(state.watches), ...state.watchHistory]) { watchRefs.add(watch.target); if (watch.observer !== null) watchRefs.add(watch.observer); }
+      for (const [run, binding] of Object.entries(state.sasuRuns)) {
+        const implementor = own(state.participants, binding.implementor);
+        if (Date.parse(binding.registeredAt) < before && implementor?.runtime === "done" && own(state.watches, binding.implementor)?.status !== "active" && !unresolvedRefs.has(binding.implementor) && !unresolvedRefs.has(binding.observer)) {
+          delete state.sasuRuns[run]; state.prunedBefore = at; changed = true;
+        }
+      }
+      const runRefs = new Set(Object.values(state.sasuRuns).flatMap((run) => [run.observer, run.implementor]));
+      const parentRefs = new Set(Object.values(state.participants).map((person) => person.parent).filter((parent): parent is string => parent !== null));
+      const uncertainParentRefs = new Set(Object.values(state.spawnIntents).filter((intent) => intent.status === "unknown").map((intent) => intent.parent));
+      const completedIntents = new Map<string, string[]>();
+      for (const [key, intent] of Object.entries(state.spawnIntents)) if (intent.status === "complete" && intent.participant !== null) completedIntents.set(intent.participant, [...(completedIntents.get(intent.participant) ?? []), key]);
+      for (const [key, participant] of Object.entries(state.participants)) {
+        if (participant.runtime !== "done" || Date.parse(participant.observedAt) >= before || requestRefs.has(key) || watchRefs.has(key) || parentRefs.has(key) || runRefs.has(key) || uncertainParentRefs.has(key)) continue;
+        delete state.participants[key];
+        for (const intentKey of completedIntents.get(key) ?? []) delete state.spawnIntents[intentKey];
+        state.prunedBefore = at; changed = true;
+      }
+      for (const [key, intent] of Object.entries(state.spawnIntents)) if (intent.status === "reserved" && Date.parse(intent.at) < before) { delete state.spawnIntents[key]; state.prunedBefore = at; changed = true; }
+      const retained = state.events.filter((entry) => Date.parse(entry.at) >= before);
+      if (retained.length !== state.events.length) { state.events = retained; state.prunedBefore = at; changed = true; }
     }
-    for (const [key, watch] of Object.entries(state.watches)) if (watch.status === "stopped" && watch.stoppedAt !== null && Date.parse(watch.stoppedAt) < before && !Object.values(state.requests).some((r) => r.from === key || r.to === key)) { delete state.watches[key]; state.prunedBefore = at; changed = true; }
-    const retained = state.events.filter((entry) => Date.parse(entry.at) >= before);
-    if (retained.length !== state.events.length) { state.events = retained; state.prunedBefore = at; changed = true; }
+    const observed = args["observedTargets"] === undefined ? null : new Set(Array.isArray(args["observedTargets"]) ? args["observedTargets"] : []);
     for (const watch of Object.values(state.watches)) {
       if (watch.status !== "active" || Date.parse(watch.dueAt) > Date.parse(at)) continue;
+      if (observed !== null && !observed.has(watch.target)) continue;
       changed = true;
       if (watch.cycle === null) {
         watch.cycle = id("c"); cycles += 1;
@@ -331,7 +398,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
           event(state, at, "watch.cycle", watch.target, watch.cycle, { requestId: item.id });
         }
       } else {
-        const checkRequest = Object.values(state.requests).find((item) => item.intent === `watch:${watch.target}:${watch.generation}:${watch.cycle}`);
+        const checkRequest = watchRequest(state, watch);
         if (checkRequest?.status === "open") checkRequest.context = watch.observation;
       }
       watch.dueAt = timed(at, watch.intervalMs);
@@ -348,6 +415,19 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
           item.relayRemindedAt = at; reminders += 1; changed = true;
           if (item.intermediary !== null && !item.deliveries.some((delivery) => delivery.recipient === item.intermediary && (delivery.status === "pending" || delivery.status === "deferred" || delivery.status === "unknown"))) queueDelivery(item, item.intermediary, at);
           event(state, at, "request.relay_reminded", item.id, item.intent);
+        }
+      }
+      if (item.status === "answered" && item.relayBody !== null && item.relayAt !== null && item.deliveries.some((delivery) => delivery.phase === "relay" && delivery.status !== "acknowledged")) {
+        const age = Date.parse(at) - Date.parse(item.relayAt);
+        if (age >= state.config.remindMs && !item.deliveryRemindedAt) {
+          item.deliveryRemindedAt = at; reminders += 1; changed = true;
+          if (item.intermediary !== null && !item.deliveries.some((delivery) => delivery.phase === "delivery_problem" && delivery.recipient === item.intermediary)) queueDelivery(item, item.intermediary, at, "delivery_problem");
+          event(state, at, "request.delivery_reminded", item.id, item.intent);
+        }
+        if (age >= state.config.escalateMs && !item.deliveryEscalatedAt) {
+          item.deliveryEscalatedAt = at; escalations += 1; changed = true;
+          queueDelivery(item, "human", at, "delivery_problem");
+          event(state, at, "request.delivery_escalated", item.id, item.intent);
         }
       }
       if (item.status !== "open" || !item.requiresReply) continue;
