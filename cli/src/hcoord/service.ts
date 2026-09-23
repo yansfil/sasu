@@ -40,11 +40,23 @@ const integerMs = (args: Args, key: string): number => {
 };
 const timed = (at: string, ms: number): string => new Date(Date.parse(at) + ms).toISOString();
 const pendingRelay = (item: Request): boolean => item.status === "answered" && item.intermediary !== null && item.relayBody === null;
+const legacyWatchIntent = (watch: Watch, item: Request): boolean => {
+  const parts = item.intent.split(":");
+  return item.from === watch.target && parts.length === 4 && parts[0] === "watch" && parts[1] === watch.target && /^\d+$/.test(parts[2] ?? "") && parts[3] === watch.cycle;
+};
+const watchRequest = (state: Ledger, watch: Watch): Request | undefined => {
+  if (watch.cycle === null) return undefined;
+  if (watch.requestId !== undefined && watch.requestId !== null) return own(state.requests, watch.requestId);
+  // Ledgers written before request IDs were saved still have one generated request per cycle.
+  return Object.values(state.requests).find((item) => legacyWatchIntent(watch, item));
+};
 const uncheckedWatchRequest = (state: Ledger, item: Request): boolean => {
   const watch = own(state.watches, item.from);
-  return watch?.cycle !== null && watch !== undefined && item.intent.startsWith(`watch:${watch.target}:`) && item.intent.endsWith(`:${watch.cycle}`);
+  if (watch?.cycle === null || watch === undefined) return false;
+  if (watch.requestId !== undefined && watch.requestId !== null) return watch.requestId === item.id;
+  return legacyWatchIntent(watch, item) && watchRequest(state, watch)?.id === item.id;
 };
-const terminalRequest = (state: Ledger, item: Request): boolean => !(uncheckedWatchRequest(state, item) && own(state.watches, item.from)?.status === "active") && (item.status === "canceled" || (item.status === "answered" && !pendingRelay(item) && item.deliveries.every((delivery) => {
+const terminalRequest = (state: Ledger, item: Request): boolean => !(uncheckedWatchRequest(state, item) && item.status !== "canceled") && (item.status === "canceled" || (item.status === "answered" && !pendingRelay(item) && item.deliveries.every((delivery) => {
   const phase = delivery.phase ?? "request";
   return phase === "request" ? ["accepted", "acknowledged", "failed", "superseded"].includes(delivery.status)
     : phase === "delivery_problem" || phase === "relay_problem" || phase === "watch_check" ? ["accepted", "acknowledged", "superseded"].includes(delivery.status)
@@ -62,8 +74,6 @@ const retireUnsent = (item: Request, reason: string, phase?: Delivery["phase"]):
     delivery.reason = reason;
   }
 };
-const watchRequest = (state: Ledger, watch: Watch): Request | undefined => watch.cycle === null ? undefined : Object.values(state.requests).find((item) => item.intent.startsWith(`watch:${watch.target}:`) && item.intent.endsWith(`:${watch.cycle}`));
-
 export function execute(state: Ledger, operation: string, args: Args, at: string): Outcome {
   if (operation === "status") return { changed: false, value: {
     schema: state.schema, at, lastUpdatedAt: state.updatedAt, eventCursor: state.seq, counts: {
@@ -150,7 +160,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const participant: Participant = { id: id("a"), machine: record.machine, hostScope: record.hostScope, session: runtimeSession, instance, name: record.name, project: optional(args, "project"), parent: record.parent, pane: record.pane, runtime, connection: "connected", observedAt: at };
     put(state.participants, participant.id, participant);
     if (!record.noWatch) {
-      const watch: Watch = { target: participant.id, observer: record.parent, generation: 1, status: "active", intervalMs: state.config.watchMs, dueAt: timed(at, state.config.watchMs), cycle: null, checkedAt: null, startedAt: at, stoppedAt: null, observation: null };
+      const watch: Watch = { target: participant.id, observer: record.parent, generation: 1, status: "active", intervalMs: state.config.watchMs, dueAt: timed(at, state.config.watchMs), cycle: null, requestId: null, checkedAt: null, startedAt: at, stoppedAt: null, observation: null };
       state.watches[participant.id] = watch;
     }
     record.status = "complete"; record.participant = participant.id;
@@ -201,7 +211,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const carryCycle = previous !== undefined && previous.cycle !== null && carriedRequest !== undefined && carriedRequest.status !== "canceled";
     const watch: Watch = { target: target.id, observer: observer.id, generation: (previous?.generation ?? 0) + 1, status: "active", intervalMs,
       dueAt: carryCycle ? previous!.dueAt : timed(at, intervalMs),
-      cycle: carryCycle ? previous!.cycle : null,
+      cycle: carryCycle ? previous!.cycle : null, requestId: carryCycle ? carriedRequest!.id : null,
       checkedAt: previous?.checkedAt ?? null, startedAt: at, stoppedAt: null, observation: previous?.observation ?? null };
     if (carryCycle && carriedRequest) {
       const sameObserver = previous!.observer === observer.id;
@@ -232,11 +242,15 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (actor !== watch.observer) throw new HcoordError("forbidden", "only the assigned observer can confirm this watch cycle");
     if (watch.cycle !== cycle) throw new HcoordError("conflict", "cycle is not the current unchecked cycle", { currentCycle: watch.cycle });
     const checkRequest = watchRequest(state, watch);
-    watch.checkedAt = at; watch.cycle = null; watch.dueAt = timed(at, watch.intervalMs);
-    if (checkRequest?.status === "open") { checkRequest.status = "answered"; checkRequest.answeredAt = at; checkRequest.answer = "cycle checked"; checkRequest.respondent = actor; checkRequest.recordedBy = actor; }
-    if (checkRequest) {
-      retireUnsent(checkRequest, "watch cycle checked");
-      for (const delivery of checkRequest.deliveries) if (delivery.phase === "watch_check" && delivery.recipient === actor && delivery.status === "accepted") { delivery.status = "acknowledged"; delivery.acknowledgedAt = at; }
+    if (!checkRequest) throw new HcoordError("corrupt_ledger", "the active watch has no request for its current cycle");
+    watch.checkedAt = at; watch.cycle = null; watch.requestId = null; watch.dueAt = timed(at, watch.intervalMs);
+    if (checkRequest.status === "open") { checkRequest.status = "answered"; checkRequest.answeredAt = at; checkRequest.answer = "cycle checked"; checkRequest.respondent = actor; checkRequest.recordedBy = actor; }
+    retireUnsent(checkRequest, "watch cycle checked", "request");
+    retireUnsent(checkRequest, "watch cycle checked", "watch_check");
+    for (const delivery of checkRequest.deliveries) {
+      const phase = delivery.phase ?? "request";
+      if (phase === "watch_check" && delivery.recipient === actor && delivery.status === "accepted") { delivery.status = "acknowledged"; delivery.acknowledgedAt = at; }
+      else if ((phase === "request" || phase === "watch_check") && (delivery.status === "unknown" || delivery.status === "failed")) { const prior = delivery.reason ?? `prior delivery ${delivery.status}`; delivery.status = "superseded"; delivery.reason = `${prior}; watch cycle checked, no further submission needed`; }
     }
     event(state, at, "watch.checked", target, cycle, { observer: watch.observer });
     return { changed: true, value: watch };
@@ -269,6 +283,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const watch = own(state.watches, item.from);
     const nextAction = item.status === "canceled" ? "inspect late answers; cancellation does not undo accepted delivery"
       : uncheckedWatchRequest(state, item) && watch?.status === "active" ? "assigned observer must use watch check; a human may stop or assign the watch"
+      : uncheckedWatchRequest(state, item) && item.status === "answered" ? "watch is stopped; a human may restart or assign it for an explicit check"
       : uncheckedWatchRequest(state, item) ? "watch is stopped; a human may restart or assign it, or sender/human may cancel the old request"
       : pendingRelay(item) ? "intermediary must inspect the original answer and relay it; inspect blocked delivery first"
       : uncertain.length ? "inspect unknown submission before attempting another external effect"
@@ -322,13 +337,13 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (uncheckedWatchRequest(state, item) && watch?.status === "active") throw new HcoordError("conflict", "an active watch cycle cannot be canceled as a question; use watch check, stop, or assign");
     if (item.status === "canceled") {
       if (!stoppedCycle) return { changed: false, value: item };
-      watch!.cycle = null;
+      watch!.cycle = null; watch!.requestId = null;
       event(state, at, "watch.cycle_canceled", item.from, item.intent);
       return { changed: true, value: item };
     }
     if (item.status === "answered") throw new HcoordError("conflict", "answered request cannot be canceled");
     item.status = "canceled"; item.canceledAt = at;
-    if (stoppedCycle) watch!.cycle = null;
+    if (stoppedCycle) { watch!.cycle = null; watch!.requestId = null; }
     for (const delivery of item.deliveries) if (delivery.status === "pending" || delivery.status === "deferred") { delivery.status = "failed"; delivery.reason = "request canceled before submission"; }
     event(state, at, "request.canceled", item.id, item.intent);
     return { changed: true, value: item };
@@ -425,6 +440,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
           if (Object.keys(state.requests).length >= MAX_REQUESTS) throw new HcoordError("capacity", `request limit ${MAX_REQUESTS} reached; watch cycle was not saved`);
           queueDelivery(item, watch.observer, at);
           state.requests[item.id] = item;
+          watch.requestId = item.id;
           event(state, at, "watch.cycle", watch.target, watch.cycle, { requestId: item.id });
         }
       } else {

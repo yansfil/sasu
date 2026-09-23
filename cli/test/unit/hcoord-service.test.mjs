@@ -175,6 +175,75 @@ test("restarting a stopped watch with the same observer reuses the original deli
   }
 });
 
+test("an ordinary request with a watch-like intent cannot close the actual cycle", () => {
+  for (const legacy of [false, true]) {
+    const at = "2026-09-01T00:00:00.000Z", state = emptyLedger(at);
+    const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;
+    const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "idle" });
+    const target = register("target"), observer = register("observer");
+    run("watch.start", { target: target.id, observer: observer.id, actor: "human", intervalMs: 1000 });
+    run("tick", {}, "2026-09-01T00:00:01.000Z");
+    const cycle = state.watches[target.id].cycle;
+    const checkRequest = Object.values(state.requests).find((item) => item.intent.startsWith("watch:"));
+    if (legacy) delete state.watches[target.id].requestId;
+    const decoy = run("request.send", { from: target.id, to: "human", body: "Ordinary question", intent: `watch:${target.id}:decoy:${cycle}` });
+    assert.match(run("request.show", { id: decoy.id }).nextAction, /assigned recipient/);
+    run("watch.stop", { target: target.id, actor: "human" });
+    run("request.cancel", { id: decoy.id, actor: "human" });
+    assert.equal(state.watches[target.id].cycle, cycle, `decoy cancellation must not close ${legacy ? "legacy" : "current"} watch`);
+    run("watch.start", { target: target.id, observer: observer.id, actor: "human" });
+    assert.equal(state.watches[target.id].requestId, checkRequest.id);
+    run("watch.check", { target: target.id, cycle, actor: observer.id });
+    assert.equal(checkRequest.status, "answered");
+  }
+});
+
+test("a checked cycle resolves uncertain wake delivery without claiming acceptance", () => {
+  const at = "2026-09-01T00:00:00.000Z", state = emptyLedger(at);
+  const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;
+  const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "idle" });
+  const target = register("target"), observer = register("observer");
+  run("watch.start", { target: target.id, observer: observer.id, actor: "human", intervalMs: 1000 });
+  run("tick", {}, "2026-09-01T00:00:01.000Z");
+  const cycle = state.watches[target.id].cycle;
+  const checkRequest = Object.values(state.requests).find((item) => item.intent.startsWith("watch:"));
+  checkRequest.deliveries[0].status = "unknown";
+  checkRequest.deliveries[0].reason = "guarded submission outcome unknown";
+  run("watch.stop", { target: target.id, actor: "human" });
+  run("watch.start", { target: target.id, observer: observer.id, actor: "human" });
+  assert.equal(checkRequest.deliveries.length, 1);
+  run("watch.check", { target: target.id, cycle, actor: observer.id }, "2026-09-01T00:00:02.000Z");
+  assert.equal(checkRequest.deliveries[0].status, "superseded");
+  assert.match(checkRequest.deliveries[0].reason, /outcome unknown.*cycle checked/);
+  assert.equal(run("inbox").some((item) => item.requestId === checkRequest.id), false);
+  run("tick", { observedTargets: [] }, "2026-10-03T00:00:00.000Z");
+  assert.equal(state.requests[checkRequest.id], undefined, "a completed cycle eventually leaves retention");
+});
+
+test("a stopped older answered cycle remains available for explicit checking", () => {
+  const at = "2026-09-01T00:00:00.000Z", state = emptyLedger(at);
+  const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;
+  const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "idle" });
+  const target = register("target"), observer = register("observer");
+  run("watch.start", { target: target.id, observer: observer.id, actor: "human", intervalMs: 1000 });
+  run("tick", {}, "2026-09-01T00:00:01.000Z");
+  const cycle = state.watches[target.id].cycle;
+  const checkRequest = Object.values(state.requests).find((item) => item.intent.startsWith("watch:"));
+  checkRequest.status = "answered";
+  checkRequest.answeredAt = "2026-09-01T00:00:01.000Z";
+  checkRequest.answer = "older stored reply";
+  checkRequest.deliveries[0].status = "accepted";
+  run("watch.stop", { target: target.id, actor: "human" }, "2026-09-01T00:00:02.000Z");
+  run("tick", { observedTargets: [] }, "2026-10-03T00:00:00.000Z");
+  assert.ok(state.requests[checkRequest.id]);
+  assert.match(run("request.show", { id: checkRequest.id }).nextAction, /explicit check/);
+  run("watch.assign", { target: target.id, observer: observer.id, actor: "human", expectedGeneration: "1" }, "2026-10-03T00:00:01.000Z");
+  assert.equal(state.watches[target.id].cycle, cycle);
+  run("watch.check", { target: target.id, cycle, actor: observer.id }, "2026-10-03T00:00:02.000Z");
+  run("tick", { observedTargets: [] }, "2026-10-03T00:00:03.000Z");
+  assert.equal(state.requests[checkRequest.id], undefined);
+});
+
 test("a stopped watch can release its canceled request and relation after retention", () => {
   const at = "2026-09-01T00:00:00.000Z", state = emptyLedger(at);
   const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;

@@ -21,7 +21,7 @@ export interface Participant {
 }
 export interface Watch {
   target: string; observer: string | null; generation: number; status: "active" | "stopped";
-  intervalMs: number; dueAt: string; cycle: string | null; checkedAt: string | null;
+  intervalMs: number; dueAt: string; cycle: string | null; requestId?: string | null; checkedAt: string | null;
   startedAt: string; stoppedAt: string | null; observation: string | null;
 }
 export interface Delivery {
