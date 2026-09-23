@@ -28,7 +28,7 @@ export interface Delivery {
   id: string; requestId: string; recipient: string; status: DeliveryStatus; reason: string | null;
   phase?: "request" | "answer" | "relay" | "relay_problem" | "delivery_problem" | "watch_check";
   reservedAt: string; attemptedAt: string | null; acceptedAt: string | null; acknowledgedAt: string | null;
-  runtimeCode: string | null;
+  runtimeCode: string | null; actionClosedAt?: string | null;
 }
 export interface Request {
   id: string; intent: string; from: string; to: string; intermediary: string | null; initialIntermediary?: string | null;
@@ -36,6 +36,7 @@ export interface Request {
   createdAt: string; answeredAt: string | null; answer: string | null; respondent: string | null;
   recordedBy: string | null; canceledAt: string | null; lateAnswers: Array<{ at: string; body: string; respondent: string; recordedBy: string }>;
   relayBody: string | null; relayAt: string | null; escalatedAt: string | null; remindedAt: string | null;
+  watchCheckedAt?: string | null;
   relayRemindedAt?: string | null; relayEscalatedAt?: string | null;
   deliveryRemindedAt?: string | null; deliveryEscalatedAt?: string | null;
   deliveries: Delivery[];

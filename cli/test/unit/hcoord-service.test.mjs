@@ -213,8 +213,10 @@ test("a checked cycle resolves uncertain wake delivery without claiming acceptan
   run("watch.start", { target: target.id, observer: observer.id, actor: "human" });
   assert.equal(checkRequest.deliveries.length, 1);
   run("watch.check", { target: target.id, cycle, actor: observer.id }, "2026-09-01T00:00:02.000Z");
-  assert.equal(checkRequest.deliveries[0].status, "superseded");
+  assert.equal(checkRequest.deliveries[0].status, "unknown", "the transport outcome remains unconfirmed");
+  assert.equal(checkRequest.deliveries[0].actionClosedAt, "2026-09-01T00:00:02.000Z");
   assert.match(checkRequest.deliveries[0].reason, /outcome unknown.*cycle checked/);
+  assert.match(run("request.show", { id: checkRequest.id }).nextAction, /no further wake submission/);
   assert.equal(run("inbox").some((item) => item.requestId === checkRequest.id), false);
   run("tick", { observedTargets: [] }, "2026-10-03T00:00:00.000Z");
   assert.equal(state.requests[checkRequest.id], undefined, "a completed cycle eventually leaves retention");
@@ -233,6 +235,7 @@ test("a stopped older answered cycle remains available for explicit checking", (
   checkRequest.answeredAt = "2026-09-01T00:00:01.000Z";
   checkRequest.answer = "older stored reply";
   checkRequest.deliveries[0].status = "accepted";
+  for (const status of ["pending", "deferred", "unknown"]) checkRequest.deliveries.push({ ...checkRequest.deliveries[0], id: `legacy-answer-${status}`, recipient: target.id, phase: "answer", status, reason: status === "unknown" ? "old answer outcome unknown" : null });
   run("watch.stop", { target: target.id, actor: "human" }, "2026-09-01T00:00:02.000Z");
   run("tick", { observedTargets: [] }, "2026-10-03T00:00:00.000Z");
   assert.ok(state.requests[checkRequest.id]);
@@ -240,7 +243,14 @@ test("a stopped older answered cycle remains available for explicit checking", (
   run("watch.assign", { target: target.id, observer: observer.id, actor: "human", expectedGeneration: "1" }, "2026-10-03T00:00:01.000Z");
   assert.equal(state.watches[target.id].cycle, cycle);
   run("watch.check", { target: target.id, cycle, actor: observer.id }, "2026-10-03T00:00:02.000Z");
+  assert.equal(checkRequest.deliveries.find((delivery) => delivery.id === "legacy-answer-pending").status, "superseded");
+  assert.equal(checkRequest.deliveries.find((delivery) => delivery.id === "legacy-answer-deferred").status, "superseded");
+  assert.equal(checkRequest.deliveries.find((delivery) => delivery.id === "legacy-answer-unknown").status, "unknown");
+  assert.equal(checkRequest.deliveries.find((delivery) => delivery.id === "legacy-answer-unknown").actionClosedAt, "2026-10-03T00:00:02.000Z");
+  assert.equal(run("inbox").some((item) => item.requestId === checkRequest.id), false);
   run("tick", { observedTargets: [] }, "2026-10-03T00:00:03.000Z");
+  assert.ok(state.requests[checkRequest.id], "actual watch check starts the resolution retention window");
+  run("tick", { observedTargets: [] }, "2026-11-05T00:00:00.000Z");
   assert.equal(state.requests[checkRequest.id], undefined);
 });
 
