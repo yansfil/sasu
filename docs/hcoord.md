@@ -23,6 +23,7 @@ If tab creation returned a pane ID but saving it failed, repair the reported sto
 `--project` filters a list and does not confer watch authority.
 Only the assigned observer can confirm a watch cycle with `watch check`; `request reply` cannot close a watch request or prompt the watched child.
 A human can assign an unowned or stopped watch, while the recorded parent may start its own child's first watch.
+After a watch stops, the retained check request can be canceled by its sender or a human, or a human can restart the watch so the outstanding cycle reaches a new observer.
 
 ## Human answer and delivery
 

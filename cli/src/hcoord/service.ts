@@ -44,7 +44,7 @@ const uncheckedWatchRequest = (state: Ledger, item: Request): boolean => {
   const watch = own(state.watches, item.from);
   return watch?.cycle !== null && watch !== undefined && item.intent.startsWith(`watch:${watch.target}:`) && item.intent.endsWith(`:${watch.cycle}`);
 };
-const terminalRequest = (state: Ledger, item: Request): boolean => !uncheckedWatchRequest(state, item) && (item.status === "canceled" || (item.status === "answered" && !pendingRelay(item) && item.deliveries.every((delivery) => {
+const terminalRequest = (state: Ledger, item: Request): boolean => !(uncheckedWatchRequest(state, item) && own(state.watches, item.from)?.status === "active") && (item.status === "canceled" || (item.status === "answered" && !pendingRelay(item) && item.deliveries.every((delivery) => {
   const phase = delivery.phase ?? "request";
   return phase === "request" ? ["accepted", "acknowledged", "failed", "superseded"].includes(delivery.status)
     : phase === "delivery_problem" || phase === "relay_problem" || phase === "watch_check" ? ["accepted", "acknowledged", "superseded"].includes(delivery.status)
@@ -134,6 +134,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const record = own(state.spawnIntents, required(args, "intent"));
     if (!record || record.status === "complete") throw new HcoordError("conflict", "spawn intent is not reservable");
     record.status = "unknown"; record.reason = required(args, "reason");
+    record.placement = { workspace: required(args, "workspace"), cwd: required(args, "cwd") };
     event(state, at, "agent.spawn_uncertain", record.parent, record.key, { pane: record.pane });
     return { changed: true, value: record };
   }
@@ -196,7 +197,8 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       state.watchHistory.push({ ...previous, status: "stopped", stoppedAt: previous.stoppedAt ?? at });
     }
     const carriedRequest = previous ? watchRequest(state, previous) : undefined;
-    const carryCycle = previous?.cycle !== null && carriedRequest !== undefined && previous?.status === "active";
+    if (previous !== undefined && previous.cycle !== null && carriedRequest === undefined) throw new HcoordError("corrupt_ledger", "the watch has an unchecked cycle without its request; no new cycle was created");
+    const carryCycle = previous !== undefined && previous.cycle !== null && carriedRequest !== undefined && carriedRequest.status !== "canceled";
     const watch: Watch = { target: target.id, observer: observer.id, generation: (previous?.generation ?? 0) + 1, status: "active", intervalMs,
       dueAt: carryCycle ? previous!.dueAt : timed(at, intervalMs),
       cycle: carryCycle ? previous!.cycle : null,
@@ -260,7 +262,10 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const item = request(state, required(args, "id"));
     const uncertain = item.deliveries.filter((delivery) => delivery.status === "unknown");
     const deferred = item.deliveries.filter((delivery) => delivery.status === "deferred" || (delivery.status === "failed" && !(item.status === "answered" && (delivery.phase ?? "request") === "request")));
-    const nextAction = item.status === "canceled" ? "inspect late answers; cancellation does not undo accepted delivery"
+    const watch = own(state.watches, item.from);
+    const nextAction = uncheckedWatchRequest(state, item) && watch?.status === "active" ? "assigned observer must use watch check; a human may stop or assign the watch"
+      : uncheckedWatchRequest(state, item) ? "watch is stopped; a human may restart or assign it, or sender/human may cancel the old request"
+      : item.status === "canceled" ? "inspect late answers; cancellation does not undo accepted delivery"
       : pendingRelay(item) ? "intermediary must inspect the original answer and relay it; inspect blocked delivery first"
       : uncertain.length ? "inspect unknown submission before attempting another external effect"
       : deferred.length ? "inspect delivery reason and recipient identity"
@@ -342,7 +347,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
   if (operation === "inbox") {
     const items: Array<Record<string, unknown>> = [];
     for (const item of Object.values(state.requests)) {
-      if ((item.status === "open" && item.requiresReply && (item.to === "human" || item.escalatedAt !== null)) || pendingRelay(item)) items.push({ kind: pendingRelay(item) ? "relay_problem" : "question", requestId: item.id, createdAt: item.createdAt, from: item.from, to: item.to, status: item.status, nextAction: pendingRelay(item) ? "inspect parent delivery and relay the recorded answer" : "reply or cancel this request" });
+      if ((item.status === "open" && item.requiresReply && (item.to === "human" || item.escalatedAt !== null)) || pendingRelay(item)) items.push({ kind: pendingRelay(item) ? "relay_problem" : "question", requestId: item.id, createdAt: item.createdAt, from: item.from, to: item.to, status: item.status, nextAction: pendingRelay(item) ? "inspect parent delivery and relay the recorded answer" : uncheckedWatchRequest(state, item) ? "assign or restart the watch for an explicit check, or stop and cancel the old request" : "reply or cancel this request" });
       if (item.status !== "canceled" && !pendingRelay(item) && item.deliveries.some((delivery) => delivery.status === "unknown" || delivery.status === "deferred" || (delivery.status === "failed" && !(item.status === "answered" && (delivery.phase ?? "request") === "request")))) items.push({ kind: "delivery_problem", requestId: item.id, createdAt: item.createdAt, nextAction: "inspect delivery history and recipient identity" });
     }
     for (const watch of Object.values(state.watches)) if (watch.status === "active" && (watch.observer === null || own(state.participants, watch.observer)?.connection === "unavailable" || !own(state.participants, watch.observer))) items.push({ kind: "watch_unassigned", target: watch.target, observer: watch.observer, nextAction: "inspect current observer and assign explicitly" });

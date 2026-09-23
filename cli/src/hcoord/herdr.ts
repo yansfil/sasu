@@ -80,7 +80,7 @@ export function parentPlacement(parent: Participant): { workspace: string; cwd: 
   if (result.status !== 0) throw new HcoordError("runtime_unavailable", "Herdr could not inspect the parent pane");
   const data = herdrJson(result.stdout);
   const pane = (data["result"] as Record<string, unknown> | undefined)?.["pane"] as Record<string, unknown> | undefined;
-  if (typeof pane?.["workspace_id"] !== "string" || typeof pane?.["cwd"] !== "string") throw new HcoordError("runtime_unavailable", "Herdr parent pane has no workspace or cwd");
+  if (pane?.["pane_id"] !== parent.pane || typeof pane?.["workspace_id"] !== "string" || typeof pane?.["cwd"] !== "string") throw new HcoordError("runtime_unavailable", "Herdr parent pane identity, workspace, or cwd is unconfirmed");
   return { workspace: pane["workspace_id"], cwd: pane["cwd"] };
 }
 
@@ -100,8 +100,8 @@ export function confirmSpawnPane(record: SpawnIntent, placement: { workspace: st
   if (result.status !== 0) throw new HcoordError("spawn_uncertain", "the recorded pane is unavailable; inspect it before resuming", { pane: record.pane });
   const data = herdrJson(result.stdout);
   const pane = (data["result"] as Record<string, unknown> | undefined)?.["pane"] as Record<string, unknown> | undefined;
-  if (pane?.["pane_id"] !== undefined && pane["pane_id"] !== record.pane || pane?.["workspace_id"] !== placement.workspace || pane?.["cwd"] !== placement.cwd) {
-    throw new HcoordError("identity_conflict", "the pane does not match the parent's workspace and cwd", { pane: record.pane });
+  if (pane?.["pane_id"] !== record.pane || pane?.["workspace_id"] !== placement.workspace || pane?.["cwd"] !== placement.cwd) {
+    throw new HcoordError("identity_conflict", "the pane does not match the spawn intent's saved placement", { pane: record.pane });
   }
 }
 
@@ -109,9 +109,9 @@ export function inspectSpawnedAgent(record: SpawnIntent): { session: string; ins
   if (record.pane === null) return null;
   const found = getAgent(record.pane, { env: scopeEnv(record.hostScope) }, 2000);
   if (found.kind === "absent") return null;
-  if (found.kind !== "found") throw new HcoordError("spawn_uncertain", "Herdr cannot inspect the spawned pane; retain its ID and retry after reconnection", { pane: record.pane });
-  if (found.agent.name !== record.name) throw new HcoordError("identity_conflict", "spawn pane hosts a different agent; no new agent was started", { pane: record.pane, currentName: found.agent.name });
-  if (found.agent.sessionId === null || found.agent.terminalId === null) throw new HcoordError("spawn_uncertain", "spawned agent has no stable execution identity yet", { pane: record.pane });
+  if (found.kind !== "found") throw new HcoordError("spawn_uncertain", "Herdr cannot inspect the spawned pane; retain its ID and retry after reconnection", { intent: record.key, pane: record.pane, unfinishedStep: "inspect_agent" });
+  if (found.agent.paneId !== record.pane || found.agent.name !== record.name || found.agent.kind !== record.kind) throw new HcoordError("identity_conflict", "spawn pane hosts a different execution; no binding was changed", { intent: record.key, pane: record.pane });
+  if (found.agent.sessionId === null || found.agent.terminalId === null) throw new HcoordError("spawn_uncertain", "spawned agent has no stable execution identity yet", { intent: record.key, pane: record.pane, unfinishedStep: "inspect_agent" });
   return { session: found.agent.sessionId, instance: found.agent.terminalId, runtime: found.agent.status === "blocked" ? "unknown" : found.agent.status };
 }
 

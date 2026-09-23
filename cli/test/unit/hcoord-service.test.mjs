@@ -149,6 +149,28 @@ test("watch ownership distinguishes human handover from observer confirmation", 
   assert.throws(() => run("watch.start", { target: target.id, observer: second.id, actor: second.id }), { code: "forbidden" });
   run("watch.assign", { target: target.id, observer: second.id, actor: "human", expectedGeneration: "1" });
   assert.equal(state.watches[target.id].observer, second.id);
+  assert.equal(state.watches[target.id].cycle, cycle, "restart carries the one unchecked cycle");
+  const carried = Object.values(state.requests).filter((item) => item.intent.startsWith("watch:"));
+  assert.equal(carried.length, 1);
+  assert.equal(carried[0].to, second.id);
+});
+
+test("a stopped watch can release its canceled request and relation after retention", () => {
+  const at = "2026-09-01T00:00:00.000Z", state = emptyLedger(at);
+  const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;
+  const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "idle" });
+  const target = register("target"), observer = register("observer");
+  run("watch.start", { target: target.id, observer: observer.id, actor: "human", intervalMs: 1000 });
+  run("tick", {}, "2026-09-01T00:00:01.000Z");
+  const checkRequest = Object.values(state.requests).find((item) => item.intent.startsWith("watch:"));
+  run("watch.stop", { target: target.id, actor: "human" }, "2026-09-01T00:00:02.000Z");
+  assert.throws(() => run("request.reply", { id: checkRequest.id, body: "Observed", respondent: observer.id, recordedBy: observer.id }), { code: "conflict" });
+  assert.match(run("request.show", { id: checkRequest.id }).nextAction, /stopped/);
+  run("request.cancel", { id: checkRequest.id, actor: "human" }, "2026-09-01T00:00:03.000Z");
+  run("tick", { observedTargets: [] }, "2026-10-03T00:00:00.000Z");
+  assert.equal(state.requests[checkRequest.id], undefined);
+  assert.equal(state.watches[target.id], undefined);
+  assert.equal(run("status").counts.requests, 0);
 });
 
 test("request intent checks the full routing policy and notify-only has no question", () => {

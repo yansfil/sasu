@@ -116,17 +116,20 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     let createdNow = false;
     if (intent.pane === null) {
       const parent = ledger.participants[intent.parent]!;
-      const placement = parentPlacement(parent);
       if (intent.status !== "reserved") {
         if (typeof reconcilePane !== "string" || reconcilePane.trim() === "") throw new HcoordError("spawn_uncertain", "tab creation outcome is unknown; inspect the original tab and retry this intent with --reconcile-pane <exact-pane-id>", { intent: intent.key, pane: null, unfinishedStep: "record_pane" });
-        confirmSpawnPane({ ...intent, pane: reconcilePane }, placement);
+        // Older persisted intents lack placement, so retain their parent placement check.
+        confirmSpawnPane({ ...intent, pane: reconcilePane }, intent.placement ?? parentPlacement(parent));
         const found = inspectSpawnedAgent({ ...intent, pane: reconcilePane });
         if (found === null && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "pane is confirmed but has no agent; retry with --reconcile-pane and --resume-start after inspecting it", { intent: intent.key, pane: reconcilePane, unfinishedStep: "agent_start" });
         intent = commit("agent.spawn.pane", { intent: intent.key, pane: reconcilePane }, new Date().toISOString()) as SpawnIntent;
       } else {
         if (reconcilePane !== null && reconcilePane !== undefined) throw new HcoordError("invalid_argument", "a new spawn intent cannot reconcile an existing pane");
-        intent = commit("agent.spawn.unknown", { intent: intent.key, reason: "tab creation reserved; outcome pending" }, at) as SpawnIntent;
-        const pane = createSpawnPane(intent, placement);
+        const placement = parentPlacement(parent);
+        intent = commit("agent.spawn.unknown", { intent: intent.key, reason: "tab creation reserved; outcome pending", ...placement }, at) as SpawnIntent;
+        let pane: string;
+        try { pane = createSpawnPane(intent, placement); }
+        catch (error) { throw new HcoordError("spawn_uncertain", "tab creation outcome is unknown; inspect the original intent before reconciling a pane", { intent: intent.key, pane: null, unfinishedStep: "record_pane", code: error instanceof HcoordError ? error.code : "runtime_failed" }); }
         try { intent = commit("agent.spawn.pane", { intent: intent.key, pane }, new Date().toISOString()) as SpawnIntent; }
         catch (error) { throw new HcoordError("spawn_uncertain", "tab was created but pane recording failed; inspect the saved pane and repair storage before reconciling this intent", { intent: intent.key, pane, unfinishedStep: "record_pane", code: error instanceof HcoordError ? error.code : "storage_failed" }); }
         createdNow = true;
@@ -135,7 +138,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     let identity = inspectSpawnedAgent(intent);
     if (identity === null) {
       if (!createdNow && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "saved pane has no confirmed agent; inspect it and retry this intent with --resume-start", { intent: intent.key, pane: intent.pane, unfinishedStep: "agent_start" });
-      if (!createdNow) confirmSpawnPane(intent, parentPlacement(ledger.participants[intent.parent]!));
+      if (!createdNow) confirmSpawnPane(intent, intent.placement ?? parentPlacement(ledger.participants[intent.parent]!));
       if (ledger.events.length >= MAX_EVENTS) throw new HcoordError("capacity", "event history has no room to record the resumed agent; resolve retention before starting it", { intent: intent.key, pane: intent.pane });
       startSpawnedAgent(intent);
       identity = inspectSpawnedAgent(intent);

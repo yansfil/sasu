@@ -20,14 +20,14 @@ const target=process.argv[4];
 if(process.argv[2]==='agent' && process.argv[3]==='get') {
   const row=target==='parent-pane'?{name:'parent',session:'one',instance:'a'}:target==='child-pane'?{name:'child',session:'two',instance:'b'}:target?.endsWith('-pane') && fs.existsSync(path.join(process.env.HOME,target+'.started'))?{name:target.slice(0,-5),session:target+'-session',instance:target+'-instance'}:null;
   if(!row){process.stderr.write(JSON.stringify({error:{code:'agent_not_found'}}));process.exitCode=1;}
-  else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:row.name,agent:'codex',agent_session:{value:row.session},terminal_id:row.instance,agent_status:status,input_guard:process.env.HCOORD_FAKE_GUARD==='1'&&process.env.HCOORD_FAKE_INPUT_GUARD!=='0'?'test-guard':undefined}}}));}
+  else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:row.name,agent:process.env.HCOORD_FAKE_WRONG_KIND==='1'&&target==='kind-check-pane'?'claude':'codex',agent_session:{value:row.session},terminal_id:row.instance,agent_status:status,input_guard:process.env.HCOORD_FAKE_GUARD==='1'&&process.env.HCOORD_FAKE_INPUT_GUARD!=='0'?'test-guard':undefined}}}));}
 } else if(process.argv[2]==='pane' && process.argv[3]==='get') {
   if(target?.endsWith('-pane') && !['parent-pane','child-pane'].includes(target) && !fs.existsSync(path.join(process.env.HOME,target.slice(0,-5)+'.tab'))){process.stderr.write('pane missing');process.exitCode=1;}
-  else process.stdout.write(JSON.stringify({result:{type:'pane_info',pane:{pane_id:target,workspace_id:'test-workspace',cwd:process.env.HOME}}}));
+  else {const cwdFile=path.join(process.env.HOME,target==='parent-pane'?'parent.cwd':target.slice(0,-5)+'.cwd');const cwd=fs.existsSync(cwdFile)?fs.readFileSync(cwdFile,'utf8'):process.env.HOME;process.stdout.write(JSON.stringify({result:{type:'pane_info',pane:{pane_id:process.env.HCOORD_FAKE_PANE_ID_MISSING==='1'&&target==='partial-pane'?undefined:target,workspace_id:'test-workspace',cwd}}}));}
 } else if(process.argv[2]==='tab' && process.argv[3]==='create') {
   const label=process.argv[process.argv.indexOf('--label')+1], marker=path.join(process.env.HOME,label+'.tab');
   if(fs.existsSync(marker)){process.stderr.write('duplicate tab');process.exitCode=9;}
-  else {fs.writeFileSync(marker,'1');process.stdout.write(JSON.stringify({result:{root_pane:{pane_id:label+'-pane'}}}));}
+  else {fs.writeFileSync(marker,'1');fs.writeFileSync(path.join(process.env.HOME,label+'.cwd'),process.argv[process.argv.indexOf('--cwd')+1]);process.stdout.write(JSON.stringify({result:{root_pane:process.env.HCOORD_FAKE_TAB_INVALID==='1'?{}:{pane_id:label+'-pane'}}}));}
 } else if(process.argv[2]==='agent' && process.argv[3]==='start') {
   const name=process.argv[4], pane=process.argv[process.argv.indexOf('--pane')+1];
   if(process.env.HCOORD_FAKE_START_FAIL==='1'){process.stderr.write('start outcome unknown');process.exitCode=8;}
@@ -157,6 +157,27 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(unobserved.watch, null);
   assert.equal(ok("graph").creation.find((edge) => edge.child === unobserved.participant.id).parent, parent.id);
   await stop();
+  env.HCOORD_FAKE_TAB_INVALID = "1";
+  await start();
+  const malformedTabArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "malformed-tab", "--intent", "malformed-tab"];
+  const malformedTab = JSON.parse(command(...malformedTabArgs).stdout);
+  assert.equal(malformedTab.error.code, "spawn_uncertain");
+  assert.equal(malformedTab.error.detail.intent, "malformed-tab");
+  assert.equal(malformedTab.error.detail.unfinishedStep, "record_pane");
+  assert.equal(JSON.parse(command(...malformedTabArgs).stdout).error.code, "spawn_uncertain", "malformed create result cannot create a second tab");
+  assert.equal(fs.readFileSync(path.join(home, "malformed-tab.tab"), "utf8"), "1");
+  await stop();
+  delete env.HCOORD_FAKE_TAB_INVALID;
+  env.HCOORD_FAKE_WRONG_KIND = "1";
+  await start();
+  const kindArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "kind-check", "--intent", "kind-check"];
+  assert.equal(JSON.parse(command(...kindArgs).stdout).error.code, "identity_conflict", "an observed agent kind must match the original intent");
+  await stop();
+  delete env.HCOORD_FAKE_WRONG_KIND;
+  await start();
+  assert.equal(ok(...kindArgs).intent.pane, "kind-check-pane", "a corrected observation binds the original pane");
+  assert.equal(fs.readFileSync(path.join(home, "kind-check.tab"), "utf8"), "1");
+  await stop();
   env.HCOORD_FAKE_START_FAIL = "1";
   await start();
   const partialArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "partial", "--intent", "partial-start"];
@@ -167,22 +188,36 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(JSON.parse(command(...partialArgs).stdout).error.code, "spawn_uncertain", "retry does not repeat an uncertain start");
   await stop();
   delete env.HCOORD_FAKE_START_FAIL;
+  fs.writeFileSync(path.join(home, "parent.cwd"), path.join(home, "moved-parent"));
+  env.HCOORD_FAKE_PANE_ID_MISSING = "1";
+  await start();
+  assert.equal(JSON.parse(command(...partialArgs, "--resume-start").stdout).error.code, "identity_conflict", "pane identity must be explicit before a resumed start");
+  await stop();
+  delete env.HCOORD_FAKE_PANE_ID_MISSING;
   await start();
   const resumed = ok(...partialArgs, "--resume-start");
   assert.equal(resumed.intent.pane, "partial-pane");
+  assert.equal(resumed.intent.placement.cwd, home, "resume uses the saved placement after the parent changes cwd");
   assert.equal(fs.readFileSync(path.join(home, "partial.tab"), "utf8"), "1", "resume reuses the original pane");
   await stop();
   const ledgerFile = path.join(home, ".hcoord", "ledger.json");
   const interrupted = JSON.parse(fs.readFileSync(ledgerFile, "utf8"));
   interrupted.spawnIntents["reconcile-1"] = { ...resumed.intent, key: "reconcile-1", name: "reconciled", status: "unknown", pane: null, participant: null, reason: "pane recording interrupted" };
+  const legacyIntent = { ...resumed.intent, key: "legacy-1", name: "legacy", status: "unknown", pane: null, participant: null, reason: "older pane recording interrupted" };
+  delete legacyIntent.placement;
+  interrupted.spawnIntents["legacy-1"] = legacyIntent;
   fs.writeFileSync(ledgerFile, `${JSON.stringify(interrupted)}\n`);
   fs.writeFileSync(path.join(home, "reconciled.tab"), "1");
+  fs.writeFileSync(path.join(home, "legacy.tab"), "1");
   await start();
   const reconcileArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "reconciled", "--intent", "reconcile-1"];
   assert.equal(JSON.parse(command(...reconcileArgs).stdout).error.detail.unfinishedStep, "record_pane");
   const reconciled = ok(...reconcileArgs, "--reconcile-pane", "reconciled-pane", "--resume-start");
   assert.equal(reconciled.intent.pane, "reconciled-pane");
   assert.equal(fs.readFileSync(path.join(home, "reconciled.tab"), "utf8"), "1", "reconciliation does not create a second tab");
+  const legacyArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "legacy", "--intent", "legacy-1"];
+  assert.equal(JSON.parse(command(...legacyArgs, "--reconcile-pane", "legacy-pane", "--resume-start").stdout).error.code, "identity_conflict", "an old intent without placement cannot bypass the current parent placement check");
+  assert.equal(fs.existsSync(path.join(home, "legacy-pane.started")), false);
   const sent = ok("request", "send", "--from", child.id, "--to", "human", "--intermediary", parent.id, "--body", "Which option?", "--intent", "choice-1");
   assert.equal(ok("request", "send", "--from", child.id, "--to", "human", "--intermediary", parent.id, "--body", "Which option?", "--intent", "choice-1").id, sent.id);
   assert.equal(command("request", "send", "--from", child.id, "--to", "human", "--body", "Other?", "--intent", "choice-1").status, 1);
