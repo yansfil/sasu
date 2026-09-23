@@ -153,6 +153,26 @@ test("watch ownership distinguishes human handover from observer confirmation", 
   const carried = Object.values(state.requests).filter((item) => item.intent.startsWith("watch:"));
   assert.equal(carried.length, 1);
   assert.equal(carried[0].to, second.id);
+  assert.equal(carried[0].deliveries.at(-1).recipient, second.id);
+});
+
+test("restarting a stopped watch with the same observer reuses the original delivery", () => {
+  for (const status of ["pending", "deferred", "unknown", "accepted", "acknowledged"]) {
+    const at = "2026-09-01T00:00:00.000Z", state = emptyLedger(at);
+    const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;
+    const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "idle" });
+    const target = register("target"), observer = register("observer");
+    run("watch.start", { target: target.id, observer: observer.id, actor: "human", intervalMs: 1000 });
+    run("tick", {}, "2026-09-01T00:00:01.000Z");
+    const checkRequest = Object.values(state.requests).find((item) => item.intent.startsWith("watch:"));
+    checkRequest.deliveries[0].status = status;
+    const originalCycle = state.watches[target.id].cycle;
+    run("watch.stop", { target: target.id, actor: "human" });
+    run("watch.start", { target: target.id, observer: observer.id, actor: "human" });
+    assert.equal(state.watches[target.id].cycle, originalCycle, status);
+    assert.equal(checkRequest.deliveries.length, 1, `${status} delivery must not be submitted twice`);
+    assert.equal(checkRequest.deliveries[0].status, status);
+  }
 });
 
 test("a stopped watch can release its canceled request and relation after retention", () => {
@@ -167,10 +187,33 @@ test("a stopped watch can release its canceled request and relation after retent
   assert.throws(() => run("request.reply", { id: checkRequest.id, body: "Observed", respondent: observer.id, recordedBy: observer.id }), { code: "conflict" });
   assert.match(run("request.show", { id: checkRequest.id }).nextAction, /stopped/);
   run("request.cancel", { id: checkRequest.id, actor: "human" }, "2026-09-01T00:00:03.000Z");
+  assert.equal(state.watches[target.id].cycle, null);
+  assert.match(run("request.show", { id: checkRequest.id }).nextAction, /cancellation/);
   run("tick", { observedTargets: [] }, "2026-10-03T00:00:00.000Z");
   assert.equal(state.requests[checkRequest.id], undefined);
   assert.equal(state.watches[target.id], undefined);
   assert.equal(run("status").counts.requests, 0);
+});
+
+test("a retained stopped watch can restart after its old canceled cycle expires", () => {
+  const at = "2026-09-01T00:00:00.000Z", state = emptyLedger(at);
+  const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;
+  const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "idle" });
+  const target = register("target"), observer = register("observer");
+  run("watch.start", { target: target.id, observer: observer.id, actor: "human", intervalMs: 1000 });
+  run("tick", {}, "2026-09-01T00:00:01.000Z");
+  const checkRequest = Object.values(state.requests).find((item) => item.intent.startsWith("watch:"));
+  const oldCycle = state.watches[target.id].cycle;
+  run("watch.stop", { target: target.id, actor: "human" }, "2026-09-01T00:00:02.000Z");
+  run("request.cancel", { id: checkRequest.id, actor: "human" }, "2026-09-01T00:00:03.000Z");
+  run("request.send", { from: target.id, to: "human", body: "Keep participant referenced", intent: "ordinary-open" });
+  state.watches[target.id].cycle = oldCycle; // Reproduce a stopped record saved before cancellation cleared the cycle.
+  run("tick", { observedTargets: [] }, "2026-10-03T00:00:00.000Z");
+  assert.equal(state.requests[checkRequest.id], undefined);
+  assert.ok(state.watches[target.id], "the unrelated open request retains the stopped watch");
+  const restarted = run("watch.assign", { target: target.id, observer: observer.id, actor: "human", expectedGeneration: "1" }, "2026-10-03T00:00:01.000Z");
+  assert.equal(restarted.status, "active");
+  assert.equal(restarted.cycle, null);
 });
 
 test("request intent checks the full routing policy and notify-only has no question", () => {

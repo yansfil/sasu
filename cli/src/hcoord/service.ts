@@ -192,21 +192,25 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (operation === "watch.assign" && expected === null) throw new HcoordError("invalid_argument", "watch assignment requires the generation currently shown by watch list");
     if (expected !== null && Number(expected) !== (previous?.generation ?? 0)) throw new HcoordError("conflict", "watch generation changed; inspect current observer before retry", { current: previous });
     const intervalMs = args["intervalMs"] === undefined ? previous?.intervalMs ?? state.config.watchMs : integerMs(args, "intervalMs");
+    const carriedRequest = previous ? watchRequest(state, previous) : undefined;
+    if (previous?.status === "active" && previous.cycle !== null && carriedRequest === undefined) throw new HcoordError("corrupt_ledger", "the active watch has an unchecked cycle without its request; no new cycle was created");
     if (previous) {
       if (state.watchHistory.length >= MAX_WATCH_HISTORY) throw new HcoordError("capacity", `watch history reached ${MAX_WATCH_HISTORY}; retain the existing assignment until old history expires`);
       state.watchHistory.push({ ...previous, status: "stopped", stoppedAt: previous.stoppedAt ?? at });
     }
-    const carriedRequest = previous ? watchRequest(state, previous) : undefined;
-    if (previous !== undefined && previous.cycle !== null && carriedRequest === undefined) throw new HcoordError("corrupt_ledger", "the watch has an unchecked cycle without its request; no new cycle was created");
     const carryCycle = previous !== undefined && previous.cycle !== null && carriedRequest !== undefined && carriedRequest.status !== "canceled";
     const watch: Watch = { target: target.id, observer: observer.id, generation: (previous?.generation ?? 0) + 1, status: "active", intervalMs,
       dueAt: carryCycle ? previous!.dueAt : timed(at, intervalMs),
       cycle: carryCycle ? previous!.cycle : null,
       checkedAt: previous?.checkedAt ?? null, startedAt: at, stoppedAt: null, observation: previous?.observation ?? null };
     if (carryCycle && carriedRequest) {
-      retireUnsent(carriedRequest, "watch assigned to another observer");
+      const sameObserver = previous!.observer === observer.id;
+      if (!sameObserver) retireUnsent(carriedRequest, "watch assigned to another observer");
       carriedRequest.to = observer.id;
-      queueDelivery(carriedRequest, observer.id, at, carriedRequest.status === "answered" ? "watch_check" : "request");
+      // Reusing the same observer preserves a pending or uncertain submission and its receipt.
+      const phase = carriedRequest.status === "answered" ? "watch_check" : "request";
+      const existingWake = sameObserver && carriedRequest.deliveries.some((delivery) => delivery.recipient === observer.id && (delivery.phase ?? "request") === phase && ["pending", "deferred", "unknown", "accepted", "acknowledged"].includes(delivery.status));
+      if (!existingWake) queueDelivery(carriedRequest, observer.id, at, phase);
     }
     put(state.watches, target.id, watch);
     event(state, at, previous ? "watch.assigned" : "watch.started", target.id, null, { observer: observer.id, generation: watch.generation });
@@ -263,9 +267,9 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const uncertain = item.deliveries.filter((delivery) => delivery.status === "unknown");
     const deferred = item.deliveries.filter((delivery) => delivery.status === "deferred" || (delivery.status === "failed" && !(item.status === "answered" && (delivery.phase ?? "request") === "request")));
     const watch = own(state.watches, item.from);
-    const nextAction = uncheckedWatchRequest(state, item) && watch?.status === "active" ? "assigned observer must use watch check; a human may stop or assign the watch"
+    const nextAction = item.status === "canceled" ? "inspect late answers; cancellation does not undo accepted delivery"
+      : uncheckedWatchRequest(state, item) && watch?.status === "active" ? "assigned observer must use watch check; a human may stop or assign the watch"
       : uncheckedWatchRequest(state, item) ? "watch is stopped; a human may restart or assign it, or sender/human may cancel the old request"
-      : item.status === "canceled" ? "inspect late answers; cancellation does not undo accepted delivery"
       : pendingRelay(item) ? "intermediary must inspect the original answer and relay it; inspect blocked delivery first"
       : uncertain.length ? "inspect unknown submission before attempting another external effect"
       : deferred.length ? "inspect delivery reason and recipient identity"
@@ -313,10 +317,18 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
   if (operation === "request.cancel") {
     const item = request(state, required(args, "id"));
     authority(required(args, "actor"), [item.from]);
-    if (uncheckedWatchRequest(state, item) && own(state.watches, item.from)?.status === "active") throw new HcoordError("conflict", "an active watch cycle cannot be canceled as a question; use watch check, stop, or assign");
-    if (item.status === "canceled") return { changed: false, value: item };
+    const watch = own(state.watches, item.from);
+    const stoppedCycle = uncheckedWatchRequest(state, item) && watch?.status === "stopped";
+    if (uncheckedWatchRequest(state, item) && watch?.status === "active") throw new HcoordError("conflict", "an active watch cycle cannot be canceled as a question; use watch check, stop, or assign");
+    if (item.status === "canceled") {
+      if (!stoppedCycle) return { changed: false, value: item };
+      watch!.cycle = null;
+      event(state, at, "watch.cycle_canceled", item.from, item.intent);
+      return { changed: true, value: item };
+    }
     if (item.status === "answered") throw new HcoordError("conflict", "answered request cannot be canceled");
     item.status = "canceled"; item.canceledAt = at;
+    if (stoppedCycle) watch!.cycle = null;
     for (const delivery of item.deliveries) if (delivery.status === "pending" || delivery.status === "deferred") { delivery.status = "failed"; delivery.reason = "request canceled before submission"; }
     event(state, at, "request.canceled", item.id, item.intent);
     return { changed: true, value: item };
