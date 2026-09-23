@@ -1424,7 +1424,10 @@ function verificationNextActions(state: ImplementState, verdict: VerificationSta
     `Next action: spawn native ${nativeReviewNames(state)} review subagents in parallel from this runtime for this exact verified head.`,
     // The tool is named per runtime because "native subagent" alone was read by Codex Implementors as the Herdr skill's `herdr agent start reviewer` example (2026-09-17), so reviews ran in split panes instead of subagents.
     "Subagent tool: Claude Code uses the Agent tool; Codex uses spawn_agent. Do not split a Herdr pane or start a Herdr agent for review.",
+    "Review context: give reviewers the approved PRD, current base/head, source, verification report, and evidence. If a previous review exists, also provide its actual reviewed HEAD (not merely a verified HEAD), findings, coverage, dispositions, the diff to this HEAD, and approved contract or material evidence changes.",
+    "Re-review: check unresolved findings, fix closure, and affected flows first while retaining complete reviewer scope. Identify reused evidence; inspect missing or invalidated coverage. Without applicable prior review context, perform the full-scope review.",
     "Review output: Fix now, Follow-up improvements, and What was checked. Sasu sets no reviewer turn limit; if a reviewer fails, record REVIEW_UNAVAILABLE with the visible cause.",
+    "Fix now items need concrete failure evidence or a traceable failure path, the affected approved behavior, and an observable closure condition. Explain new evidence when reopening a resolved item; nonessential expansion belongs in Follow-up improvements.",
     "Then fix valid current-scope findings. If source or material evidence changes, commit it and rerun verify and review; otherwise continue to ship.",
   ];
 }

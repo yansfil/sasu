@@ -52,6 +52,19 @@ test("verify runs the sealed suite, writes a current report, and starts no revie
   assert.match(verified.stdout, /Fix now, Follow-up improvements, and What was checked/);
   assert.match(verified.stdout, /Sasu sets no reviewer turn limit/);
   assert.match(verified.stdout, /REVIEW_UNAVAILABLE/);
+  for (const instruction of [
+    /If a previous review exists.*actual reviewed HEAD \(not merely a verified HEAD\)/,
+    /findings, coverage, dispositions, the diff to this HEAD/,
+    /approved contract or material evidence changes/,
+    /fix closure, and affected flows first while retaining complete reviewer scope/,
+    /Without applicable prior review context, perform the full-scope review/,
+    /concrete failure evidence or a traceable failure path/,
+    /observable closure condition/,
+    /nonessential expansion belongs in Follow-up improvements/,
+  ]) {
+    assert.match(verified.stdout, instruction);
+    assert.match(report.agentReview.instruction, instruction);
+  }
   assert.equal(fs.existsSync(capture), false, "deterministic verify must not invoke a model backend");
   assert.equal(fs.readFileSync(path.join(root, "agents/suite-count.log"), "utf8"), "ran\n");
 

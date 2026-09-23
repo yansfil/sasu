@@ -92,6 +92,8 @@ Any source or evidence change makes the earlier report stale.
 
 After deterministic verification, follow the CLI's `Next action:` response as the workflow continuation.
 On PASS it names the native review roles, parallel execution, response sections, failure recording, and rerun condition for the exact verified head.
+For a re-review, also hand off the actual previously reviewed HEAD, findings, coverage, dispositions, intervening diff, and approved contract or evidence changes.
+Reviewers check closure and impact first while remaining responsible for the complete contract; a prior verification result alone is not prior review coverage.
 Use the runtime's native subagent facility directly: the Agent tool in Claude Code, `spawn_agent` in Codex.
 Never use a Sasu judge command, a hidden background model process, or a Herdr pane; `herdr agent start` creates a peer agent, not a subagent, and its output never returns to the Implementor as a review.
 Sasu imposes no reviewer turn limit.
@@ -108,7 +110,7 @@ When a fix changes source or material evidence:
 
 1. commit the coherent fix;
 2. rerun `sasu implement verify`;
-3. run fresh native reviews for the new head;
+3. run fresh native reviews for the new head with the previous review context and fix evidence;
 4. replace the earlier PR summary with the current result.
 
 There is no correction budget or PASS-seeking loop.
