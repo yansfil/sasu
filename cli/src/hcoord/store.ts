@@ -18,7 +18,12 @@ export function loadLedger(home = os.homedir()): Ledger {
   if (!fs.existsSync(file)) return emptyLedger(new Date().toISOString());
   const stat = fs.statSync(file);
   if (stat.size > MAX_LEDGER_BYTES) throw new HcoordError("capacity", `ledger exceeds ${MAX_LEDGER_BYTES} bytes; existing requests remain intact`);
-  const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+  let parsed: unknown;
+  try { parsed = JSON.parse(fs.readFileSync(file, "utf8")); }
+  catch (error) {
+    if (error instanceof SyntaxError) throw new HcoordError("corrupt_ledger", "ledger JSON is invalid; no data was changed");
+    throw error;
+  }
   if (parsed === null || typeof parsed !== "object" || (parsed as Ledger).schema !== SCHEMA) throw new HcoordError("version_mismatch", `unsupported ledger schema; expected ${SCHEMA}`);
   const ledger = parsed as Ledger;
   const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);

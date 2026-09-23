@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_BODY_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, own, put, type Delivery, type Ledger, type Participant, type Request, type Watch } from "./model";
+import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_BODY_BYTES, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, own, put, validateSpawnSpec, type Delivery, type Ledger, type Participant, type Request, type Watch } from "./model";
 
 type Args = Record<string, unknown>;
 export interface Outcome { value: unknown; changed: boolean }
@@ -43,7 +43,7 @@ const pendingRelay = (item: Request): boolean => item.status === "answered" && i
 const terminalRequest = (item: Request): boolean => item.status === "canceled" || (item.status === "answered" && !pendingRelay(item) && item.deliveries.every((delivery) => {
   const phase = delivery.phase ?? "request";
   return phase === "request" ? ["accepted", "acknowledged", "failed", "superseded"].includes(delivery.status)
-    : phase === "delivery_problem" ? ["accepted", "acknowledged", "superseded"].includes(delivery.status)
+    : phase === "delivery_problem" || phase === "relay_problem" || phase === "watch_check" ? ["accepted", "acknowledged", "superseded"].includes(delivery.status)
     : delivery.status === "acknowledged" || delivery.status === "superseded";
 }))
   || (!item.requiresReply && item.deliveries.length > 0 && item.deliveries.every((delivery) => delivery.status === "accepted" || delivery.status === "acknowledged"));
@@ -65,7 +65,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     schema: state.schema, at, lastUpdatedAt: state.updatedAt, eventCursor: state.seq, counts: {
       agents: Object.keys(state.participants).length, watches: Object.values(state.watches).filter((w) => w.status === "active").length,
       requests: Object.values(state.requests).filter((r) => !terminalRequest(r)).length, events: state.events.length, sasuRuns: Object.keys(state.sasuRuns).length,
-    }, caps: { agents: MAX_AGENTS, requests: MAX_REQUESTS, spawnIntents: MAX_SPAWN_INTENTS, watchHistory: MAX_WATCH_HISTORY, events: 20000, ledgerBytes: 64 * 1024 * 1024, connections: 64, queuedOperations: MAX_QUEUE }, config: state.config,
+    }, caps: { agents: MAX_AGENTS, requests: MAX_REQUESTS, spawnIntents: MAX_SPAWN_INTENTS, watchHistory: MAX_WATCH_HISTORY, events: 20000, ledgerBytes: 64 * 1024 * 1024, messageBytes: MAX_MESSAGE_BYTES, connections: 64, queuedOperations: MAX_QUEUE }, config: state.config,
   } };
   if (operation === "config.set") {
     const key = required(args, "key") as keyof typeof DEFAULTS;
@@ -99,6 +99,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
   if (operation === "agent.spawn.reserve") {
     const key = required(args, "intent"), parent = person(state, required(args, "parent"));
     const machine = required(args, "machine"), session = required(args, "session"), name = required(args, "name"), kind = required(args, "kind");
+    validateSpawnSpec(name, kind);
     const nativeArgs = args["nativeArgs"];
     if (!Array.isArray(nativeArgs) || nativeArgs.some((value) => typeof value !== "string")) throw new HcoordError("invalid_argument", "nativeArgs must be a string array");
     if (parent.machine !== machine || parent.session !== session) throw new HcoordError("identity_conflict", "parent is not bound to the selected machine and session");
@@ -158,6 +159,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     participant.runtime = runtime as Participant["runtime"];
     participant.connection = connection as Participant["connection"];
     participant.observedAt = at;
+    state.updatedAt = at;
     const watch = own(state.watches, participant.id);
     if (watch?.status === "active") watch.observation = `${runtime}/${connection} at ${at}${optional(args, "reason") ? `: ${optional(args, "reason")}` : ""}`;
     return { changed: true, value: participant };
@@ -189,7 +191,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       state.watchHistory.push({ ...previous, status: "stopped", stoppedAt: previous.stoppedAt ?? at });
     }
     const carriedRequest = previous ? watchRequest(state, previous) : undefined;
-    const carryCycle = previous?.cycle !== null && carriedRequest?.status === "open";
+    const carryCycle = previous?.cycle !== null && carriedRequest !== undefined && previous?.status === "active";
     const watch: Watch = { target: target.id, observer: observer.id, generation: (previous?.generation ?? 0) + 1, status: "active", intervalMs,
       dueAt: carryCycle ? previous!.dueAt : timed(at, intervalMs),
       cycle: carryCycle ? previous!.cycle : null,
@@ -197,7 +199,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (carryCycle && carriedRequest) {
       retireUnsent(carriedRequest, "watch assigned to another observer");
       carriedRequest.to = observer.id;
-      queueDelivery(carriedRequest, observer.id, at);
+      queueDelivery(carriedRequest, observer.id, at, carriedRequest.status === "answered" ? "watch_check" : "request");
     }
     put(state.watches, target.id, watch);
     event(state, at, previous ? "watch.assigned" : "watch.started", target.id, null, { observer: observer.id, generation: watch.generation });
@@ -220,7 +222,11 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (watch.cycle !== cycle) throw new HcoordError("conflict", "cycle is not the current unchecked cycle", { currentCycle: watch.cycle });
     const checkRequest = watchRequest(state, watch);
     watch.checkedAt = at; watch.cycle = null; watch.dueAt = timed(at, watch.intervalMs);
-    if (checkRequest?.status === "open") { checkRequest.status = "answered"; checkRequest.answeredAt = at; checkRequest.answer = "cycle checked"; checkRequest.respondent = actor; checkRequest.recordedBy = actor; retireUnsent(checkRequest, "watch cycle checked"); }
+    if (checkRequest?.status === "open") { checkRequest.status = "answered"; checkRequest.answeredAt = at; checkRequest.answer = "cycle checked"; checkRequest.respondent = actor; checkRequest.recordedBy = actor; }
+    if (checkRequest) {
+      retireUnsent(checkRequest, "watch cycle checked");
+      for (const delivery of checkRequest.deliveries) if (delivery.phase === "watch_check" && delivery.recipient === actor && delivery.status === "accepted") { delivery.status = "acknowledged"; delivery.acknowledgedAt = at; }
+    }
     event(state, at, "watch.checked", target, cycle, { observer: watch.observer });
     return { changed: true, value: watch };
   }
@@ -287,6 +293,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     item.relayBody = relay; item.relayAt = at;
     retireUnsent(item, "answer relayed before prior answer notice", "answer");
     retireUnsent(item, "answer relayed before escalation notice", "request");
+    retireUnsent(item, "answer relayed before relay problem notice", "relay_problem");
     for (const delivery of item.deliveries) if (delivery.phase === "answer" && delivery.recipient === actor && delivery.status === "accepted") { delivery.status = "acknowledged"; delivery.acknowledgedAt = at; }
     queueDelivery(item, item.from, at, "relay");
     event(state, at, "request.relayed", item.id, item.intent, { by: actor });
@@ -316,10 +323,9 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const item = request(state, required(args, "id"));
     const actor = required(args, "actor");
     const deliveryId = optional(args, "delivery");
-    const delivery = deliveryId === null ? [...item.deliveries].reverse().find((d) => d.status === "accepted" && d.recipient === actor)
+    const delivery = deliveryId === null ? [...item.deliveries].reverse().find((d) => d.recipient === actor)
       : item.deliveries.find((d) => d.id === deliveryId && d.recipient === actor);
     if (delivery?.status === "acknowledged") return { changed: false, value: item };
-    if (!delivery && deliveryId === null && item.deliveries.some((d) => d.status === "acknowledged" && d.recipient === actor)) return { changed: false, value: item };
     if (!delivery || delivery.status !== "accepted") throw new HcoordError("conflict", "there is no accepted delivery to acknowledge");
     delivery.status = "acknowledged"; delivery.acknowledgedAt = at;
     if (delivery.phase === "relay") retireUnsent(item, "child acknowledged the relay", "delivery_problem");
@@ -409,11 +415,11 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
         if (age >= state.config.escalateMs && !item.relayEscalatedAt) {
           if (!item.relayRemindedAt) { item.relayRemindedAt = at; event(state, at, "request.relay_reminder_coalesced", item.id, item.intent); }
           item.relayEscalatedAt = at; escalations += 1; changed = true;
-          queueDelivery(item, "human", at);
+          queueDelivery(item, "human", at, "relay_problem");
           event(state, at, "request.relay_escalated", item.id, item.intent);
         } else if (age >= state.config.remindMs && !item.relayRemindedAt) {
           item.relayRemindedAt = at; reminders += 1; changed = true;
-          if (item.intermediary !== null && !item.deliveries.some((delivery) => delivery.recipient === item.intermediary && (delivery.status === "pending" || delivery.status === "deferred" || delivery.status === "unknown"))) queueDelivery(item, item.intermediary, at);
+          if (item.intermediary !== null && !item.deliveries.some((delivery) => delivery.phase === "relay_problem" && delivery.recipient === item.intermediary)) queueDelivery(item, item.intermediary, at, "relay_problem");
           event(state, at, "request.relay_reminded", item.id, item.intent);
         }
       }

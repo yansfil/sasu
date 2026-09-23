@@ -117,6 +117,22 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(ok(...sasuArgs).watch.generation, registeredRun.watch.generation);
   assert.equal(ok("status").counts.sasuRuns, 1);
   assert.ok(ok("status").usage.ledgerBytes > 0);
+  ok("config", "set", "--key", "remindMs", "--value", "1s");
+  ok("config", "set", "--key", "escalateMs", "--value", "2s");
+  const relayReminder = ok("request", "send", "--from", child.id, "--to", "human", "--intermediary", parent.id, "--body", "Confirm relay", "--intent", "relay-reminder");
+  ok("request", "reply", relayReminder.id, "--body", "Yes", "--as", "human");
+  let reminded;
+  for (let attempt = 0; attempt < 160; attempt += 1) {
+    reminded = ok("request", "show", relayReminder.id);
+    if (reminded.deliveries.some((delivery) => delivery.phase === "relay_problem" && delivery.recipient === parent.id && delivery.status === "accepted") &&
+        reminded.deliveries.some((delivery) => delivery.phase === "relay_problem" && delivery.recipient === "human" && delivery.status === "accepted")) break;
+    await wait(100);
+  }
+  assert.equal(reminded.deliveries.some((delivery) => delivery.phase === "relay_problem" && delivery.recipient === parent.id && delivery.status === "accepted"), true, "parent receives the 15-minute policy reminder on a shortened test clock");
+  assert.equal(reminded.deliveries.some((delivery) => delivery.phase === "relay_problem" && delivery.recipient === "human" && delivery.status === "accepted"), true, "human receives the relay escalation on a shortened test clock");
+  ok("request", "relay", relayReminder.id, "--actor", parent.id, "--body", "Yes");
+  ok("config", "set", "--key", "remindMs", "--value", "15m");
+  ok("config", "set", "--key", "escalateMs", "--value", "30m");
   await stop();
   delete env.HCOORD_FAKE_GUARD;
   await start();
@@ -125,6 +141,8 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(spawned.watch.observer, parent.id);
   assert.equal(ok("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "worker", "--intent", "spawn-1").participant.id, spawned.participant.id);
   assert.equal(fs.readFileSync(path.join(home, "worker.tab"), "utf8"), "1");
+  assert.equal(JSON.parse(command("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "Bad Name", "--intent", "invalid-spawn").stdout).error.code, "invalid_argument");
+  assert.equal(fs.existsSync(path.join(home, "Bad Name.tab")), false, "invalid spawn does not create a pane");
   const unobserved = ok("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "solo", "--intent", "spawn-2", "--no-watch");
   assert.equal(unobserved.watch, null);
   assert.equal(ok("graph").creation.find((edge) => edge.child === unobserved.participant.id).parent, parent.id);
@@ -211,10 +229,24 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   await start();
   await wait(1100);
   assert.equal(promptCount(), 1, "restart does not repeat an accepted external submission");
+  const queuedAfterStop = net.createConnection(path.join(home, ".hcoord", "api.sock"));
+  await new Promise((resolve, reject) => { queuedAfterStop.once("connect", resolve); queuedAfterStop.once("error", reject); });
   assert.equal(ok("daemon", "stop").stopped, true);
+  const refused = await new Promise((resolve, reject) => {
+    let received = "";
+    queuedAfterStop.on("data", (chunk) => { received += chunk; });
+    queuedAfterStop.once("end", () => resolve(JSON.parse(received.trim())));
+    queuedAfterStop.once("error", reject);
+    queuedAfterStop.write(`${JSON.stringify({ version: 1, operation: "config.set", args: { key: "watchMs", value: 1000 } })}\n`);
+  });
+  assert.equal(refused.error.code, "manual_stop", "a connection accepted before stop cannot mutate afterward");
   for (let attempt = 0; attempt < 250 && daemon.exitCode === null; attempt += 1) await wait(20);
   assert.notEqual(daemon.exitCode, null);
   const manuallyStopped = command("daemon", "run");
   assert.equal(manuallyStopped.status, 1);
   assert.equal(JSON.parse(manuallyStopped.stdout).error.code, "manual_stop");
+  fs.writeFileSync(path.join(home, ".hcoord", "ledger.json"), '{"answer":"PRIVATE_ANSWER", invalid');
+  const corrupt = command("status");
+  assert.equal(JSON.parse(corrupt.stdout).error.code, "corrupt_ledger");
+  assert.equal(`${corrupt.stdout}${corrupt.stderr}`.includes("PRIVATE_ANSWER"), false);
 });

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
-import { API_VERSION, HcoordError, MAX_CONNECTIONS, MAX_QUEUE, own, put, type Ledger } from "./model";
+import { API_VERSION, HcoordError, MAX_CONNECTIONS, MAX_MESSAGE_BYTES, MAX_QUEUE, own, put, type Ledger } from "./model";
 import { event } from "./model";
 import { execute } from "./service";
 import { createSpawnPane, discoverLocalAgents, guardedDeliveryAvailable, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, startSpawnedAgent, submitGuarded, validateLocalBinding } from "./herdr";
@@ -11,18 +11,19 @@ import { notifyHuman } from "./platform";
 
 export interface WireRequest { version: number; operation: string; args: Record<string, unknown> }
 export interface WireResult { ok: boolean; value?: unknown; error?: { code: string; message: string; detail?: Record<string, unknown> }; observedAt: string }
-const MAX_MESSAGE_BYTES = 1024 * 1024;
 const mutation = (operation: string): boolean => !["status", "agent.list", "agent.show", "watch.list", "request.show", "inbox", "graph", "events"].includes(operation);
 
 export async function callDaemon(operation: string, args: Record<string, unknown> = {}, home = os.homedir()): Promise<WireResult> {
   if (process.platform === "win32") throw new HcoordError("unsupported_platform", "Windows named-pipe ACL support is unverified; no local daemon connection was attempted");
+  const request = `${JSON.stringify({ version: API_VERSION, operation, args })}\n`;
+  if (Buffer.byteLength(request) > MAX_MESSAGE_BYTES) throw new HcoordError("capacity", `request exceeds ${MAX_MESSAGE_BYTES} bytes; shorten context or native arguments before retrying`);
   return await new Promise<WireResult>((resolve, reject) => {
     const socket = net.createConnection(socketPath(home));
     let text = "";
     const timeoutMs = operation === "agent.spawn" ? 30_000 : 10_000;
     const timer = setTimeout(() => { socket.destroy(); reject(new HcoordError("timeout", `coordinator did not answer within ${timeoutMs / 1000} seconds`)); }, timeoutMs);
     const finish = (error?: Error, value?: WireResult): void => { clearTimeout(timer); socket.destroy(); if (error) reject(error); else resolve(value!); };
-    socket.on("connect", () => socket.write(`${JSON.stringify({ version: API_VERSION, operation, args })}\n`));
+    socket.on("connect", () => socket.write(request));
     socket.on("data", (chunk: Buffer) => {
       text += chunk.toString("utf8");
       if (Buffer.byteLength(text) > MAX_MESSAGE_BYTES) return finish(new HcoordError("capacity", "coordinator response exceeded message limit"));
@@ -216,7 +217,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     socket.on("data", (chunk: Buffer) => {
       if (received) return;
       input += chunk.toString("utf8");
-      if (Buffer.byteLength(input) > MAX_MESSAGE_BYTES) { socket.destroy(); return; }
+      if (Buffer.byteLength(input) > MAX_MESSAGE_BYTES) { received = true; socket.end(`${JSON.stringify({ ok: false, error: { code: "capacity", message: `request exceeds ${MAX_MESSAGE_BYTES} bytes; shorten context or native arguments before retrying` }, observedAt: new Date().toISOString() })}\n`); return; }
       const newline = input.indexOf("\n");
       if (newline < 0) return;
       if (input.slice(newline + 1).trim() !== "") { socket.end(`${JSON.stringify({ ok: false, error: { code: "protocol", message: "one request per connection is allowed" }, observedAt: new Date().toISOString() })}\n`); return; }
@@ -230,6 +231,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
         const at = new Date().toISOString();
         let result: WireResult;
         try {
+          if (closing) throw new HcoordError("manual_stop", "daemon is stopping; restart it before submitting more work");
           const decoded = JSON.parse(line) as WireRequest;
           if (decoded.version !== API_VERSION) throw new HcoordError("version_mismatch", `API version ${decoded.version} is unsupported; expected ${API_VERSION}`);
           if (typeof decoded.operation !== "string" || !decoded.args || typeof decoded.args !== "object" || Array.isArray(decoded.args)) throw new HcoordError("protocol", "operation and object args are required");
@@ -278,9 +280,10 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     process.once("SIGTERM", onSignal);
     process.once("SIGINT", onSignal);
     const timer = setInterval(() => {
-      if (tickPending) return;
+      if (tickPending || closing) return;
       tickPending = true;
       processing = processing.then(() => {
+        if (closing) return;
         const at = new Date().toISOString();
         const next: Ledger = structuredClone(ledger);
         const due = Object.values(next.watches).filter((watch) => watch.status === "active" && Date.parse(watch.dueAt) <= Date.parse(at)).sort((a, b) => Date.parse(a.dueAt) - Date.parse(b.dueAt)).slice(0, 4);

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { emptyLedger } from "../../dist/hcoord/model.js";
 import { execute } from "../../dist/hcoord/service.js";
+import { loadLedger } from "../../dist/hcoord/store.js";
+import { callDaemon } from "../../dist/hcoord/transport.js";
 
 test("an escalated human answer reaches the assigned parent and retains an unresolved relay", () => {
   const at = "2026-09-01T00:00:00.000Z";
@@ -19,9 +24,12 @@ test("an escalated human answer reaches the assigned parent and retains an unres
   const reminderAt = "2026-09-01T00:15:01.000Z";
   run("tick", {}, reminderAt);
   assert.equal(state.requests[request.id].relayRemindedAt, reminderAt);
+  assert.equal(state.requests[request.id].deliveries.at(-1).phase, "relay_problem");
+  assert.equal(state.requests[request.id].deliveries.at(-1).recipient, parent.id);
   const escalationAt = "2026-09-01T00:30:01.000Z";
   run("tick", {}, escalationAt);
   assert.equal(state.requests[request.id].relayEscalatedAt, escalationAt);
+  assert.equal(state.requests[request.id].deliveries.at(-1).phase, "relay_problem");
   assert.equal(state.requests[request.id].deliveries.filter((delivery) => delivery.recipient === "human").length, 2);
   run("tick", {}, "2026-09-01T00:31:01.000Z");
   assert.equal(state.requests[request.id].deliveries.filter((delivery) => delivery.recipient === "human").length, 2, "one reminder episode does not create repeated human notifications");
@@ -64,6 +72,9 @@ test("caller IDs cannot address inherited records or mutate policy prototypes", 
   assert.equal(run("agent.spawn.reserve", { parent: parent.id, intent: "__proto__", machine: "local", session: "s", name: "child", kind: "codex", nativeArgs: [] }).key, intent.key);
   assert.equal(Object.getPrototypeOf(state.spawnIntents), Object.prototype);
   assert.equal(Object.hasOwn(state.spawnIntents, "__proto__"), true);
+  assert.throws(() => run("agent.spawn.reserve", { parent: parent.id, intent: "bad-name", machine: "local", session: "s", name: "Bad Name", kind: "codex", nativeArgs: [] }), { code: "invalid_argument" });
+  assert.throws(() => run("agent.spawn.reserve", { parent: parent.id, intent: "bad-kind", machine: "local", session: "s", name: "valid", kind: "other", nativeArgs: [] }), { code: "unsupported_runtime" });
+  assert.equal(Object.keys(state.spawnIntents).length, 1, "invalid spawn leaves no reserved external effect");
 });
 
 test("watch handover preserves one unchecked cycle and graph history", () => {
@@ -88,6 +99,28 @@ test("watch handover preserves one unchecked cycle and graph history", () => {
   run("watch.check", { target: target.id, cycle, actor: second.id });
   assert.equal(original.status, "answered");
   assert.equal(original.deliveries[1].status, "superseded");
+});
+
+test("a replied watch cycle remains unchecked through observer handover", () => {
+  const at = "2026-09-01T00:00:00.000Z", state = emptyLedger(at);
+  const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;
+  const register = (name) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance: name, name, pane: `${name}-pane`, runtime: "idle" });
+  const target = register("target"), first = register("first"), second = register("second");
+  run("watch.start", { target: target.id, observer: first.id, actor: first.id, intervalMs: 1000 });
+  run("tick", {}, "2026-09-01T00:00:01.000Z");
+  const cycle = state.watches[target.id].cycle;
+  const checkRequest = Object.values(state.requests).find((item) => item.intent.startsWith("watch:"));
+  run("request.reply", { id: checkRequest.id, body: "Observed", respondent: first.id, recordedBy: first.id });
+  assert.equal(state.watches[target.id].cycle, cycle, "reply does not check the cycle");
+  run("watch.assign", { target: target.id, observer: second.id, actor: first.id, expectedGeneration: "1" });
+  assert.equal(state.watches[target.id].cycle, cycle);
+  assert.equal(checkRequest.deliveries.at(-1).phase, "watch_check");
+  assert.equal(checkRequest.deliveries.at(-1).recipient, second.id);
+  run("tick", {}, "2026-09-01T00:00:02.000Z");
+  assert.equal(Object.values(state.requests).filter((item) => item.intent.startsWith("watch:")).length, 1);
+  run("watch.check", { target: target.id, cycle, actor: second.id });
+  assert.equal(state.watches[target.id].cycle, null);
+  assert.equal(checkRequest.deliveries.at(-1).status, "superseded");
 });
 
 test("request intent checks the full routing policy and notify-only has no question", () => {
@@ -124,6 +157,7 @@ test("answer and relay deliveries have distinct receipts and unresolved answers 
   const answerDelivery = direct.deliveries.at(-1);
   assert.equal(answerDelivery.phase, "answer");
   assert.equal(answerDelivery.recipient, parent.id);
+  assert.throws(() => run("request.ack", { id: direct.id, actor: parent.id }), { code: "conflict" }, "an earlier ACK cannot satisfy a pending answer");
   answerDelivery.status = "accepted";
   run("request.ack", { id: direct.id, actor: parent.id });
   assert.equal(answerDelivery.status, "acknowledged", "an earlier receipt does not hide the latest accepted delivery");
@@ -145,6 +179,26 @@ test("answer and relay deliveries have distinct receipts and unresolved answers 
   assert.equal(childAnswer.deliveries[0].status, "superseded");
   assert.equal(childAnswer.deliveries[1].phase, "answer");
   assert.equal(childAnswer.deliveries[1].recipient, child.id);
+});
+
+test("internal observation advances the saved freshness time", () => {
+  const state = emptyLedger("2026-09-01T00:00:00.000Z");
+  const participant = execute(state, "agent.register", { machine: "local", hostScope: "default", session: "s", instance: "i", name: "worker", pane: "p", runtime: "idle" }, "2026-09-01T00:00:00.000Z").value;
+  execute(state, "agent.observe", { id: participant.id, runtime: "done", connection: "connected" }, "2026-09-01T00:01:00.000Z");
+  assert.equal(state.updatedAt, state.participants[participant.id].observedAt);
+});
+
+test("oversized calls return an actionable capacity error before connecting", async () => {
+  await assert.rejects(callDaemon("request.send", { context: "a".repeat(1024 * 1024) }, "/nonexistent/hcoord-home"), { code: "capacity" });
+});
+
+test("invalid ledger JSON does not expose stored request text", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "hcoord-corrupt-"));
+  try {
+    fs.mkdirSync(path.join(home, ".hcoord"));
+    fs.writeFileSync(path.join(home, ".hcoord", "ledger.json"), '{"request":"PRIVATE_ANSWER", invalid');
+    assert.throws(() => loadLedger(home), (error) => error.code === "corrupt_ledger" && !String(error).includes("PRIVATE_ANSWER"));
+  } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
 test("retention releases ended participants and completed spawn intents without breaking the parent", () => {

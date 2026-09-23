@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { getAgent, guardedPromptSupport, promptAgent, runHerdrCommand } from "../implement/herdr";
-import { HcoordError, type Delivery, type Participant, type Request, type SpawnIntent } from "./model";
+import { HcoordError, validateSpawnSpec, type Delivery, type Participant, type Request, type SpawnIntent } from "./model";
 
 function scopeEnv(hostScope: string): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -51,6 +51,8 @@ export function guardedDeliveryAvailable(participant: LocalBinding): { ready: bo
 }
 
 export function messageForDelivery(item: Request, delivery: Delivery): string {
+  if (delivery.phase === "watch_check") return `HCOORD_WATCH_CHECK\nrequest: ${item.id}\nThe watch cycle still needs confirmation after handover. Inspect the target, then run hcoord watch check ${item.from} --cycle ${item.intent.split(":").at(-1)} --actor ${delivery.recipient}`;
+  if (delivery.phase === "relay_problem") return `HCOORD_RELAY_PROBLEM\nrequest: ${item.id}\nThe recorded answer still needs relay. Inspect hcoord request show ${item.id}, then relay within its scope.`;
   if (delivery.phase === "delivery_problem") return `HCOORD_DELIVERY_PROBLEM\nrequest: ${item.id}\nInspect the recorded answer and unresolved child delivery with hcoord request show ${item.id}`;
   if (delivery.phase === "relay") return `HCOORD_RELAY\nrequest: ${item.id}\n${item.relayBody}\nAcknowledge with hcoord request ack ${item.id} --actor ${delivery.recipient} --delivery ${delivery.id}`;
   if (delivery.phase === "answer") return `HCOORD_ANSWER\nrequest: ${item.id}\nanswer: ${item.answer}\n${item.intermediary === delivery.recipient ? `Relay within the answer's scope with hcoord request relay ${item.id} --body <text> --actor ${delivery.recipient}` : `Acknowledge with hcoord request ack ${item.id} --actor ${delivery.recipient} --delivery ${delivery.id}`}`;
@@ -104,8 +106,7 @@ export function inspectSpawnedAgent(record: SpawnIntent): { session: string; ins
 
 export function startSpawnedAgent(record: SpawnIntent): void {
   if (record.pane === null) throw new HcoordError("invalid_state", "spawn intent has no pane");
-  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(record.name)) throw new HcoordError("invalid_argument", "Herdr agent name must use lowercase letters, digits, _ or -, up to 32 characters");
-  if (!["codex", "claude", "opencode", "gemini"].includes(record.kind)) throw new HcoordError("unsupported_runtime", "this Herdr agent kind has not been verified for coordinator spawn");
+  validateSpawnSpec(record.name, record.kind);
   const result = runHerdrCommand(["agent", "start", record.name, "--kind", record.kind, "--pane", record.pane, "--timeout", "10000", ...(record.nativeArgs.length ? ["--", ...record.nativeArgs] : [])], 12_000, scopeEnv(record.hostScope));
   if (result.status !== 0) throw new HcoordError("spawn_uncertain", "Herdr did not confirm agent start; inspect the saved pane before retry", { pane: record.pane });
 }

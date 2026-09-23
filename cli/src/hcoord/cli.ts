@@ -127,7 +127,7 @@ export async function main(argv: string[]): Promise<number> {
     return result.ok ? 0 : 1;
   } catch (error) {
     const reason = error instanceof HcoordError ? error : new HcoordError("internal", "command failed; inspect stderr");
-    if (!(error instanceof HcoordError)) process.stderr.write(`${String(error)}\n`);
+    if (!(error instanceof HcoordError)) process.stderr.write(`${JSON.stringify({ event: "hcoord.command_failed", at: new Date().toISOString(), code: "internal" })}\n`);
     print({ ok: false, error: { code: reason.code, message: reason.message, ...(reason.detail ? { detail: reason.detail } : {}) }, observedAt: new Date().toISOString() }, json);
     return reason.code === "invalid_argument" ? 2 : 1;
   }

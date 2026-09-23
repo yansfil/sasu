@@ -27,10 +27,11 @@ The notification carries only the request ID; the human opens `hcoord inbox` and
 `hcoord request reply <id> --as human --body 'A로 진행'` records the literal answer with respondent and recorder separated.
 An agent that records a human reply supplies `--recorded-by <agent-id>` and must use the ID of the request the human actually answered.
 The parent uses `hcoord request relay <id> --actor <parent-id> --body 'A로 진행'`, and the child uses `hcoord request ack <id> --actor <child-id> --delivery <delivery-id>` after accepting delivery.
-When one recipient receives several phases of a request, `--delivery` identifies the exact receipt; without it the command acknowledges the newest accepted delivery.
+When one recipient receives several phases of a request, `--delivery` identifies the exact receipt; without it the command considers only the newest delivery and rejects acknowledgement until that delivery was accepted.
 Answer, relay, delivery acceptance, acknowledgment, and task success remain separate facts.
 `request cancel` stops future reminders and unsent delivery; a late reply remains in history without reopening the request.
 An unresolved relay or delivery problem stays visible in `hcoord inbox` with a next action.
+An unanswered relay creates a parent reminder after 15 minutes and a human escalation after 30 minutes, each with its own delivery phase so answering the original question does not suppress either notice.
 If the child has not acknowledged a relayed answer, the parent gets one reminder after 15 minutes and the human inbox receives a delivery problem after 30 minutes.
 
 The executable [channel adapter example](../examples/hcoord/channel-adapter.mjs) accepts `notify`, `notify-only`, and `reply` with the same request ID.
