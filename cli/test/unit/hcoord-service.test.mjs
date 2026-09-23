@@ -1,0 +1,51 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { emptyLedger } from "../../dist/hcoord/model.js";
+import { execute } from "../../dist/hcoord/service.js";
+
+test("an escalated human answer reaches the assigned parent and retains an unresolved relay", () => {
+  const at = "2026-09-01T00:00:00.000Z";
+  const state = emptyLedger(at);
+  const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;
+  const register = (name, instance) => run("agent.register", { machine: "local", hostScope: "default", session: name, instance, name, pane: `${name}-pane`, runtime: "idle" });
+  const parent = register("parent", "one");
+  const child = register("child", "two");
+  const request = run("request.send", { from: child.id, to: parent.id, body: "Choose a path", intent: "choice" });
+  run("request.escalate", { id: request.id, actor: parent.id });
+  const answered = run("request.reply", { id: request.id, body: "Proceed with A", respondent: "human", recordedBy: "human" });
+  assert.equal(answered.intermediary, parent.id);
+  assert.equal(answered.deliveries.at(-1).recipient, parent.id);
+  assert.equal(run("inbox").find((item) => item.requestId === request.id).kind, "relay_problem");
+  const reminderAt = "2026-09-01T00:15:01.000Z";
+  run("tick", {}, reminderAt);
+  assert.equal(state.requests[request.id].relayRemindedAt, reminderAt);
+  const escalationAt = "2026-09-01T00:30:01.000Z";
+  run("tick", {}, escalationAt);
+  assert.equal(state.requests[request.id].relayEscalatedAt, escalationAt);
+  assert.equal(state.requests[request.id].deliveries.filter((delivery) => delivery.recipient === "human").length, 2);
+  run("tick", {}, "2026-09-01T00:31:01.000Z");
+  assert.equal(state.requests[request.id].deliveries.filter((delivery) => delivery.recipient === "human").length, 2, "one reminder episode does not create repeated human notifications");
+  run("request.relay", { id: request.id, actor: parent.id, body: "Proceed with A" });
+  assert.equal(state.requests[request.id].deliveries.at(-1).recipient, child.id);
+  assert.equal(run("inbox").some((item) => item.requestId === request.id && item.kind === "relay_problem"), false);
+});
+
+test("a restart coalesces overdue reminders and an expired empty event history rejects old cursors", () => {
+  const at = "2026-09-01T00:00:00.000Z";
+  const state = emptyLedger(at);
+  const run = (operation, args = {}, time = at) => execute(state, operation, args, time).value;
+  const sender = run("agent.register", { machine: "local", hostScope: "default", session: "s", instance: "i", name: "sender", pane: "p", runtime: "idle" });
+  const request = run("request.send", { from: sender.id, to: "human", body: "Choose", intent: "one" });
+  const lateTick = "2026-09-01T00:31:00.000Z";
+  run("tick", {}, lateTick);
+  assert.equal(state.requests[request.id].remindedAt, lateTick);
+  assert.equal(state.requests[request.id].escalatedAt, lateTick);
+  assert.equal(state.requests[request.id].deliveries.filter((delivery) => delivery.recipient === "human").length, 2, "initial notification plus one coalesced escalation");
+  assert.equal(state.events.some((entry) => entry.type === "request.reminded"), false);
+  run("request.cancel", { id: request.id, actor: sender.id }, "2026-09-01T00:32:00.000Z");
+  run("tick", {}, "2026-10-03T00:00:00.000Z");
+  assert.equal(state.events.length, 0);
+  assert.ok(state.seq > 0);
+  assert.throws(() => run("events", { cursor: 0 }), { code: "cursor_expired" });
+  assert.equal(run("status").eventCursor, state.seq);
+});

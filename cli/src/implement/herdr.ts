@@ -130,6 +130,11 @@ function defaultRun(args: string[], cwd?: string, env: NodeJS.ProcessEnv = proce
   return { status: executed.status, stdout: executed.stdout ?? "", stderr: executed.stderr ?? "" };
 }
 
+/** Share the measured Herdr argv/process boundary with the coordinator. */
+export function runHerdrCommand(args: string[], timeoutMs = 15_000, env: NodeJS.ProcessEnv = process.env): { status: number | null; stdout: string; stderr: string; errorCode?: string } {
+  return defaultRun(args, undefined, env, timeoutMs);
+}
+
 const environmentRun = (environment: HerdrEnvironment): NonNullable<HerdrEnvironment["run"]> =>
   environment.run ?? ((args, cwd, timeoutMs) => defaultRun(args, cwd, environment.env, timeoutMs));
 

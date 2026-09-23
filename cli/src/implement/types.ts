@@ -289,6 +289,8 @@ export interface SupervisionRecord {
   patrolIntervalMs: number;
   /** Who replaces a dead Observer: only one loop may input into a session (D-15). */
   recoveryOwner: "supervisor" | "task-factory";
+  /** Existing runs remain on the Sasu supervisor; newly enabled runs belong only to hcoord. */
+  coordinationOwner?: "legacy" | "hcoord";
   handovers: ObserverHandover[];
 }
 
@@ -316,6 +318,7 @@ export interface PendingDispatch {
   dispatchedAt: string;
   patrolIntervalMs: number;
   recoveryOwner: "supervisor" | "task-factory";
+  coordinationOwner?: "legacy" | "hcoord";
   /** Human-approved recovery-authority transfers before supervision exists. */
   handovers?: ObserverHandover[];
 }

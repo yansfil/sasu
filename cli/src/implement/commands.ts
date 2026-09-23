@@ -25,6 +25,7 @@ import { captureEnrollmentGeneration, readIndex, reconcileEnrollmentAuthority, r
 import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest } from "../supervisor/digest";
 import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
+import { sasuEnabledPath } from "../hcoord/store";
 import { DispatchRejected, assertDispatchablePrd, assertNotImplementor, dispatchImplementor, parseEnvPairs, placementFor } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
@@ -39,6 +40,26 @@ export interface ImplementArgs {
 }
 
 const ARTIFACT_KINDS = new Set(["screenshot", "image", "browser", "api", "db", "log", "file", "command-log"]);
+
+function hcoordCommand(argv: string[]): Record<string, unknown> {
+  const executable = path.resolve(__dirname, "..", "hcoord", "cli.js");
+  const run = spawnSync(process.execPath, [executable, ...argv, "--json"], { encoding: "utf8", timeout: 15_000 });
+  if (run.status !== 0) throw new DispatchRejected(`hcoord ${argv[0]} ${argv[1] ?? ""} failed: ${(run.stderr || run.stdout).trim().slice(0, 300)}; no legacy wake fallback was selected`);
+  try { return JSON.parse(run.stdout) as Record<string, unknown>; }
+  catch { throw new DispatchRejected("hcoord returned invalid JSON; no legacy wake fallback was selected"); }
+}
+
+function assertHcoordReady(): void {
+  const status = hcoordCommand(["daemon", "status"]);
+  if (status["ok"] !== true || (status["value"] as Record<string, unknown> | undefined)?.["stale"] === true) throw new DispatchRejected("hcoord is enabled but its daemon is stopped; start it before dispatch; no legacy wake fallback was selected");
+}
+
+function registerHcoordRun(run: string, project: string, observer: NonNullable<ReturnType<typeof currentObserverIdentity>["identity"]>, observerName: string, implementor: { paneId: string; name: string; sessionId: string; terminalId: string; hostScope: string }): void {
+  const registered = hcoordCommand(["sasu", "register", "--run", run, "--project", project,
+    "--observer-name", observerName, "--observer-pane", observer.paneId, "--observer-session", observer.sessionId, "--observer-instance", observer.terminalId, "--observer-host-scope", observer.hostScope,
+    "--implementor-name", implementor.name, "--implementor-pane", implementor.paneId, "--implementor-session", implementor.sessionId, "--implementor-instance", implementor.terminalId, "--implementor-host-scope", implementor.hostScope]);
+  if (registered["ok"] !== true) throw new DispatchRejected(`hcoord refused Sasu registration: ${JSON.stringify(registered["error"] ?? "unknown error")}; no legacy wake fallback was selected`);
+}
 
 function herdrEnvironmentForHostScope(hostScope: string): { env: NodeJS.ProcessEnv } {
   const env = { ...process.env };
@@ -572,6 +593,9 @@ function restoreSupervisionAfterPartialDispatch(state: ImplementState, pending: 
 
 function desiredEnrollment(state: ImplementState): { runInstanceId: string; recoveryOwner: "supervisor" | "task-factory"; recipientAuthorityKey: string } | null {
   const pending = state.pendingDispatch ?? null;
+  // A run chooses one coordinator before a child pane exists. The legacy
+  // scheduler must never enroll a run whose supervision belongs to hcoord.
+  if (pending?.coordinationOwner === "hcoord" || state.supervision?.coordinationOwner === "hcoord") return null;
   if (pending !== null) return { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner, recipientAuthorityKey: recipientAuthorityKey(pending.observer) };
   const supervision = state.supervision ?? null;
   return supervision === null ? null : { runInstanceId: supervision.runInstanceId, recoveryOwner: supervision.recoveryOwner, recipientAuthorityKey: recipientAuthorityKey(supervision.observer) };
@@ -810,13 +834,17 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     if (RUN_INSTANCE_ENV_KEY in extraEnv) throw new DispatchRejected(`${RUN_INSTANCE_ENV_KEY} is minted by the dispatch; it cannot be passed as --env`);
     const observer = currentObserverIdentity();
     if (observer.identity === null) throw new DispatchRejected(`the Observer cannot be recorded: ${observer.problem}`);
+    const coordinationOwner = state.supervision?.coordinationOwner ?? (state.supervision ? "legacy" : fs.existsSync(sasuEnabledPath()) ? "hcoord" : "legacy");
+    if (coordinationOwner === "hcoord") assertHcoordReady();
+    const observedAgent = getAgent(observer.identity.paneId);
+    const observerName = observedAgent.kind === "found" ? observedAgent.agent.name ?? "observer" : "observer";
     const runInstanceId = newRunInstanceId();
     const name = requiredFlag(args, "name");
     const dispatchedAt = nowIso();
     let pending: PendingDispatch = {
       runInstanceId, observer: observer.identity, plannedAgent: name, phase: "planned", prepared: null, implementor: null,
       canonicalRepository: canonicalRepository(placed.placement.cwd), prdPath: state.prdPath,
-      dispatchHead: repositoryHead(placed.placement.cwd), dispatchedAt, patrolIntervalMs, recoveryOwner, handovers: [],
+      dispatchHead: repositoryHead(placed.placement.cwd), dispatchedAt, patrolIntervalMs, recoveryOwner, coordinationOwner, handovers: [],
     };
     // The durable intent and enrollment exist before a pane is created. A
     // tick during this short window reports the partial dispatch rather than
@@ -862,13 +890,14 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       },
       beforeHandoff: (started) => {
         const implementor = { paneId: started.paneId, agent: started.name, sessionId: started.sessionId, terminalId: started.terminalId, hostScope: started.hostScope, recordedAt: started.recordedAt };
+        if (coordinationOwner === "hcoord") registerHcoordRun(runInstanceId, placed.placement!.cwd, observer.identity!, observerName, { ...started, name: started.name });
         pending.phase = "started";
         pending.implementor = implementor;
         state.pendingDispatch = pending;
         const supervision: SupervisionRecord = {
           runInstanceId, observer: observer.identity!, implementor,
           canonicalRepository: pending.canonicalRepository, prdPath: pending.prdPath, dispatchHead: pending.dispatchHead,
-          dispatchedAt, patrolIntervalMs, recoveryOwner, handovers: pending.handovers ?? [],
+          dispatchedAt, patrolIntervalMs, recoveryOwner, coordinationOwner, handovers: pending.handovers ?? [],
         };
         recordId = recordDispatch(projectRoot, statePath, state, { ...started, agent: started.name, cwd: placed.placement!.cwd }, "observer",
           `implementor ${started.name} (${started.kind}) started in ${started.paneId}; exact identity recorded before handoff`, supervision).id;

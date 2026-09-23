@@ -81,6 +81,7 @@ Usage:
   sasu supervisor status    [--json]   (LaunchAgent, last tick, per-run last wake and failure, guarded prompt support)
   sasu supervisor install   [--json]   (write and load the user LaunchAgent for this build; converges on repeat)
   sasu supervisor uninstall [--json]   (unload and remove the LaunchAgent and the Sasu Stop hook entries only)
+  sasu supervisor retire-legacy [--json] (after the final legacy run, retire its LaunchAgent and Stop hook)
   sasu supervisor handover  --slug <topic> --approval "<verbatim user approval>" [--json]   (record this pane's session as the run's Observer)
   sasu doctor [--json]
 

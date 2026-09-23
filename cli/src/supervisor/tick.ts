@@ -328,6 +328,11 @@ function executeTick(options: TickOptions, executorOperationId: string, tickNow:
       continue;
     }
     const run = loaded.run;
+    if (run.state.pendingDispatch?.coordinationOwner === "hcoord" || run.supervision.coordinationOwner === "hcoord") {
+      removals.push({ statePath: entry.statePath, enrollmentId: entry.enrollmentId, cause: "hcoord owns this run; legacy enrollment retired without a wake" });
+      results.push({ statePath: entry.statePath, slug: run.facts.slug, decision: null, action: "removed", detail: "hcoord owns this run; legacy enrollment retired without a wake" });
+      continue;
+    }
     const authority = enrollmentAuthority(run);
     if (entry.recipientAuthorityKey === null) {
       // A pre-recipient-key record may already have spent an uncertainty

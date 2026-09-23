@@ -5,7 +5,8 @@
   "description": "sasu CLI: document gates and deterministic implementation verification",
   "type": "commonjs",
   "bin": {
-    "sasu": "dist/cli.js"
+    "sasu": "dist/cli.js",
+    "hcoord": "dist/hcoord/cli.js"
   },
   "scripts": {
     "build": "node scripts/build.mjs",

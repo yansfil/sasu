@@ -205,12 +205,16 @@ function installCliBinary() {
   ensureDir(binDir);
   const shimPath = path.join(binDir, "sasu");
   const entry = path.join(cliDir, "dist", "cli.js");
+  const hcoordEntry = path.join(cliDir, "dist", "hcoord", "cli.js");
   const version = spawnSync("node", [entry, "--contract-version"], { encoding: "utf8" });
   if (version.status !== 0) {
     return { ok: false, error: `built CLI version probe failed: ${(version.stderr || version.stdout || "").trim().slice(0, 500)}` };
   }
+  if (!fs.existsSync(hcoordEntry)) return { ok: false, error: "built hcoord entrypoint missing" };
+  const hcoordShimPath = path.join(binDir, "hcoord");
   fs.writeFileSync(shimPath, `#!/bin/sh\nexec node "${entry}" "$@"\n`, { mode: 0o755 });
-  return { ok: true, shimPath, contractVersion: (version.stdout || "").trim() };
+  fs.writeFileSync(hcoordShimPath, `#!/bin/sh\nexec node "${hcoordEntry}" "$@"\n`, { mode: 0o755 });
+  return { ok: true, shimPath, hcoordShimPath, contractVersion: (version.stdout || "").trim() };
 }
 
 // The LaunchAgent that runs `sasu supervisor tick` every interval. The CLI
@@ -268,13 +272,14 @@ function runInstaller() {
   // The Stop hook confirms an Observer handover to the supervisor tick and
   // never blocks a stop; it is the same entry on both runtimes.
   const supervisorStopCommand = `node ${path.join(repoRoot, "scripts", "supervisor_stop.mjs")}`;
-  const lifecycleHooks = { UserPromptSubmit: challengeTriggerCommand, PostToolUse: commitReminderCommand, Stop: supervisorStopCommand };
+  const legacyRetired = fs.existsSync(path.join(home, ".hcoord", "legacy-supervisor-retired"));
+  const lifecycleHooks = { UserPromptSubmit: challengeTriggerCommand, PostToolUse: commitReminderCommand, ...(legacyRetired ? {} : { Stop: supervisorStopCommand }) };
   const files = runtimeHookFiles(home);
   const hooks = {
     codex: ensureHooks(files.codex, lifecycleHooks),
     claude: ensureHooks(files.claude, lifecycleHooks),
   };
-  const supervisor = installSupervisor();
+  const supervisor = legacyRetired ? { ok: true, retired: true, message: "legacy supervisor remains retired" } : installSupervisor();
   return {
     ok: supervisor.ok,
     repoRoot,

@@ -45,6 +45,7 @@ test("installer installs canonical skills with correct substitutions and no alia
   assert.equal(report.ok, true);
   assert.equal(report.installed.codex.length, 9);
   assert.equal(report.installed.claude.length, 9);
+  assert.match(fs.readFileSync(path.join(home, "bin", "hcoord"), "utf8"), /dist\/hcoord\/cli\.js/);
 
   const codexInterview = path.join(home, ".codex", "skills", "interview-me", "SKILL.md");
   const codexInterviewText = fs.readFileSync(codexInterview, "utf8");
@@ -142,6 +143,27 @@ test("installer installs canonical skills with correct substitutions and no alia
   assert.equal(report.supervisor.plist, "written");
   assert.equal(fs.existsSync(path.join(home, "Library", "LaunchAgents", "com.sasu.supervisor.plist")), true);
   assert.deepEqual(result.launchctl.argv().map((argv) => argv[0]), ["print", "bootstrap"]);
+});
+
+test("installer keeps the legacy supervisor and Stop hook retired after hcoord transition", () => {
+  const home = freshHome();
+  runInstaller(home);
+  fs.mkdirSync(path.join(home, ".hcoord"), { recursive: true });
+  fs.writeFileSync(path.join(home, ".hcoord", "sasu-enabled"), "test\n");
+  const launchctl = installFakeLaunchctl(path.join(home, "fakes"));
+  const retired = spawnSync(process.execPath, [path.join(repoRoot, "cli", "dist", "cli.js"), "supervisor", "retire-legacy", "--json"], {
+    cwd: repoRoot, encoding: "utf8", env: { ...process.env, HOME: home, ...launchctl.env },
+  });
+  assert.equal(retired.status, 0, retired.stdout + retired.stderr);
+  const reinstalled = JSON.parse(runInstaller(home).stdout);
+  assert.equal(reinstalled.supervisor.retired, true);
+  assert.equal(fs.existsSync(path.join(home, "Library", "LaunchAgents", "com.sasu.supervisor.plist")), false);
+  for (const file of [path.join(home, ".codex", "hooks.json"), path.join(home, ".claude", "settings.json")]) {
+    const hooks = JSON.parse(fs.readFileSync(file, "utf8")).hooks;
+    assert.equal(hooks.Stop, undefined);
+    assert.ok(hooks.UserPromptSubmit);
+    assert.ok(hooks.PostToolUse);
+  }
 });
 
 test("installer removes owned legacy directories and keeps foreign ones", () => {
