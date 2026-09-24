@@ -30,6 +30,8 @@ export interface Participant {
   id: string; machine: string; hostScope: string; session: string; instance: string; name: string; project: string | null;
   parent: string | null; pane: string | null; runtime: "working" | "idle" | "done" | "unknown";
   connection: "connected" | "unavailable" | "unverified"; observedAt: string;
+  /** Where a worktree spawn placed this agent (PRD B3). */
+  worktree?: { repo: string; branch: string; path: string } | null;
 }
 export interface Watch {
   target: string; observer: string | null; generation: number; status: "active" | "stopped";
@@ -57,7 +59,7 @@ export interface Letter { schema: string; id: string; operation: string; args: R
 /** One processed or refused letter. `reported` means the writer already saw the outcome directly. */
 export interface LetterRecord { id: string; origin: string; operation: string; at: string; outcome: "applied" | "rejected" | "unsupported"; code: string | null; message: string | null; reported: boolean }
 export interface Event { seq: number; at: string; type: string; subjectId: string; correlationId: string | null; detail: Record<string, string | number | boolean | null> }
-export interface SpawnIntent { key: string; parent: string; machine: string; hostScope: string; session: string; name: string; kind: string; nativeArgs: string[]; noWatch: boolean; status: "reserved" | "unknown" | "complete"; pane: string | null; participant: string | null; reason: string | null; at: string; placement?: { workspace: string; cwd: string }; initialization?: "pending" | "reserved" | "complete"; observedInstance?: string | null; observedSession?: string | null }
+export interface SpawnIntent { key: string; parent: string; machine: string; hostScope: string; session: string; name: string; kind: string; nativeArgs: string[]; noWatch: boolean; status: "reserved" | "unknown" | "complete"; pane: string | null; participant: string | null; reason: string | null; at: string; placement?: { workspace: string; cwd: string }; worktree?: { repo: string; branch: string; path: string | null } | null; initialization?: "pending" | "reserved" | "complete"; observedInstance?: string | null; observedSession?: string | null }
 export interface Ledger {
   schema: typeof SCHEMA; seq: number; updatedAt: string; config: typeof DEFAULTS;
   participants: Record<string, Participant>; watches: Record<string, Watch>; watchHistory: Watch[]; requests: Record<string, Request>;

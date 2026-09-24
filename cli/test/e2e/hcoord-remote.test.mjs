@@ -146,3 +146,55 @@ test("a remote hcoord with another protocol is refused at collection and shown t
   assert.deepEqual([problem.machine, problem.code], ["mini", "version_mismatch"]);
   assert.match(problem.reason, /remote protocol 2; this HQ speaks 1/);
 });
+
+test("a remote spawn creates a Herdr worktree on the target, starts the child there, and records where it runs", async (t) => {
+  const { fake, coordinator, parent } = await setup(t);
+  const repo = path.join(fake.home("mini"), "src", "product");
+  const worktree = path.join(fake.home("mini"), "trees", "feature-x");
+  const spawnArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "mini", "--session", "s-parent", "--name", "builder", "--kind", "claude", "--repo", repo, "--branch", "feature-x", "--path", worktree, "--intent", "remote-spawn-1"];
+  const missing = coordinator.json(...spawnArgs);
+  assert.deepEqual([missing.ok, missing.error.code], [false, "repo_missing"]);
+  assert.match(missing.error.message, /clone the source repository there first/);
+  assert.equal(fake.worktrees("mini").length, 0);
+  fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
+  const spawned = coordinator.ok(...spawnArgs);
+  assert.deepEqual([spawned.participant.machine, spawned.participant.pane, spawned.participant.parent], ["mini", "builder-pane", parent.id]);
+  assert.deepEqual(spawned.participant.worktree, { repo, branch: "feature-x", path: worktree });
+  assert.equal(spawned.watch.observer, parent.id, "the local parent watches its remote child");
+  const start = fake.calls("mini").find((argv) => argv[0] === "agent" && argv[1] === "start");
+  assert.deepEqual(start.slice(0, 7), ["agent", "start", "builder", "--kind", "claude", "--pane", "builder-pane"]);
+  assert.equal(coordinator.ok(...spawnArgs).participant.id, spawned.participant.id, "the same intent returns the same child");
+  assert.equal(fake.worktrees("mini").length, 1, "and never creates a second worktree");
+  const listed = coordinator.ok("agent", "list").items.find((item) => item.id === spawned.participant.id);
+  assert.deepEqual([listed.machine, listed.worktree.branch, listed.worktree.path], ["mini", "feature-x", worktree]);
+  assert.equal(coordinator.ok("graph").participants.find((item) => item.id === spawned.participant.id).worktree.repo, repo);
+});
+
+test("an uncertain worktree creation is never repeated and is reconciled to the pane a person names", async (t) => {
+  const { fake, coordinator, parent } = await setup(t);
+  const repo = path.join(fake.home("mini"), "src", "product");
+  fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
+  const spawnArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "mini", "--session", "s-parent", "--name", "lost", "--kind", "claude", "--repo", repo, "--branch", "lost-reply", "--path", path.join(fake.home("mini"), "trees", "lost"), "--intent", "lost-1"];
+  fake.flag("mini", "worktree-lost-reply");
+  const uncertain = coordinator.json(...spawnArgs);
+  assert.equal(uncertain.error.code, "spawn_uncertain");
+  assert.match(uncertain.error.message, /herdr --machine mini worktree list/);
+  await new Promise((resolve) => setTimeout(resolve, 31_000)); // the lost reply's connection backoff
+  assert.equal(coordinator.json(...spawnArgs).error.code, "spawn_uncertain", "a retry without a named pane creates nothing");
+  assert.equal(fake.worktrees("mini").length, 1);
+  const reconciled = coordinator.ok(...spawnArgs.slice(0, -2), "--intent", "lost-1", "--reconcile-pane", "lost-pane", "--resume-start");
+  assert.equal(reconciled.participant.pane, "lost-pane");
+  assert.equal(reconciled.participant.worktree.branch, "lost-reply");
+  assert.equal(fake.worktrees("mini").length, 1);
+});
+
+test("spawn without --machine stays beside its parent, and another machine needs a repository and branch", async (t) => {
+  const { fake, coordinator, parent } = await setup(t);
+  const local = coordinator.ok("agent", "spawn", "--parent", parent.id, "--session", "s-parent", "--name", "helper", "--kind", "claude", "--intent", "local-1");
+  assert.equal(local.participant.machine, "local");
+  assert.ok(fake.calls("local").some((argv) => argv[0] === "tab" && argv[1] === "create" && argv.includes("helper")));
+  assert.equal(fake.calls("mini").some((argv) => argv[0] === "worktree"), false);
+  const refused = coordinator.json("agent", "spawn", "--parent", parent.id, "--machine", "mini", "--session", "s-parent", "--name", "nowhere", "--kind", "claude", "--intent", "remote-2");
+  assert.equal(refused.error.code, "invalid_argument");
+  assert.match(refused.error.message, /--repo <source repository on mini> and --branch/);
+});

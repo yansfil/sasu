@@ -119,6 +119,36 @@ export function createSpawnPane(record: SpawnIntent, placement: { workspace: str
   return pane["pane_id"];
 }
 
+/**
+ * Creates the child's worktree and workspace with Herdr on the target machine
+ * (PRD D-09). Herdr's own refusal means nothing was created; any other
+ * failure leaves the outcome unknown and is never retried blindly (PRD B5).
+ */
+export function createSpawnWorktree(record: SpawnIntent): { pane: string; workspace: string; cwd: string } {
+  const tree = record.worktree;
+  if (!tree) throw new HcoordError("invalid_state", "spawn intent has no worktree request");
+  const result = at(record).run!(["worktree", "create", "--cwd", tree.repo, "--branch", tree.branch, ...(tree.path ? ["--path", tree.path] : []), "--label", record.name, "--no-focus"], undefined, 20_000);
+  if (result.status !== 0) {
+    const refusal = (() => { try { return (JSON.parse(result.stderr || result.stdout) as { error?: { code?: string; message?: string } }).error; } catch { return undefined; } })();
+    if (refusal?.code === "not_git_worktree") throw new HcoordError("repo_missing", `no Git repository at ${tree.repo} on ${record.machine}; clone the source repository there first`, { code: refusal.code });
+    if (typeof refusal?.code === "string") throw new HcoordError("worktree_failed", `Herdr refused the worktree on ${record.machine}: ${refusal.message ?? refusal.code}`, { code: refusal.code });
+    throw new HcoordError("spawn_uncertain", `worktree creation on ${record.machine} has an unknown outcome; inspect herdr --machine ${record.machine} worktree list and retry this intent with --reconcile-pane <root pane>`, { intent: record.key, pane: null, unfinishedStep: "create_worktree" });
+  }
+  const created = (herdrJson(result.stdout)["result"] ?? {}) as Record<string, unknown>;
+  const root = created["root_pane"] as Record<string, unknown> | undefined;
+  if (typeof root?.["pane_id"] !== "string" || typeof root["workspace_id"] !== "string" || typeof root["cwd"] !== "string") throw new HcoordError("spawn_uncertain", "Herdr created a worktree without a root pane record; inspect it and reconcile this intent", { intent: record.key, pane: null, unfinishedStep: "create_worktree" });
+  return { pane: root["pane_id"], workspace: root["workspace_id"], cwd: root["cwd"] };
+}
+
+/** The placement of a pane a person named after an uncertain worktree creation. */
+export function observedPlacement(record: SpawnIntent, pane: string): { workspace: string; cwd: string } {
+  const result = at(record).run!(["pane", "get", pane], undefined, 2000);
+  if (result.status !== 0) throw new HcoordError("spawn_uncertain", "the named pane is unavailable; inspect it before reconciling", { pane });
+  const data = (herdrJson(result.stdout)["result"] as Record<string, unknown> | undefined)?.["pane"] as Record<string, unknown> | undefined;
+  if (data?.["pane_id"] !== pane || typeof data["workspace_id"] !== "string" || typeof data["cwd"] !== "string") throw new HcoordError("spawn_uncertain", "Herdr did not confirm the named pane's workspace and cwd", { pane });
+  return { workspace: data["workspace_id"], cwd: data["cwd"] };
+}
+
 export function confirmSpawnPane(record: SpawnIntent, placement: { workspace: string; cwd: string }): void {
   if (record.pane === null) throw new HcoordError("spawn_uncertain", "the spawn intent has no pane ID to inspect");
   const result = at(record).run!(["pane", "get", record.pane], undefined, 2000);

@@ -5,11 +5,11 @@ import { API_VERSION, HcoordError, LETTER_OPERATIONS, MAX_AGENTS, MAX_CONNECTION
 import { event } from "./model";
 import { execute, recordLetter, watchForRequest } from "./service";
 import { outboxCount, parseLetter, readOutbox, removeLetters, type Found, type RawLetter } from "./outbox";
-import { confirmSpawnPane, createSpawnPane, discoverAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateBinding, waitForSpawnInitialization } from "./herdr";
+import { confirmSpawnPane, createSpawnPane, createSpawnWorktree, observedPlacement, discoverAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateBinding, waitForSpawnInitialization } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
 import { notifyHuman, notifyText } from "./platform";
-import { isLocalMachine, remoteCall, remoteCallAsync, remoteOutcome, savedMachine, type Raw } from "./remote";
+import { isLocalMachine, remoteCall, remoteCallAsync, requireRemoteHerdr, remoteOutcome, savedMachine, type Raw } from "./remote";
 import { reconcileAlert, recordClean, recordReady, recordStart } from "./health";
 
 /** Whether this process reached the daemon on its last call; the CLI derives its health warning from it. */
@@ -157,10 +157,27 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
       if (intent.status !== "reserved") {
         if (typeof reconcilePane !== "string" || reconcilePane.trim() === "") throw new HcoordError("spawn_uncertain", "tab creation outcome is unknown; inspect the original tab and retry this intent with --reconcile-pane <exact-pane-id>", { intent: intent.key, pane: null, unfinishedStep: "record_pane" });
         // Older persisted intents lack placement, so retain their parent placement check.
-        confirmSpawnPane({ ...intent, pane: reconcilePane }, intent.placement ?? parentPlacement(parent));
+        // A worktree's placement was never recorded; the named pane's own placement is adopted.
+        const placement = intent.worktree ? observedPlacement(intent, reconcilePane) : intent.placement ?? parentPlacement(parent);
+        confirmSpawnPane({ ...intent, pane: reconcilePane }, placement);
         const found = inspectSpawnedAgent({ ...intent, pane: reconcilePane });
         if (found.state === "absent" && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "pane is confirmed but has no agent; retry with --reconcile-pane and --resume-start after inspecting it", { intent: intent.key, pane: reconcilePane, unfinishedStep: "agent_start" });
-        intent = commit("agent.spawn.pane", { intent: intent.key, pane: reconcilePane }, new Date().toISOString()) as SpawnIntent;
+        intent = commit("agent.spawn.pane", { intent: intent.key, pane: reconcilePane, ...placement }, new Date().toISOString()) as SpawnIntent;
+      } else if (intent.worktree) {
+        if (reconcilePane !== null && reconcilePane !== undefined) throw new HcoordError("invalid_argument", "a new spawn intent cannot reconcile an existing pane");
+        // The target's Herdr and hcoord must be usable before any remote effect (PRD B15, B16).
+        if (!isLocalMachine(intent.machine)) { requireRemoteHerdr(intent.machine); remoteCall(intent.machine, ["hello", "--hq", os.hostname()]); }
+        requireSpawnStorage(SPAWN_EVENT_SLOTS.reserve - 1, "create_worktree");
+        intent = commit("agent.spawn.unknown", { intent: intent.key, reason: "worktree creation reserved; outcome pending" }, at) as SpawnIntent;
+        let created: { pane: string; workspace: string; cwd: string };
+        try { created = createSpawnWorktree(intent); }
+        catch (error) {
+          if (error instanceof HcoordError && (error.code === "repo_missing" || error.code === "worktree_failed")) commit("agent.spawn.release", { intent: intent.key, reason: error.message, code: error.code }, new Date().toISOString());
+          throw error;
+        }
+        try { intent = commit("agent.spawn.pane", { intent: intent.key, ...created }, new Date().toISOString()) as SpawnIntent; }
+        catch (error) { throw new HcoordError("spawn_uncertain", "worktree was created but pane recording failed; repair storage and retry this intent with --reconcile-pane", { intent: intent.key, pane: created.pane, unfinishedStep: "record_pane", code: error instanceof HcoordError ? error.code : "storage_failed" }); }
+        createdNow = true;
       } else {
         if (reconcilePane !== null && reconcilePane !== undefined) throw new HcoordError("invalid_argument", "a new spawn intent cannot reconcile an existing pane");
         const placement = parentPlacement(parent);
