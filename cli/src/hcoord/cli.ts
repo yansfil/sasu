@@ -77,7 +77,8 @@ function warnIfUnstable(): void {
     const alert = lastDaemonContact === null ? readAlert(home) : reconcileAlert(home, Date.now(), lastDaemonContact === "answered", notifyText);
     if (alert) process.stderr.write(`${warningLine(alert, home)}\n`);
   } catch (error) {
-    process.stderr.write(`${JSON.stringify({ event: "hcoord.health_unreadable", at: new Date().toISOString(), code: (error as NodeJS.ErrnoException).code ?? "internal" })}\n`);
+    // Unreadable health evidence is itself a warning, never a silent "healthy".
+    process.stderr.write(`hcoord warning: daemon health is unknown: ${error instanceof HcoordError ? error.message : "health records could not be read"}\n`);
   }
 }
 

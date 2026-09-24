@@ -62,3 +62,12 @@ test("a start that never answers for a minute warns even without a request, and 
   assert.equal(coordinator.run("status").stderr, "", "ten answering minutes without a restart clear the warning");
   assert.equal(fs.existsSync(path.join(coordinator.dir, "alert.json")), false);
 });
+
+test("a corrupt health record is reported, not read as a healthy daemon", async (t) => {
+  const fake = createFakeRemote(CLI);
+  t.after(() => fake.cleanup());
+  const coordinator = hq(t, fake);
+  fs.mkdirSync(coordinator.dir, { recursive: true });
+  fs.writeFileSync(path.join(coordinator.dir, "alert.json"), "{not json");
+  assert.match(coordinator.run("inbox").stderr, /^hcoord warning: daemon health is unknown: .*alert\.json is unreadable/);
+});

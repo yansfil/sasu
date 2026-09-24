@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { runHerdrCommand, type HerdrEnvironment } from "../implement/herdr";
 import { HcoordError, REMOTE_PROTOCOL } from "./model";
-import { dataDir } from "./store";
+import { dataDir, writeFileAtomic } from "./store";
 
 /**
  * A participant's machine is "local" (or this host's name) or the label of a
@@ -22,6 +22,10 @@ const REMOTE_HERDR_TIMEOUT_MS = 20_000;
 // this long, so an asleep laptop or offline mini cannot stall every tick for
 // a full SSH timeout. Participants read as unavailable meanwhile (PRD B11).
 const UNREACHABLE_BACKOFF_MS = 30_000;
+// One bound for every SSH run of the remote hcoord: its deadline and the
+// largest reply read (a take returns at most 4 MB of letters).
+const REMOTE_CALL_TIMEOUT_MS = 30_000;
+const REMOTE_OUTPUT_BYTES = 16 * 1024 * 1024;
 const unreachableUntil = new Map<string, number>();
 
 export function machineBackoff(machine: string): number | null {
@@ -133,7 +137,7 @@ export function remoteOutcome(machine: string, raw: Raw): Record<string, unknown
 
 export function remoteCall(machine: string, argv: string[]): Record<string, unknown> {
   const saved = savedMachine(machine);
-  const result = spawnSync("ssh", sshArgs(saved.target, argv), { encoding: "utf8", timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 16 * 1024 * 1024 });
+  const result = spawnSync("ssh", sshArgs(saved.target, argv), { encoding: "utf8", timeout: REMOTE_CALL_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: REMOTE_OUTPUT_BYTES });
   return remoteOutcome(machine, { status: result.error ? null : result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? String(result.error ?? "") });
 }
 
@@ -143,8 +147,8 @@ export function remoteCallAsync(target: string, argv: string[], signal?: AbortSi
     const child = spawn("ssh", sshArgs(target, argv), { stdio: ["ignore", "pipe", "pipe"], signal, killSignal: "SIGKILL" });
     let stdout = "", stderr = "", done = false;
     const finish = (status: number | null): void => { if (done) return; done = true; clearTimeout(timer); resolve({ status, stdout, stderr }); };
-    const timer = setTimeout(() => { child.kill("SIGKILL"); finish(null); }, 30_000);
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); if (stdout.length > 16 * 1024 * 1024) { child.kill("SIGKILL"); finish(null); } });
+    const timer = setTimeout(() => { child.kill("SIGKILL"); finish(null); }, REMOTE_CALL_TIMEOUT_MS);
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); if (stdout.length > REMOTE_OUTPUT_BYTES) { child.kill("SIGKILL"); finish(null); } });
     child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8").slice(0, 4096); });
     child.on("error", (error) => { stderr += String(error); finish(null); });
     child.on("close", (code) => finish(code));
@@ -165,7 +169,5 @@ export function readHq(home = os.homedir()): string {
 export function writeHq(hq: string, home = os.homedir()): void {
   fs.mkdirSync(dataDir(home), { recursive: true, mode: 0o700 });
   if (hq === "local") { fs.rmSync(hqPath(home), { force: true }); return; }
-  const temporary = `${hqPath(home)}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify({ hq, setAt: new Date().toISOString() })}\n`, { mode: 0o600 });
-  fs.renameSync(temporary, hqPath(home));
+  writeFileAtomic(hqPath(home), `${JSON.stringify({ hq, setAt: new Date().toISOString() })}\n`);
 }

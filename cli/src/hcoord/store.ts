@@ -52,15 +52,23 @@ export function saveLedger(state: Ledger, home = os.homedir()): void {
   fs.chmodSync(dir, 0o700);
   const bytes = Buffer.from(`${JSON.stringify(state)}\n`);
   if (bytes.length > MAX_LEDGER_BYTES) throw new HcoordError("capacity", `ledger would exceed ${MAX_LEDGER_BYTES} bytes; existing requests remain intact`);
-  const temporary = path.join(dir, `.ledger-${process.pid}-${require("node:crypto").randomUUID()}.tmp`);
+  writeFileAtomic(ledgerPath(home), bytes);
+}
+
+/**
+ * The one durable replace for every hcoord file: a private temporary in the
+ * same directory, fsync, rename, then a directory fsync, so a reader sees the
+ * old or the new file and a crash never leaves a partial one. The temporary
+ * name starts with "." and ends in ".tmp", which no hcoord reader accepts.
+ */
+export function writeFileAtomic(file: string, bytes: Buffer | string): void {
+  const dir = path.dirname(file);
+  const temporary = path.join(dir, `.${path.basename(file)}.${process.pid}.${require("node:crypto").randomUUID()}.tmp`);
   const handle = fs.openSync(temporary, "wx", 0o600);
+  try { fs.writeFileSync(handle, bytes); fs.fsyncSync(handle); } finally { fs.closeSync(handle); }
   try {
-    fs.writeFileSync(handle, bytes);
-    fs.fsyncSync(handle);
-  } finally { fs.closeSync(handle); }
-  try {
-    fs.renameSync(temporary, ledgerPath(home));
+    fs.renameSync(temporary, file);
     const directory = fs.openSync(dir, "r");
     try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
-  } catch (error) { try { fs.unlinkSync(temporary); } catch { /* rename may have completed */ } throw error; }
+  } catch (error) { fs.rmSync(temporary, { force: true }); throw error; }
 }

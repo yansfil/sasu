@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { dataDir } from "./store";
+import { HcoordError } from "./model";
+import { dataDir, writeFileAtomic } from "./store";
 
 /**
  * Daemon availability evidence (PRD D-16, B14). The daemon appends one start
@@ -23,20 +24,21 @@ const healthPath = (home: string): string => path.join(dataDir(home), "health.js
 const alertPath = (home: string): string => path.join(dataDir(home), "alert.json");
 export const logPaths = (home = os.homedir()): string[] => [path.join(dataDir(home), "daemon.log"), path.join(dataDir(home), "daemon.err.log")];
 
-function writeAtomic(file: string, value: unknown): void {
-  const temporary = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(value)}\n`, { mode: 0o600 });
-  fs.renameSync(temporary, file);
+function writeAtomic(file: string, value: unknown): void { writeFileAtomic(file, `${JSON.stringify(value)}\n`); }
+
+/** A corrupt record must not read as "healthy"; it is reported like any unreadable hcoord config. */
+function readRecord<T>(file: string, valid: (value: unknown) => value is T): T | null {
+  let text: string;
+  try { text = fs.readFileSync(file, "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { parsed = undefined; }
+  if (!valid(parsed)) throw new HcoordError("corrupt_config", `${file} is unreadable; inspect or remove it`);
+  return parsed;
 }
 
 export function readHealth(home = os.homedir()): Health {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(healthPath(home), "utf8")) as Health;
-    return Array.isArray(parsed.starts) ? parsed : { starts: [] };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return { starts: [] };
-    throw error;
-  }
+  return readRecord(healthPath(home), (value): value is Health => value !== null && typeof value === "object" && Array.isArray((value as Health).starts)) ?? { starts: [] };
 }
 
 function update(home: string, change: (health: Health) => void): void {
@@ -81,8 +83,7 @@ export function recovered(health: Health, now: number, answering: boolean): bool
 }
 
 export function readAlert(home = os.homedir()): Alert | null {
-  try { return JSON.parse(fs.readFileSync(alertPath(home), "utf8")) as Alert; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return null; throw error; }
+  return readRecord(alertPath(home), (value): value is Alert => value !== null && typeof value === "object" && typeof (value as Alert).since === "string" && typeof (value as Alert).reason === "string");
 }
 
 /**

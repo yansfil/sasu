@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { HcoordError, LETTER_SCHEMA, MAX_MESSAGE_BYTES, MAX_OUTBOX_LETTERS, REMOTE_PROTOCOL, type Letter } from "./model";
-import { dataDir } from "./store";
+import { dataDir, writeFileAtomic } from "./store";
 
 /**
  * The per-machine outbox holds only letters an agent sent and the daemon has
@@ -27,13 +27,7 @@ export function writeLetter(operation: string, args: Record<string, unknown>, ho
   const bytes = Buffer.from(`${JSON.stringify(letter)}\n`);
   if (bytes.length > MAX_MESSAGE_BYTES) throw new HcoordError("capacity", `letter exceeds ${MAX_MESSAGE_BYTES} bytes; shorten context or native arguments before retrying`);
   const name = `${String(created.getTime()).padStart(15, "0")}-${letter.id}.json`;
-  const temporary = path.join(dir, `.${letter.id}.tmp`);
-  const handle = fs.openSync(temporary, "wx", 0o600);
-  try { fs.writeFileSync(handle, bytes); fs.fsyncSync(handle); } finally { fs.closeSync(handle); }
-  try { fs.renameSync(temporary, path.join(dir, name)); }
-  catch (error) { fs.rmSync(temporary, { force: true }); throw error; }
-  const directory = fs.openSync(dir, "r");
-  try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+  writeFileAtomic(path.join(dir, name), bytes);
   return letter;
 }
 
