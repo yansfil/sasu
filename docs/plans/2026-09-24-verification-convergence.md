@@ -1,6 +1,6 @@
 # Verification convergence: review before the final full verify
 
-Status: planned and independently reviewed once on 2026-09-24; implemented on branch `fix/verification-convergence`.
+Status: implemented on 2026-09-24 after one independent review of the plan.
 Source: the proposal and review in `agents/runs/verification-convergence-plan-20260924/` of the record tree (run bookkeeping, not committed).
 This amends one ordering of the [2026-09-15 stateless verification decision](2026-09-15-stateless-verification.md): native review no longer waits for a deterministic PASS.
 Everything else in that decision stands.
