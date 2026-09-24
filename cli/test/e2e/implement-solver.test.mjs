@@ -278,8 +278,8 @@ test("AC41: once the bound is spent, status names the run's state and the move t
   const summary = spawnSync(process.execPath, [CLI, "implement", "status"], { cwd: root, encoding: "utf8", env: merged }).stdout;
   assert.match(summary, /escalations: 3 of 3 used/);
   assert.match(summary, /bound (?:is )?spent/);
-  assert.match(summary, /Next: commit coherent work and request native review on the committed head with this verdict disclosed; run the full verify on the final committed candidate; delivery needs a current PASS/);
-  assert.doesNotMatch(summary, /continue to ship/);
+  assert.match(summary, /Next: commit, request native review with verdict NOT_RUN disclosed, run verify on the final committed candidate/);
+  assert.doesNotMatch(summary, /Next: ship/);
   // ...and the verb it can no longer issue is not offered.
   assert.doesNotMatch(summary, /escalate \(\d+ of 3 left\)/);
 });

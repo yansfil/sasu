@@ -1450,30 +1450,34 @@ function identicalInputFailures(state: ImplementState, attempt: UnifiedVerificat
   return count;
 }
 
+/**
+ * What the CLI says after a verify: recorded facts and one move. Review scope,
+ * follow-up context, and output sections live in the implement skill, not
+ * here. The one exception is naming the subagent tool per runtime: "native
+ * subagent" alone was read by Codex Implementors as the Herdr skill's
+ * `herdr agent start reviewer` example (2026-09-17), and the CLI line is what
+ * they acted on.
+ */
+const REVIEW_TOOL = "Claude Code: Agent tool; Codex: spawn_agent; never a Herdr pane";
+const REVIEW_RULES = "Review scope, follow-up context, output sections, and REVIEW_UNAVAILABLE: the implement skill, references/reviews-and-finalization.md.";
+
 function verificationNextActions(state: ImplementState, attempt: UnifiedVerificationAttempt): string[] {
   const verdict = effectiveVerdict(attempt);
   if (verdict !== "PASS") {
     const failed = failedRequiredCommands(state, attempt);
     let cause: string;
-    if (failed.length > 0) cause = `Failed required commands: ${failed.join("; ")}. Reproduce each failed command in isolation, fix the cause, commit, then rerun the full sasu implement verify.`;
-    else if (attempt.error !== null) cause = `It stopped at ${attempt.error.stage} (${attempt.error.code}): ${attempt.error.message}. Fix that cause, commit, then rerun the full sasu implement verify.`;
+    if (failed.length > 0) cause = `Failed required commands: ${failed.join("; ")}. Reproduce each in isolation, fix, commit, rerun sasu implement verify.`;
+    else if (attempt.error !== null) cause = `It stopped at ${attempt.error.stage} (${attempt.error.code}): ${attempt.error.message}. Fix that, commit, rerun sasu implement verify.`;
     else throw new Error(`verification attempt ${attempt.id} is ${verdict} with neither a failed command nor an error`);
     const repeated = identicalInputFailures(state, attempt);
     return [
       `Next action: ship is blocked; verification ${verdict}. ${cause}`,
-      ...(repeated > 1 ? [`Repeated input: ${repeated} consecutive FAIL attempts ran on identical verification input; a rerun without a change is a diagnostic reproduction, not a fix.`] : []),
+      ...(repeated > 1 ? [`Repeated input: ${repeated} consecutive FAIL attempts on identical verification input; a rerun without a change is a diagnostic reproduction, not a fix.`] : []),
     ];
   }
   return [
-    "Next action: if the last native review covered exactly this verified head and the registered evidence is unchanged since that review, continue to ship.",
-    `Otherwise spawn one set of native ${nativeReviewNames(state)} review subagents in parallel from this runtime for this exact verified head: a follow-up review with the prior review context on the diff, or the full-scope review when no prior review exists.`,
-    // The tool is named per runtime because "native subagent" alone was read by Codex Implementors as the Herdr skill's `herdr agent start reviewer` example (2026-09-17), so reviews ran in split panes instead of subagents.
-    "Subagent tool: Claude Code uses the Agent tool; Codex uses spawn_agent. Do not split a Herdr pane or start a Herdr agent for review.",
-    "Review context: give reviewers the approved PRD, current base/head, source, verification report, and evidence. If a previous review exists, also provide its actual reviewed HEAD (not merely a verified HEAD), findings, coverage, dispositions, the diff to this HEAD, and approved contract or material evidence changes.",
-    "Re-review: check unresolved findings, fix closure, and affected flows first while retaining complete reviewer scope. Identify reused evidence; inspect missing or invalidated coverage. Without applicable prior review context, perform the full-scope review.",
-    "Review output: Fix now, Follow-up improvements, and What was checked. Sasu sets no reviewer turn limit; if a reviewer fails, record REVIEW_UNAVAILABLE with the visible cause.",
-    "Fix now items need concrete failure evidence or a traceable failure path, the affected approved behavior, and an observable closure condition. Explain new evidence when reopening a resolved item; nonessential expansion belongs in Follow-up improvements.",
-    "Then fix valid current-scope findings: commit the fix, run its focused checks, request the follow-up review on that commit, and run the full verify again on the final committed candidate.",
+    `Next action: ship when the last native review covered this verified head with the same registered evidence; otherwise run one native ${nativeReviewNames(state)} review set on it (${REVIEW_TOOL}).`,
+    REVIEW_RULES,
   ];
 }
 
@@ -1551,11 +1555,11 @@ function digest(projectRoot: string, args: ImplementArgs): ImplementCommandResul
 /** The one move `status` names for the run's current verification verdict. */
 function statusNextStep(state: ImplementState, verdict: string, eligible: boolean, problems: string[]): string {
   if (state.status !== "active") return "start a new run if more work is required";
-  if (verdict === "PASS" && eligible) return "ship if the last native review covered this exact head with unchanged evidence; otherwise run one native review set on this head (a follow-up with the prior review context, or the full scope when none exists) before shipping";
-  if (problems.length > 0) return "resolve the reported input or evidence problem, commit, then rerun the full verify";
-  if (verdict === "FAIL") return "reproduce the failed required command(s) in isolation, fix, commit, then rerun the full verify";
-  if (verdict === "ERROR") return "fix the reported verification error, commit, then rerun the full verify";
-  return "commit coherent work and request native review on the committed head with this verdict disclosed; run the full verify on the final committed candidate; delivery needs a current PASS";
+  if (verdict === "PASS" && eligible) return "ship, after one native review set on this head unless the last review already covered it";
+  if (problems.length > 0) return "resolve the reported input or evidence problem, commit, rerun verify";
+  if (verdict === "FAIL") return "reproduce the failed required command(s) in isolation, fix, commit, rerun verify";
+  if (verdict === "ERROR") return "fix the reported verification error, commit, rerun verify";
+  return `commit, request native review with verdict ${verdict} disclosed, run verify on the final committed candidate`;
 }
 
 function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -1579,7 +1583,7 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
       `Source: ${sourceDigest ?? "unavailable"}; ${state.requirements.length} requirements retained in the contract`,
       `Required suite: ${JSON.stringify(suiteScore(state))}`,
       `Verification report: ${state.verificationReport?.markdownPath ?? "not generated"}`,
-      `Agent Review: ${verificationVerdict === "PASS" && currentDelivery.eligible ? `ship if the last native review covered this exact head with unchanged evidence; otherwise one native ${nativeReviewNames(state)} review set in parallel (Claude Code: Agent tool; Codex: spawn_agent; never a Herdr pane) on this head, a follow-up with the prior review context or the full scope when none exists; record Fix now and Follow-up improvements in the PR` : `native ${nativeReviewNames(state)} subagents in parallel (Claude Code: Agent tool; Codex: spawn_agent; never a Herdr pane) may review a committed head with the current verification verdict (${verificationVerdict}) disclosed; delivery still needs a current deterministic PASS`}`,
+      `Agent Review: ${verificationVerdict === "PASS" && currentDelivery.eligible ? `ship when the last native review covered this head with the same registered evidence; otherwise one native ${nativeReviewNames(state)} review set (${REVIEW_TOOL})` : `allowed on a committed head with verdict ${verificationVerdict} disclosed; delivery needs a current PASS`}`,
       `escalations: ${state.escalations.length} of ${ESCALATE_LIMIT_PER_RUN} used${state.escalations.length >= ESCALATE_LIMIT_PER_RUN ? "; bound spent" : ""}`,
       ...currentDelivery.reasons.map((reason) => `Delivery: ${reason}`),
       ...(state.activeVerification ? [`Verification in progress: ${state.activeVerification.attemptId}`] : []),
