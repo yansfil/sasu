@@ -52,19 +52,29 @@ export function parseLetter(id: string, createdMs: number, text: string): Found 
   return { id, createdMs, letter: value as Letter };
 }
 
-/** Letters in creation order, oldest first, at most `limit`. */
-export function readOutbox(limit: number, home = os.homedir()): Found[] {
+export interface RawLetter { id: string; createdMs: number; text: string }
+
+/** Letter files in creation order, oldest first, at most `limit` and `maxBytes` in total. */
+export function readOutboxRaw(limit: number, home = os.homedir(), maxBytes = Number.MAX_SAFE_INTEGER): RawLetter[] {
   const dir = outboxDir(home);
   if (!fs.existsSync(dir)) return [];
-  const found: Found[] = [];
+  const found: RawLetter[] = [];
+  let bytes = 0;
   for (const name of fs.readdirSync(dir).filter((entry) => letterFile.test(entry)).sort().slice(0, limit)) {
     const match = letterFile.exec(name)!;
     let text: string;
     try { text = fs.readFileSync(path.join(dir, name), "utf8"); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
-    found.push(parseLetter(match[2]!, Number(match[1]), text));
+    bytes += Buffer.byteLength(text);
+    if (bytes > maxBytes && found.length > 0) break;
+    found.push({ id: match[2]!, createdMs: Number(match[1]), text });
   }
   return found;
+}
+
+/** Letters in creation order, oldest first, at most `limit`. */
+export function readOutbox(limit: number, home = os.homedir()): Found[] {
+  return readOutboxRaw(limit, home).map((raw) => parseLetter(raw.id, raw.createdMs, raw.text));
 }
 
 export function outboxCount(home = os.homedir()): number {

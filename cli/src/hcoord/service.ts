@@ -91,6 +91,14 @@ export function recordLetter(state: Ledger, record: LetterRecord): void {
   else state.updatedAt = record.at;
 }
 
+/** Work that still needs this HQ: moving the HQ away is refused while any remains (PRD D-15, B17). */
+export function openWork(state: Ledger): { requests: Array<{ id: string; from: string; to: string; status: string }>; watches: Array<{ target: string; observer: string | null }> } {
+  return {
+    requests: Object.values(state.requests).filter((item) => !terminalRequest(state, item)).map((item) => ({ id: item.id, from: item.from, to: item.to, status: item.status })),
+    watches: Object.values(state.watches).filter((watch) => watch.status === "active").map((watch) => ({ target: watch.target, observer: watch.observer })),
+  };
+}
+
 export function execute(state: Ledger, operation: string, args: Args, at: string): Outcome {
   if (operation === "status") return { changed: false, value: {
     schema: state.schema, at, lastUpdatedAt: state.updatedAt, eventCursor: state.seq, counts: {
@@ -432,6 +440,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       if ((item.status === "open" && item.requiresReply && (item.to === "human" || item.escalatedAt !== null)) || pendingRelay(item)) items.push({ kind: pendingRelay(item) ? "relay_problem" : "question", requestId: item.id, createdAt: item.createdAt, from: item.from, to: item.to, status: item.status, nextAction: pendingRelay(item) ? "inspect parent delivery and relay the recorded answer" : uncheckedWatchRequest(state, item) ? "assign or restart the watch for an explicit check, or stop and cancel the old request" : "reply or cancel this request" });
       if (item.status !== "canceled" && !pendingRelay(item) && item.deliveries.some((delivery) => !delivery.actionClosedAt && (delivery.status === "unknown" || delivery.status === "deferred" || (delivery.status === "failed" && !(item.status === "answered" && (delivery.phase ?? "request") === "request"))))) items.push({ kind: "delivery_problem", requestId: item.id, createdAt: item.createdAt, nextAction: "inspect delivery history and recipient identity" });
     }
+    for (const [machine, entry] of Object.entries(state.machines)) if (entry.problem) items.push({ kind: "machine_problem", machine, code: entry.problem.code, reason: entry.problem.message, at: entry.problem.at, nextAction: entry.problem.code === "version_mismatch" ? `install the HQ's hcoord version on ${machine}` : entry.problem.code === "remote_not_installed" ? `install hcoord on ${machine}` : `fix SSH access to ${machine}; hcoord stores no credentials` });
     for (const record of Object.values(state.letters)) if (record.outcome !== "applied" && !record.reported) items.push({ kind: "letter_rejected", letter: record.id, origin: record.origin, operation: record.operation, at: record.at, code: record.code, reason: record.message, nextAction: record.outcome === "unsupported" ? "upgrade the writing machine's hcoord to this coordinator's version; the letter stays in its outbox" : "the letter was not applied; resend the command if it is still needed" });
     for (const watch of Object.values(state.watches)) if (watch.status === "active" && (watch.observer === null || own(state.participants, watch.observer)?.connection === "unavailable" || !own(state.participants, watch.observer))) items.push({ kind: "watch_unassigned", target: watch.target, observer: watch.observer, nextAction: "inspect current observer and assign explicitly" });
     return { changed: false, value: items };

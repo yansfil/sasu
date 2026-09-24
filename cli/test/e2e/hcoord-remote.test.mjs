@@ -1,0 +1,148 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import test from "node:test";
+import { createFakeRemote } from "../helpers/fake-remote.mjs";
+import { hq } from "../helpers/hcoord-hq.mjs";
+
+const CLI = path.resolve(import.meta.dirname, "../../dist/hcoord/cli.js");
+
+/** An agent's view of hcoord on a remote host: its own HOME and outbox. */
+function remoteAgent(fake, host) {
+  const env = fake.env(host);
+  return {
+    env,
+    json(...args) { const result = spawnSync(process.execPath, [CLI, ...args, "--json"], { env, encoding: "utf8" }); return JSON.parse(result.stdout); },
+    outbox: () => { const dir = path.join(env.HOME, ".hcoord", "outbox"); return fs.existsSync(dir) ? fs.readdirSync(dir).filter((name) => name.endsWith(".json")) : []; },
+  };
+}
+
+async function setup(t) {
+  const fake = createFakeRemote(CLI);
+  t.after(() => fake.cleanup());
+  fake.addMachine("mini", "mini-ssh");
+  fake.installHcoord("mini");
+  fake.addAgent("local", "parent-pane", { name: "parent", session: "s-parent", instance: "i-parent" });
+  fake.addAgent("mini", "w1:p1", { name: "worker", session: "s-worker", instance: "i-worker" });
+  const coordinator = hq(t, fake);
+  await coordinator.start();
+  const parent = coordinator.ok("agent", "register", "--machine", "local", "--session", "s-parent", "--instance", "i-parent", "--pane", "parent-pane", "--name", "parent");
+  return { fake, coordinator, parent };
+}
+
+test("a saved Herdr machine name registers a remote agent with the existing command and binds its HQ", async (t) => {
+  const { fake, coordinator, parent } = await setup(t);
+  const worker = coordinator.ok("agent", "register", "--machine", "mini", "--session", "s-worker", "--instance", "i-worker", "--pane", "w1:p1", "--name", "worker", "--parent", parent.id);
+  assert.deepEqual([worker.machine, worker.hostScope, worker.pane], ["mini", "default", "w1:p1"]);
+  assert.ok(fake.calls("mini").some((argv) => argv.join(" ") === "agent get w1:p1"), "the pane was confirmed on the remote Herdr server");
+  assert.match(fake.sshCommands("mini").at(-1), /^HCOORD_HOME="\$HOME\/\.hcoord" exec "\$HOME\/\.hcoord"\/bin\/hcoord remote 'hello' '--hq' '[^']+' --json$/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(fake.home("mini"), ".hcoord", "hq.json"), "utf8")).hq, os.hostname());
+  assert.equal(fs.existsSync(path.join(fake.home("mini"), ".hcoord", "ledger.json")), false, "the remote keeps no conversation record");
+});
+
+test("remote registration refuses unknown machines, failed SSH authentication, missing remote hcoord, and version skew", async (t) => {
+  const { fake, coordinator } = await setup(t);
+  const register = (machine) => coordinator.json("agent", "register", "--machine", machine, "--session", "s-worker", "--instance", "i-worker", "--pane", "w1:p1", "--name", "worker");
+  assert.equal(register("nowhere").error.code, "machine_unknown");
+  assert.match(register("nowhere").error.message, /herdr machine add --label nowhere/);
+  fake.flag("mini", "auth-denied");
+  assert.equal(register("mini").error.code, "auth_failed");
+  assert.match(register("mini").error.message, /hcoord stores no credentials/);
+  fake.flag("mini", "auth-denied", false);
+  fs.rmSync(path.join(fake.home("mini"), ".hcoord", "bin", "hcoord"));
+  assert.equal(register("mini").error.code, "remote_not_installed");
+  fs.writeFileSync(path.join(fake.home("mini"), ".hcoord", "bin", "hcoord"), `#!/bin/sh\necho '{"ok":true,"value":{"protocol":99}}'\n`, { mode: 0o755 });
+  const skewed = register("mini");
+  assert.equal(skewed.error.code, "version_mismatch");
+  assert.match(skewed.error.message, /remote protocol 99; this HQ speaks 1/);
+  fake.flag("mini", "down");
+  assert.equal(register("mini").error.code, "machine_unreachable");
+  assert.equal(coordinator.ok("agent", "list").items.filter((item) => item.machine === "mini" && item.registered).length, 0, "no refused registration leaves a participant");
+});
+
+test("on a remote machine writes wait in its outbox and queries are refused with the HQ location", async (t) => {
+  const { fake, coordinator, parent } = await setup(t);
+  const worker = coordinator.ok("agent", "register", "--machine", "mini", "--session", "s-worker", "--instance", "i-worker", "--pane", "w1:p1", "--name", "worker", "--parent", parent.id);
+  const agent = remoteAgent(fake, "mini");
+  const sent = agent.json("request", "send", "--from", worker.id, "--to", parent.id, "--body", "Need a decision", "--intent", "remote-q1");
+  assert.deepEqual([sent.ok, sent.delivery, sent.value.hq], [true, "pending", os.hostname()]);
+  assert.equal(agent.outbox().length, 1);
+  for (const query of [["request", "show", "r_x"], ["inbox"], ["graph"], ["agent", "list"], ["status"], ["events"], ["daemon", "start"]]) {
+    const refused = agent.json(...query);
+    assert.equal(refused.error.code, "hq_only", query.join(" "));
+    assert.equal(refused.error.detail.hq, os.hostname());
+  }
+});
+
+test("the HQ moves only without open work, and a moved HQ stops its daemon", async (t) => {
+  const { fake, coordinator, parent } = await setup(t);
+  fake.addAgent("local", "child-pane", { name: "child", session: "s-child", instance: "i-child" });
+  const child = coordinator.ok("agent", "register", "--machine", "local", "--session", "s-child", "--instance", "i-child", "--pane", "child-pane", "--name", "child", "--parent", parent.id);
+  const open = coordinator.ok("request", "send", "--from", child.id, "--to", parent.id, "--body", "open", "--intent", "open-1");
+  const refused = coordinator.json("config", "set", "hq", "mini");
+  assert.equal(refused.error.code, "hq_busy");
+  assert.deepEqual(refused.error.detail.requests.map((item) => item.id), [open.id]);
+  coordinator.ok("request", "cancel", open.id, "--actor", child.id);
+  const moved = coordinator.ok("config", "set", "hq", "mini");
+  assert.deepEqual([moved.hq, moved.previous], ["mini", "local"]);
+  assert.equal(coordinator.json("status").error.code, "hq_only");
+  assert.equal(fs.existsSync(path.join(coordinator.dir, "manual-stop")), true, "the former HQ daemon stopped and stays stopped");
+  const back = coordinator.ok("config", "set", "hq", "local");
+  assert.equal(back.hq, "local");
+  assert.equal(fs.existsSync(path.join(coordinator.dir, "hq.json")), false);
+});
+
+const until = async (predicate, message, attempts = 200) => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) { const value = predicate(); if (value) return value; await new Promise((resolve) => setTimeout(resolve, 100)); }
+  assert.fail(message);
+};
+
+test("a remote child's request reaches the local parent, and the human answer returns to the child pane", async (t) => {
+  const { fake, coordinator, parent } = await setup(t);
+  const worker = coordinator.ok("agent", "register", "--machine", "mini", "--session", "s-worker", "--instance", "i-worker", "--pane", "w1:p1", "--name", "worker", "--parent", parent.id);
+  const child = remoteAgent(fake, "mini");
+  const sent = child.json("request", "send", "--from", worker.id, "--to", parent.id, "--body", "Use library A or B?", "--intent", "rq-1");
+  assert.equal(sent.delivery, "pending");
+  const request = await until(() => fake.prompts("local").find((entry) => entry.target === "parent-pane" && entry.text.startsWith("HCOORD_REQUEST")), "the collected request wakes the parent");
+  assert.match(request.text, /Use library A or B\?/);
+  await until(() => child.outbox().length === 0, "the collected letter leaves the remote outbox");
+  const requestId = /request: (r_\S+)/.exec(request.text)[1];
+  coordinator.ok("request", "escalate", requestId, "--actor", parent.id);
+  coordinator.ok("request", "reply", requestId, "--as", "human", "--body", "A");
+  const answer = await until(() => fake.prompts("local").find((entry) => entry.text.startsWith("HCOORD_ANSWER")), "the human answer wakes the parent");
+  assert.match(answer.text, /question from .*:\nUse library A or B\?\nanswer: A/);
+  coordinator.ok("request", "relay", requestId, "--actor", parent.id, "--body", "Go with A");
+  const relay = await until(() => fake.prompts("mini").find((entry) => entry.target === "w1:p1" && entry.text.startsWith("HCOORD_RELAY")), "the relay reaches the remote pane through --machine");
+  assert.ok(fake.calls("mini").some((argv) => argv[0] === "agent" && argv[1] === "prompt" && argv[2] === "w1:p1"));
+  // B8: the remote child can act on the notice alone.
+  const delivery = /delivery: (d_\S+)/.exec(relay.text)[1];
+  assert.match(relay.text, /Go with A\nThis relays the answer to your question:\nUse library A or B\?\nAcknowledge with hcoord request ack \S+ --actor \S+ --delivery d_/);
+  assert.equal(child.json("request", "show", requestId).error.code, "hq_only");
+  assert.equal(child.json("request", "ack", requestId, "--actor", worker.id, "--delivery", delivery).delivery, "pending");
+  await until(() => coordinator.ok("request", "show", requestId).deliveries.find((entry) => entry.id === delivery)?.status === "acknowledged", "the remote ack is collected");
+});
+
+test("while the HQ cannot reach a machine, remote writes still succeed, its agents read as unobservable, and letters apply in order after reconnection", async (t) => {
+  const { fake, coordinator, parent } = await setup(t);
+  const worker = coordinator.ok("agent", "register", "--machine", "mini", "--session", "s-worker", "--instance", "i-worker", "--pane", "w1:p1", "--name", "worker", "--parent", parent.id);
+  const child = remoteAgent(fake, "mini");
+  fake.flag("mini", "down");
+  for (const [index, body] of ["one", "two", "three"].entries()) assert.equal(child.json("request", "send", "--from", worker.id, "--to", parent.id, "--body", body, "--intent", `order-${index}`, "--notify-only").delivery, "pending");
+  await until(() => coordinator.ok("agent", "show", worker.id).connection === "unavailable", "the HQ marks the remote agent unobservable");
+  assert.equal(child.outbox().length, 3);
+  fake.flag("mini", "down", false);
+  await until(() => child.outbox().length === 0, "letters are collected after reconnection", 600);
+  const created = coordinator.ledger().events.filter((entry) => entry.type === "request.created" && entry.correlationId.startsWith("order-")).map((entry) => entry.correlationId);
+  assert.deepEqual(created, ["order-0", "order-1", "order-2"]);
+});
+
+test("a remote hcoord with another protocol is refused at collection and shown to the human", async (t) => {
+  const { fake, coordinator, parent } = await setup(t);
+  coordinator.ok("agent", "register", "--machine", "mini", "--session", "s-worker", "--instance", "i-worker", "--pane", "w1:p1", "--name", "worker", "--parent", parent.id);
+  fs.writeFileSync(path.join(fake.home("mini"), ".hcoord", "bin", "hcoord"), `#!/bin/sh\necho '{"ok":true,"value":{"protocol":2,"letters":[]}}'\n`, { mode: 0o755 });
+  const problem = await until(() => coordinator.ok("inbox").find((item) => item.kind === "machine_problem"), "the refusal reaches the inbox");
+  assert.deepEqual([problem.machine, problem.code], ["mini", "version_mismatch"]);
+  assert.match(problem.reason, /remote protocol 2; this HQ speaks 1/);
+});

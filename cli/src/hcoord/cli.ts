@@ -2,13 +2,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import { officialPromptSupport } from "./herdr";
-import { HcoordError, LETTER_OPERATIONS } from "./model";
-import { writeLetter } from "./outbox";
+import { HcoordError, LETTER_OPERATIONS, LETTER_SCHEMA, MAX_OUTBOX_LETTERS, REMOTE_PROTOCOL } from "./model";
+import { outboxCount, readOutboxRaw, removeLetters, writeLetter } from "./outbox";
+import { readHq, writeHq } from "./remote";
+import { openWork } from "./service";
 import { platformSupport, startDaemon } from "./platform";
 import { callDaemon, lastDaemonContact, runDaemon, staleRead, type WireResult } from "./transport";
 import { readAlert, reconcileAlert, warningLine } from "./health";
 import { notifyText } from "./platform";
-import { dataDir, legacyRetiredPath, sasuEnabledPath, stopMarkerPath } from "./store";
+import { dataDir, legacyRetiredPath, loadLedger, sasuEnabledPath, stopMarkerPath } from "./store";
 
 interface Parsed { words: string[]; flags: Map<string, string | true>; tail: string[] }
 function parse(argv: string[]): Parsed {
@@ -111,9 +113,75 @@ async function sendLetter(operation: string, data: Record<string, unknown>): Pro
   }
 }
 
+const ok = (value: unknown): WireResult => ({ ok: true, value, observedAt: new Date().toISOString() });
+
+/** This machine still coordinates work, so it cannot become another HQ's remote (PRD D-15). */
+async function refuseWhileCoordinating(action: string): Promise<void> {
+  const work = openWork(loadLedger());
+  if (work.requests.length || work.watches.length) {
+    throw new HcoordError("hq_busy", `${action} is refused while this HQ has ${work.requests.length} unresolved request(s) and ${work.watches.length} active watch(es); finish, cancel, or stop them first`, work);
+  }
+}
+
+/**
+ * The HQ reaches a remote only through these subcommands over the saved
+ * machine's SSH target. They touch only the outbox and the HQ marker; the
+ * remote keeps no conversation record (PRD D-10).
+ */
+async function remoteSide(args: Parsed): Promise<WireResult> {
+  const action = args.words[1];
+  const base = { protocol: REMOTE_PROTOCOL, letterSchema: LETTER_SCHEMA, host: os.hostname() };
+  if (action === "hello") {
+    const hq = needed(args, "hq"), current = readHq();
+    if (current !== "local" && current !== hq) throw new HcoordError("hq_conflict", `this machine reports to HQ ${current}; run hcoord config set hq local here before ${hq} can use it`);
+    if (current === "local") {
+      let running = false;
+      try { running = (await callDaemon("status")).ok; } catch (error) { if (!(error instanceof HcoordError) || error.code !== "daemon_down") throw error; }
+      if (running) throw new HcoordError("hq_conflict", `this machine runs its own coordinator daemon; stop it or move its HQ before ${hq} can use it`);
+      await refuseWhileCoordinating(`joining HQ ${hq}`);
+      writeHq(hq);
+    }
+    return ok({ ...base, hq, outbox: outboxCount() });
+  }
+  if (action === "take") {
+    const limit = Math.min(Number(flag(args, "limit") ?? "64"), MAX_OUTBOX_LETTERS);
+    return ok({ ...base, letters: readOutboxRaw(Number.isSafeInteger(limit) && limit > 0 ? limit : 64, undefined, 4 * 1024 * 1024) });
+  }
+  if (action === "drop") return ok({ ...base, removed: removeLetters(args.words.slice(2)) });
+  throw new HcoordError("invalid_argument", "remote subcommands are hello, take, and drop");
+}
+
+/** `hcoord config set hq <local|machine>` (PRD B17). */
+async function setHq(value: string | undefined): Promise<WireResult> {
+  if (value === undefined || value.trim() === "") throw new HcoordError("invalid_argument", "usage: hcoord config set hq <local|machine name>");
+  const current = readHq();
+  if (value === current) return ok({ hq: current, changed: false });
+  const waiting = outboxCount();
+  if (current !== "local" && waiting > 0) throw new HcoordError("hq_busy", `${waiting} letter(s) still wait for HQ ${current}; let it collect them before moving`, { letters: waiting });
+  if (current === "local") {
+    await refuseWhileCoordinating(`moving the HQ to ${value}`);
+    try {
+      const stopped = await callDaemon("daemon.stop");
+      if (stopped.ok) fs.writeFileSync(stopMarkerPath(), `${new Date().toISOString()}\n`, { mode: 0o600 });
+    } catch (error) { if (!(error instanceof HcoordError) || error.code !== "daemon_down") throw error; }
+  }
+  writeHq(value);
+  return ok({ hq: value, changed: true, previous: current });
+}
+
 export async function main(argv: string[]): Promise<number> {
   const args = parse(argv), json = args.flags.has("json");
   try {
+    if (args.words[0] === "remote") { const result = await remoteSide(args); process.stdout.write(`${JSON.stringify(result)}\n`); return 0; }
+    if (args.words[0] === "config" && args.words[1] === "set" && args.words[2] === "hq") { const result = await setHq(args.words[3]); print(result, json); return 0; }
+    const hq = readHq();
+    if (hq !== "local") {
+      const { operation, data } = args.words[0] === "daemon" || args.words[0] === "sasu" ? { operation: `${args.words[0]}.${args.words[1]}`, data: {} } : route(args);
+      if (!LETTER_OPERATIONS.has(operation)) throw new HcoordError("hq_only", `${operation} runs only at the coordinator HQ (${hq}); this machine keeps no conversation record`, { hq });
+      const letter = writeLetter(operation, data);
+      print({ ok: true, delivery: "pending", value: { letter: letter.id, operation, reason: `HQ ${hq} collects it over its saved SSH machine`, hq }, observedAt: new Date().toISOString() }, json);
+      return 0;
+    }
     if (args.words[0] === "sasu" && args.words[1] === "enable") {
       const status = await callDaemon("status");
       if (!status.ok) { print(status, json); return 1; }

@@ -63,9 +63,11 @@ export interface Ledger {
   participants: Record<string, Participant>; watches: Record<string, Watch>; watchHistory: Watch[]; requests: Record<string, Request>;
   spawnIntents: Record<string, SpawnIntent>; sasuRuns: Record<string, { observer: string; implementor: string; project: string; registeredAt: string }>; events: Event[]; prunedBefore: string | null;
   letters: Record<string, LetterRecord>;
+  /** A remote machine's last collection refusal that needs a person (auth, install, version); cleared by the next success. */
+  machines: Record<string, { problem: { code: string; message: string; at: string } | null }>;
 }
 export function emptyLedger(now: string): Ledger {
-  return { schema: SCHEMA, seq: 0, updatedAt: now, config: { ...DEFAULTS }, participants: {}, watches: {}, watchHistory: [], requests: {}, spawnIntents: {}, sasuRuns: {}, events: [], prunedBefore: null, letters: {} };
+  return { schema: SCHEMA, seq: 0, updatedAt: now, config: { ...DEFAULTS }, participants: {}, watches: {}, watchHistory: [], requests: {}, spawnIntents: {}, sasuRuns: {}, events: [], prunedBefore: null, letters: {}, machines: {} };
 }
 // Persisted dictionaries are plain JSON objects, including after structuredClone.
 // Own-key access prevents caller IDs such as __proto__ from becoming records.

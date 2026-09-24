@@ -106,7 +106,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(ok("daemon", "status").platform.macos.localSocket, "verified_isolated");
   const parent = ok("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "parent", "--pane", "parent-pane");
   const child = ok("agent", "register", "--machine", "local", "--session", "two", "--instance", "b", "--name", "child", "--parent", parent.id, "--pane", "child-pane");
-  assert.equal(JSON.parse(command("agent", "register", "--machine", "remote", "--session", "one", "--instance", "a", "--name", "remote", "--pane", "parent-pane").stdout).error.code, "unsupported_remote");
+  assert.equal(JSON.parse(command("agent", "register", "--machine", "remote", "--session", "one", "--instance", "a", "--name", "remote", "--pane", "parent-pane").stdout).error.code, "unsupported_runtime", "a Herdr without --machine forwarding cannot host remote participants");
   assert.equal(command("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "wrong", "--pane", "parent-pane").status, 1);
   env.HCOORD_FAKE_PROMPT_API = "0";
   assert.equal(command("sasu", "enable").status, 1, "Sasu cannot opt into an unsupported wake path");

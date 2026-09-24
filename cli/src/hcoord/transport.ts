@@ -4,11 +4,12 @@ import os from "node:os";
 import { API_VERSION, HcoordError, LETTER_OPERATIONS, MAX_AGENTS, MAX_CONNECTIONS, MAX_EVENTS, MAX_LEDGER_BYTES, MAX_MESSAGE_BYTES, MAX_OUTBOX_LETTERS, MAX_QUEUE, REMOTE_PROTOCOL, SPAWN_EVENT_SLOTS, own, put, type Ledger, type LetterRecord } from "./model";
 import { event } from "./model";
 import { execute, recordLetter, watchForRequest } from "./service";
-import { outboxCount, readOutbox, removeLetters, type Found } from "./outbox";
-import { confirmSpawnPane, createSpawnPane, discoverLocalAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateLocalBinding, waitForSpawnInitialization } from "./herdr";
+import { outboxCount, parseLetter, readOutbox, removeLetters, type Found, type RawLetter } from "./outbox";
+import { confirmSpawnPane, createSpawnPane, discoverAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateBinding, waitForSpawnInitialization } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
 import { notifyHuman, notifyText } from "./platform";
+import { isLocalMachine, remoteCall, remoteCallAsync, remoteOutcome, savedMachine, type Raw } from "./remote";
 import { reconcileAlert, recordClean, recordReady, recordStart } from "./health";
 
 /** Whether this process reached the daemon on its last call; the CLI derives its health warning from it. */
@@ -19,6 +20,12 @@ export interface WireResult { ok: boolean; value?: unknown; error?: { code: stri
 /** A local letter younger than this waits for its writer's own collect call before the sweep takes it. */
 const LOCAL_SWEEP_GRACE_MS = 2000;
 const SWEEP_LETTERS_PER_TICK = 16;
+// Remote letters reach the HQ only when it collects them (PRD risk: delivery
+// lags by this interval). Chosen for a ~3 s SSH round trip measured to mini on
+// 2026-09-24; after a refusal the machine waits the longer backoff.
+const COLLECT_INTERVAL_MS = 5000;
+const COLLECT_BACKOFF_MS = 30_000;
+const COLLECT_LETTERS = 64;
 const mutation = (operation: string): boolean => !["status", "agent.list", "agent.show", "watch.list", "request.show", "inbox", "graph", "events"].includes(operation);
 
 export async function callDaemon(operation: string, args: Record<string, unknown> = {}, home = os.homedir(), timeoutOverrideMs?: number): Promise<WireResult> {
@@ -212,8 +219,8 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
   const registerSasuRun = (args: Record<string, unknown>, at: string): unknown => {
     const run = String(args["run"] ?? ""), project = String(args["project"] ?? "");
     if (run === "" || project === "") throw new HcoordError("invalid_argument", "run and project are required");
-    const observerBinding = validateLocalBinding("local", String(args["observerSession"] ?? ""), String(args["observerInstance"] ?? ""), String(args["observerPane"] ?? ""), String(args["observerHostScope"] ?? "default"), String(args["observerName"] ?? ""));
-    const implementorBinding = validateLocalBinding("local", String(args["implementorSession"] ?? ""), String(args["implementorInstance"] ?? ""), String(args["implementorPane"] ?? ""), String(args["implementorHostScope"] ?? "default"), String(args["implementorName"] ?? ""));
+    const observerBinding = validateBinding("local", String(args["observerSession"] ?? ""), String(args["observerInstance"] ?? ""), String(args["observerPane"] ?? ""), String(args["observerHostScope"] ?? "default"), String(args["observerName"] ?? ""));
+    const implementorBinding = validateBinding("local", String(args["implementorSession"] ?? ""), String(args["implementorInstance"] ?? ""), String(args["implementorPane"] ?? ""), String(args["implementorHostScope"] ?? "default"), String(args["implementorName"] ?? ""));
     const observerCapability = officialDeliveryAvailable({ machine: "local", hostScope: String(args["observerHostScope"] ?? "default"), session: String(args["observerSession"] ?? ""), instance: String(args["observerInstance"] ?? ""), pane: String(args["observerPane"] ?? ""), name: String(args["observerName"] ?? "") });
     if (!observerCapability.ready) throw new HcoordError("unsupported_runtime", `Sasu Observer wake cannot use official delivery: ${observerCapability.reason}`);
     const next = structuredClone(ledger);
@@ -241,7 +248,11 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
       return value;
     }
     if (operation === "agent.register") {
-      const binding = validateLocalBinding(String(args["machine"] ?? ""), String(args["session"] ?? ""), String(args["instance"] ?? ""), typeof args["pane"] === "string" ? args["pane"] : null, String(args["hostScope"] ?? "default"), String(args["name"] ?? ""));
+      const machine = String(args["machine"] ?? "");
+      // A remote pane is addressed through its saved machine's own session, never this host's socket.
+      if (!isLocalMachine(machine)) args = { ...args, hostScope: "default" };
+      const binding = validateBinding(machine, String(args["session"] ?? ""), String(args["instance"] ?? ""), typeof args["pane"] === "string" ? args["pane"] : null, String(args["hostScope"] ?? "default"), String(args["name"] ?? ""));
+      if (!isLocalMachine(machine)) remoteCall(machine, ["hello", "--hq", os.hostname()]);
       args = { ...args, runtime: binding.runtime };
     }
     return commit(operation, args, at, letter);
@@ -278,6 +289,11 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
     };
     if (found.letter === null) return unsupported("unsupported_letter", found.reason);
     const letter = found.letter;
+    // A remote writer names its own host as local; the HQ knows it by its saved machine label.
+    if (origin !== "local" && letter.operation === "agent.register") {
+      const named = String(letter.args["machine"] ?? "");
+      letter.args = { ...letter.args, machine: named === "local" || named === letter.writer.host ? origin : named, hostScope: "default" };
+    }
     if (letter.writer.protocol !== REMOTE_PROTOCOL) return unsupported("version_mismatch", `letter from hcoord protocol ${letter.writer.protocol}; this coordinator speaks ${REMOTE_PROTOCOL}`);
     let result: WireResult;
     if (!LETTER_OPERATIONS.has(letter.operation)) {
@@ -305,6 +321,88 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
       if (found.id === until) { requested = outcome.result; break; }
     }
     return requested;
+  };
+  /** A machine collection refusal a person must fix is kept in the ledger until a later success. */
+  const noteMachine = (machine: string, problem: { code: string; message: string } | null): void => {
+    const current = ledger.machines[machine]?.problem ?? null;
+    if (current === null && problem === null) return;
+    if (current !== null && problem !== null && current.code === problem.code) return;
+    const at = new Date().toISOString();
+    const next = structuredClone(ledger);
+    put(next.machines, machine, { problem: problem === null ? null : { ...problem, at } });
+    event(next, at, problem === null ? "machine.recovered" : "machine.problem", machine, null, { code: problem?.code ?? null });
+    saveLedger(next, home); ledger = next;
+  };
+  /** An unreachable machine makes its participants unobservable, not failed (PRD B11). */
+  const markUnreachable = (machine: string, reason: string): void => {
+    const at = new Date().toISOString();
+    const next = structuredClone(ledger);
+    let changed = false;
+    for (const participant of Object.values(next.participants)) {
+      if (participant.machine !== machine || participant.connection === "unavailable") continue;
+      execute(next, "agent.observe", { id: participant.id, runtime: "unknown", connection: "unavailable", reason }, at);
+      changed = true;
+    }
+    if (changed) { saveLedger(next, home); ledger = next; }
+  };
+  /** Applies one collected batch oldest first; returns the letters the remote may delete. */
+  const applyCollected = (machine: string, raw: Raw): string[] => {
+    let value: Record<string, unknown>;
+    try { value = remoteOutcome(machine, raw); }
+    catch (error) {
+      const reason = error instanceof HcoordError ? error : new HcoordError("internal", "collection failed");
+      if (reason.code === "machine_unreachable") markUnreachable(machine, reason.message);
+      else noteMachine(machine, { code: reason.code, message: reason.message });
+      throw reason;
+    }
+    noteMachine(machine, null);
+    const letters = Array.isArray(value["letters"]) ? value["letters"] as RawLetter[] : [];
+    const removable: string[] = [];
+    for (const letter of letters) {
+      if (typeof letter?.id !== "string" || typeof letter.text !== "string" || typeof letter.createdMs !== "number") continue;
+      if (applyLetter(parseLetter(letter.id, letter.createdMs, letter.text), machine, false).remove) removable.push(letter.id);
+    }
+    return removable;
+  };
+  /** Runs one step on the serialized operation queue; a failed step never blocks the next. */
+  const queue = <T>(step: () => T): Promise<T> => {
+    const run = processing.then(step);
+    processing = run.then(() => undefined, () => undefined);
+    return run;
+  };
+  const collections = new Map<string, { inFlight: boolean; nextAt: number }>();
+  const inFlight = new Set<Promise<void>>();
+  const aborter = new AbortController();
+  /** Starts at most one collection per remote machine; SSH runs outside the operation queue. */
+  const pollRemotes = (): void => {
+    const machines = new Set([...Object.values(ledger.participants).map((p) => p.machine), ...Object.values(ledger.spawnIntents).filter((i) => i.status !== "complete").map((i) => i.machine)].filter((m) => !isLocalMachine(m)));
+    for (const machine of machines) {
+      const state = collections.get(machine) ?? { inFlight: false, nextAt: 0 };
+      collections.set(machine, state);
+      if (state.inFlight || closing || Date.now() < state.nextAt) continue;
+      state.inFlight = true;
+      const job = (async () => {
+        let retryAfter = COLLECT_BACKOFF_MS;
+        try {
+          let target: string;
+          try { target = savedMachine(machine).target; }
+          catch (error) {
+            const reason = error instanceof HcoordError ? error : new HcoordError("internal", "saved machine lookup failed");
+            await queue(() => noteMachine(machine, { code: reason.code, message: reason.message }));
+            throw reason;
+          }
+          const raw = await remoteCallAsync(target, ["take", "--limit", String(COLLECT_LETTERS)], aborter.signal);
+          const removable = await queue(() => closing ? [] : applyCollected(machine, raw));
+          retryAfter = COLLECT_INTERVAL_MS;
+          // A failed deletion is harmless: the next take returns recorded letters, which are only deleted again.
+          if (removable.length) await remoteCallAsync(target, ["drop", ...removable], aborter.signal);
+        } catch (error) {
+          process.stderr.write(`${JSON.stringify({ event: "hcoord.collect_failed", at: new Date().toISOString(), machine, code: error instanceof HcoordError ? error.code : "internal" })}\n`);
+        } finally { state.inFlight = false; state.nextAt = Date.now() + retryAfter; }
+      })();
+      inFlight.add(job);
+      void job.finally(() => inFlight.delete(job));
+    }
   };
   const processOutbox = (): void => {
     let examined = 0;
@@ -385,7 +483,7 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
           saveLedger(deferred, home); ledger = deferred;
           continue;
         }
-        const outcome = submitOfficial(item, delivery, recipient, watch?.cycle ?? null);
+        const outcome = submitOfficial(item, delivery, recipient, watch?.cycle ?? null, own(ledger.participants, item.from));
         const finished = structuredClone(ledger);
         const recorded = finished.requests[item.id]!.deliveries.find((entry) => entry.id === delivery.id)!;
         recorded.status = outcome.status;
@@ -438,6 +536,13 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
               const known = own(ledger.letters, letterId);
               const resolved = collected ?? letterResults.get(letterId) ?? (known ? applyLetter({ id: letterId, createdMs: 0, letter: null, reason: "" }, "local", true).result : null);
               if (resolved === null) throw new HcoordError("not_found", "letter is neither in the outbox nor recorded; inspect hcoord inbox before resending");
+              // The sweep may have applied it before this call arrived; its writer sees the outcome now, so it leaves the inbox.
+              const record = own(ledger.letters, letterId);
+              if (record && !record.reported) {
+                const next = structuredClone(ledger);
+                next.letters[letterId]!.reported = true;
+                saveLedger(next, home); ledger = next;
+              }
               socket.end(`${JSON.stringify({ ...resolved, delivery: "delivered" })}\n`);
               return;
             }
@@ -449,8 +554,8 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
             }
             if (decoded.operation === "agent.list") {
               const registered = value as Array<Record<string, unknown>>;
-              const scopes = [...new Set(["default", ...Object.values(ledger.participants).map((entry) => entry.hostScope)])];
-              const discovered = scopes.slice(0, 4).map((scope) => discoverLocalAgents(Object.values(ledger.participants), typeof decoded.args["project"] === "string" ? decoded.args["project"] : null, scope));
+              const scopes = [...new Set(["local\u0000default", ...Object.values(ledger.participants).map((entry) => `${isLocalMachine(entry.machine) ? "local" : entry.machine}\u0000${isLocalMachine(entry.machine) ? entry.hostScope : "default"}`)])];
+              const discovered = scopes.slice(0, 4).map((scope) => { const [machine, hostScope] = scope.split("\u0000"); return discoverAgents(Object.values(ledger.participants), typeof decoded.args["project"] === "string" ? decoded.args["project"] : null, machine, hostScope); });
               value = { items: [...registered.map((entry) => ({ registered: true, ...entry })), ...discovered.flatMap((entry) => entry.items)], partialFailures: [...discovered.flatMap((entry) => entry.partialFailures), ...(scopes.length > 4 ? [`discovery skipped ${scopes.length - 4} socket scopes; registered participants remain visible`] : [])], observedAt: at };
             }
             result = { ok: true, value, observedAt: at };
@@ -506,9 +611,12 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
         collectLocal(null, LOCAL_SWEEP_GRACE_MS);
         processOutbox();
       }).catch((error) => { process.stderr.write(`${JSON.stringify({ event: "hcoord.tick_failed", at: new Date().toISOString(), code: error instanceof HcoordError ? error.code : "internal" })}\n`); }).finally(() => { tickPending = false; });
+      pollRemotes();
     }, 1000);
     await new Promise<void>((resolve) => server.once("close", resolve));
     clearInterval(timer);
+    aborter.abort();
+    await Promise.allSettled([...inFlight]);
     process.off("SIGTERM", onSignal);
     process.off("SIGINT", onSignal);
     await processing;

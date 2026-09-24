@@ -33,7 +33,7 @@ export function loadLedger(home = os.homedir()): Ledger {
   const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
   if (!Number.isSafeInteger(ledger.seq) || !Array.isArray(ledger.events) || !record(ledger.config) ||
       !record(ledger.requests) || !record(ledger.participants) || !record(ledger.watches) ||
-      !record(ledger.spawnIntents) || (ledger.letters !== undefined && !record(ledger.letters)) || (ledger.sasuRuns !== undefined && !record(ledger.sasuRuns)) ||
+      !record(ledger.spawnIntents) || (ledger.letters !== undefined && !record(ledger.letters)) || (ledger.machines !== undefined && !record(ledger.machines)) || (ledger.sasuRuns !== undefined && !record(ledger.sasuRuns)) ||
       (ledger.watchHistory !== undefined && !Array.isArray(ledger.watchHistory)) ||
       Object.values(ledger.requests).some((request) => !record(request) || !Array.isArray(request.deliveries) || !Array.isArray(request.lateAnswers)) ||
       Object.values(ledger.watches).some((watch) => !record(watch) || typeof watch.target !== "string" || typeof watch.generation !== "number")) {
@@ -42,6 +42,7 @@ export function loadLedger(home = os.homedir()): Ledger {
   ledger.watchHistory ??= [];
   ledger.sasuRuns ??= {};
   ledger.letters ??= {};
+  ledger.machines ??= {};
   return ledger;
 }
 
