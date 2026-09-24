@@ -598,6 +598,13 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
       }).finally(() => { queuedOperations -= 1; });
     });
   });
+  // Handlers exist before the start record: a stop that landed between that
+  // record and the socket being ready used the default action, left no clean
+  // mark, and a clean stop read as a crash (hcoord-health e2e flake, 2026-09-25).
+  const closed = new Promise<void>((resolve) => server.once("close", () => resolve()));
+  const onSignal = (): void => { if (!closing) { closing = true; if (server.listening) server.close(); } };
+  process.once("SIGTERM", onSignal);
+  process.once("SIGINT", onSignal);
   recordStart(process.pid, new Date().toISOString(), home);
   try {
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(socketFile, () => { server.off("error", reject); resolve(); }); });
@@ -605,9 +612,7 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
     fs.chmodSync(socketFile, 0o600);
     recordReady(process.pid, new Date().toISOString(), home);
     reconcileAlert(home, Date.now(), true, notifyText);
-    const onSignal = (): void => { if (!closing) { closing = true; server.close(); } };
-    process.once("SIGTERM", onSignal);
-    process.once("SIGINT", onSignal);
+    if (closing) server.close();
     const timer = setInterval(() => {
       if (tickPending || closing) return;
       tickPending = true;
@@ -638,15 +643,16 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
       }).catch((error) => { process.stderr.write(`${JSON.stringify({ event: "hcoord.tick_failed", at: new Date().toISOString(), code: error instanceof HcoordError ? error.code : "internal" })}\n`); }).finally(() => { tickPending = false; });
       pollRemotes();
     }, 1000);
-    await new Promise<void>((resolve) => server.once("close", resolve));
+    await closed;
     clearInterval(timer);
     aborter.abort();
     await Promise.allSettled([...inFlight]);
-    process.off("SIGTERM", onSignal);
-    process.off("SIGINT", onSignal);
     await processing;
     recordClean(process.pid, new Date().toISOString(), home);
-  } finally { try { if (socketOwned && fs.existsSync(socketFile)) fs.unlinkSync(socketFile); } catch { /* report only through original error */ } }
+  } finally {
+    process.off("SIGTERM", onSignal);
+    process.off("SIGINT", onSignal);
+    try { if (socketOwned && fs.existsSync(socketFile)) fs.unlinkSync(socketFile); } catch { /* report only through original error */ } }
   } finally { try { if (lockOwned && fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch { /* report only through original error */ } }
   return "stopped";
 }

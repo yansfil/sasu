@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import test from "node:test";
 import { createFakeRemote } from "../helpers/fake-remote.mjs";
 import { hq } from "../helpers/hcoord-hq.mjs";
@@ -41,6 +42,25 @@ test("clean stops never count as instability", async (t) => {
   await coordinator.start();
   assert.equal(coordinator.run("status").stderr, "");
   assert.equal(fake.notifications().length, 0);
+});
+
+// A stop signal that lands between the start record and the socket being ready
+// once killed the daemon without its clean mark, so a clean stop read as a crash.
+test("a stop signal during startup still ends with a clean mark", async (t) => {
+  const fake = createFakeRemote(CLI);
+  t.after(() => fake.cleanup());
+  const coordinator = hq(t, fake);
+  const healthFile = path.join(coordinator.dir, "health.json");
+  const starts = () => { try { return JSON.parse(fs.readFileSync(healthFile, "utf8")).starts; } catch { return []; } };
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const before = starts().length;
+    const daemon = spawn(process.execPath, [CLI, "daemon", "run"], { env: coordinator.env, stdio: "ignore" });
+    const exited = new Promise((resolve) => daemon.once("exit", (code, signal) => resolve({ code, signal })));
+    while (starts().length === before && daemon.exitCode === null) await new Promise((resolve) => setImmediate(resolve));
+    daemon.kill("SIGTERM");
+    assert.deepEqual(await exited, { code: 0, signal: null }, `attempt ${attempt} exits through the stop path`);
+  }
+  assert.deepEqual(starts().filter((entry) => entry.cleanAt === null), [], "every recorded start ended cleanly");
 });
 
 test("a start that never answers for a minute warns even without a request, and ten ready minutes clear it", async (t) => {
