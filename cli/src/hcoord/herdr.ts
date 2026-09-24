@@ -61,10 +61,9 @@ export function officialPromptSupport(hostScope?: string): { ready: boolean; rea
   return { ready: true, reason: "official Herdr agent.prompt API confirmed; delivery remains non-atomic" };
 }
 
-export function messageForDelivery(item: Request, delivery: Delivery): string {
-  const watch = item.intent.split(":");
-  if (watch.length === 4 && watch[0] === "watch" && watch[1] === item.from && watch[3]) {
-    return `HCOORD_WATCH_CHECK\nrequest: ${item.id}\ntarget: ${item.from}\ncycle: ${watch[3]}\nRecorded observation: ${item.context ?? "none"}\nInspect the target's current exact Herdr execution before confirming this cycle. Then run hcoord watch check ${item.from} --cycle ${watch[3]} --actor ${delivery.recipient}. Do not use request reply for a watch cycle. If inspection is unavailable, leave the cycle unchecked and end this turn; hcoord will remind you.`;
+export function messageForDelivery(item: Request, delivery: Delivery, watchCycle: string | null): string {
+  if (watchCycle !== null && (delivery.phase === "request" || delivery.phase === "watch_check" || delivery.phase === undefined)) {
+    return `HCOORD_WATCH_CHECK\nrequest: ${item.id}\ntarget: ${item.from}\ncycle: ${watchCycle}\nRecorded observation: ${item.context ?? "none"}\nInspect the target's current exact Herdr execution before confirming this cycle. Then run hcoord watch check ${item.from} --cycle ${watchCycle} --actor ${delivery.recipient}. Do not use request reply for a watch cycle. If inspection is unavailable, leave the cycle unchecked and end this turn; hcoord will remind you.`;
   }
   if (delivery.phase === "relay_problem") return `HCOORD_RELAY_PROBLEM\nrequest: ${item.id}\nThe recorded answer still needs relay. Inspect hcoord request show ${item.id}, then relay within its scope.`;
   if (delivery.phase === "delivery_problem") return `HCOORD_DELIVERY_PROBLEM\nrequest: ${item.id}\nInspect the recorded answer and unresolved child delivery with hcoord request show ${item.id}`;
@@ -73,9 +72,9 @@ export function messageForDelivery(item: Request, delivery: Delivery): string {
   return `HCOORD_REQUEST\nrequest: ${item.id}\n${item.body}\nInspect with hcoord request show ${item.id}. If you can answer, use hcoord request reply ${item.id} --as ${delivery.recipient} --body <answer>. If a human must decide, use hcoord request escalate ${item.id} --actor ${delivery.recipient}, then end this turn. Do not poll: hcoord will wake you with HCOORD_ANSWER when the human reply is ready. Relay only the recorded answer.`;
 }
 
-export function submitOfficial(item: Request, delivery: Delivery, recipient: Participant): { status: Delivery["status"]; code: string; reason: string } {
+export function submitOfficial(item: Request, delivery: Delivery, recipient: Participant, watchCycle: string | null): { status: Delivery["status"]; code: string; reason: string } {
   if (recipient.pane === null) throw new HcoordError("invalid_state", "recipient pane missing at submission");
-  const result = promptAgent({ target: recipient.pane, text: messageForDelivery(item, delivery), expectedInputGuard: null }, { env: scopeEnv(recipient.hostScope) }, 2000);
+  const result = promptAgent({ target: recipient.pane, text: messageForDelivery(item, delivery, watchCycle), expectedInputGuard: null }, { env: scopeEnv(recipient.hostScope) }, 2000);
   if (result.path !== "session-match") throw new HcoordError("runtime_unavailable", "Herdr adapter returned an unexpected prompt path; inspect the delivery outcome");
   return { status: result.outcome === "accepted" ? "accepted" : result.outcome === "rejected" ? "deferred" : "unknown", code: result.code, reason: result.detail };
 }

@@ -287,6 +287,18 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.match(watchPrompt.text, /Inspect the target's current exact Herdr execution before confirming this cycle/);
   assert.match(watchPrompt.text, /Do not use request reply for a watch cycle/);
   assert.equal(fs.existsSync(path.join(home, "UNSUPPORTED_GUARD")), false);
+  const decoy = ok("request", "send", "--from", child.id, "--to", parent.id, "--body", "Which option should I choose?", "--intent", `watch:${child.id}:999:${watch.cycle}`);
+  let decoyPrompt;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    decoyPrompt = fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)).find((entry) => entry.text.includes(decoy.id));
+    if (decoyPrompt) break;
+    await wait(100);
+  }
+  assert.ok(decoyPrompt, "ordinary watch-shaped request reaches the agent");
+  assert.match(decoyPrompt.text, /^HCOORD_REQUEST/);
+  assert.match(decoyPrompt.text, /Which option should I choose\?/);
+  assert.doesNotMatch(decoyPrompt.text, /HCOORD_WATCH_CHECK|hcoord watch check/);
+  ok("request", "cancel", decoy.id, "--actor", child.id);
   ok("watch", "check", child.id, "--cycle", watch.cycle, "--actor", parent.id);
   assert.equal(ok("watch", "list").find((item) => item.target === child.id).cycle, null);
   assert.equal(command("watch", "assign", child.id, "--observer", spawned.participant.id, "--actor", "human").status, 1);
