@@ -14,16 +14,26 @@ Requirement IDs are references, not a task ledger.
 
 The Implementor writes one plan before it changes any source.
 It exists because an Implementor that starts editing straight from the PRD discovers the codebase, the wrong order, and structural surprises after half the work is already written, and the Observer has nothing to read until verify runs.
-The plan is written inside the approved `Technical structure`; it never redesigns that boundary.
+First read the code the PRD's structure section points at: the existing patterns, the helpers that already do part of the job, and the test conventions.
 
-1. Read the code the PRD's structure section points at: the existing patterns, the helpers that already do part of the job, and the test conventions.
-2. Draw the dependency graph: what has to exist before what.
-3. Slice vertically by observable behavior, not by layer.
-   One slice covers one to three Behaviors rows, leaves the product working, and becomes one intermediate commit.
-4. Order the slices by dependency, riskiest first, so the likely failure happens while there is the least to undo.
-5. Give each slice its likely files and the check that shows it works.
-   Do not restate acceptance criteria; the Behaviors rows already carry them.
-6. Name when the first full `sasu implement verify` runs: on the final committed candidate by default, earlier when a slice first connects an integration boundary.
+The plan answers four questions.
+Its format is free and its length follows the work: a one-module task is ten lines, a boundary change is a page.
+Nothing validates its shape, and nothing checks conformance to it later.
+
+1. **How I will build it.**
+   Map the PRD's `Technical structure` onto the real code: which modules or boundaries, what talks to what, what existing code is reused, and what is new.
+   Name the one or two decisions that are expensive to reverse and why they go this way.
+   A structure that differs from the approved PRD is an `OBSERVER_BLOCK` before the first write, not a note in the plan.
+2. **Where it can go wrong.**
+   Name the risks that decide the order.
+   A plan with no risk is the PRD restated and reads as such.
+3. **What I decide and go with.**
+   List the product or implementation choices the PRD does not settle, each with its reason, under the heading "say now if you disagree" ("이견 있으면 지금").
+   Do not wait for an answer: proceed, and the Observer answers at the `plan` wake only when it disagrees.
+4. **Order and the check for each step.**
+   A step is a work unit that becomes one commit, cut by observable behavior rather than by layer, ordered by dependency and risk, and labeled with the Behaviors rows it makes visible.
+   Each step names what a person sees or which test turns green when it is done; "it builds" and "the table exists" are not checks.
+   Say when the first full `sasu implement verify` runs: on the final committed candidate by default, earlier when a step first connects an integration boundary.
 
 Write it to `agents/runs/<slug>/plan.md`, print it as ordinary text, and register it:
 
@@ -34,19 +44,8 @@ sasu implement plan --path agents/runs/<slug>/plan.md
 Then continue in the same turn.
 The command records one `plan` event; under Herdr the supervisor tick wakes the Observer once for it within a tick interval, whatever runtime the Implementor is.
 The plan is run bookkeeping: not verify input and not a gate the Observer approves.
-A rewritten plan is registered again and wakes the Observer again; a run that never registers one is not a signal of anything.
-The shape:
-
-```text
-READ:      <files opened, existing pattern or helper to reuse>
-SLICES:    1. <behaviors> - <what> - risk: <why first> - files: <paths> - check: <command or observation>
-           2. <behaviors> - depends on 1 - ...
-           3. <behaviors> - independent, parallelizable - ...
-UNKNOWNS:  <structure the PRD names that the code does not have, or an open decision>
-```
-
-An `UNKNOWNS` line that changes the approved structure is an `OBSERVER_BLOCK` before the first write, not an assumption to build on.
-When the plan turns out wrong mid-run, rewrite the file and say so in one line, register it again, and continue; nothing checks conformance to it.
+When the plan turns out wrong mid-run, rewrite the file, say so in one line, register it again, and continue; the new registration wakes the Observer again.
+A run that never registers one is not a signal of anything.
 
 ### Example
 
@@ -60,34 +59,55 @@ B4 a comment on my own article sends me nothing
 B5 deleting a comment removes its notification
 ```
 
-Sliced by layer, nothing is observable until the fourth step and the check for each is "the table exists" or "it builds":
+The plan:
 
 ```text
-1. comments table   2. notifications table   3. both APIs   4. comment box UI   5. bell UI
+# plan: comment notifications
+
+How I will build it
+- Comments and notifications are separate tables and modules; comments/ knows nothing about notifications.
+  Saving a comment emits a "comment created" event on the existing events/emit bus; notifications/ subscribes and writes the notification.
+  Reason: later notification kinds (likes, mentions) must not touch comments/.
+- Notification creation runs outside the comment transaction: a failed notification never rolls back the comment.
+- Reused: events/emit, the existing Bell component (only the count is wired). New: notifications table and module.
+- Expensive to reverse: notifications carry target_type + target_id, not comment_id, so the next kind needs no migration.
+
+Where it can go wrong
+- The transaction boundary. Inside: a notification failure loses the comment. Outside: the comment lands and the notification may be missing; missing ones are logged.
+- The "no notification on my own article" rule (B4) is one line inside the trigger and easy to forget; step 2's check pins it.
+
+What I decide and go with (not in the PRD; say now if you disagree)
+- Repeated comments by one person on one article each notify; no grouping.
+- Deleting a comment removes its notification even when already read (B5).
+
+Order and checks
+0. none; the existing code needs no reshaping first.
+1. Post a comment (B1): comments table + POST /comments + list under the article.
+   Check: post one in the browser and see it appear without reload.
+2. Notification appears (B2, B4): notifications table + subscriber + self-exclusion + bell count.
+   Check: comment on another author's article, bell shows 1; on my own, 0. Two tests pin it.
+3. Open a notification (B3), on 2, independent of 4: link on the notification scrolls to the comment.
+   Check: click lands on the comment.
+4. Delete a comment (B5), on 2, independent of 3: delete cascades by target_id.
+   Check: bell 1 before delete, 0 after.
+Full verify once after step 4 is committed. Step 2 first joins the two modules, so the existing suite runs once there.
+
+Blocked on: nothing.
 ```
 
-Sliced by behavior, every step leaves something a person can try, and each is one commit:
-
-```text
-SLICES:    1. B1     - comments schema + POST + list render - risk: this data shape is the base of everything else - files: db/…, api/comments.ts, ui/CommentBox.tsx - check: post a comment in the browser and see it
-           2. B2, B4 - notifications schema + trigger on comment creation + self-exclusion rule - depends on 1 - risk: trigger inside or outside the transaction - check: comment on another author's article, bell shows 1; on my own, 0
-           3. B3     - notification deep link to the comment - depends on 2 - independent of 4 - check: click scrolls to the comment
-           4. B5     - delete cascade - depends on 2 - independent of 3 - check: bell shows 0 after delete
-```
-
-B2 and B4 share a slice because B4 is one line inside B2's trigger and is not a working state on its own.
-The notifications table is used by B2, B3, and B5, and it is created by the first slice that needs it, not by a slice of its own.
+B2 and B4 share step 2 because B4 is one line inside B2's trigger and is not a working state on its own.
+The notifications table serves B2, B3, and B5, and step 2 builds it because it is the first step that needs it.
 
 ### Work that is not a Behaviors row
 
 The rows are the unit of observation; some work has no row and still has a place.
 
-- Shared shape: a type, a table, or a module boundary several slices depend on is built by the first slice that needs it.
-  When that shape is expensive to reverse, name it in the plan under that slice so the choice is deliberate, not a side effect of getting slice 1 to pass.
-- Preparatory refactoring: when the existing code makes the first slice tangled, a slice `0.` may reshape it first.
+- Shared shape: a type, a table, or a module boundary several steps depend on is built by the first step that needs it.
+  When that shape is expensive to reverse, name it under "How I will build it" so the choice is deliberate, not a side effect of getting step 1 to pass.
+- Preparatory refactoring: when the existing code makes the first step tangled, a step `0.` may reshape it first.
   It changes no behavior, its check is the existing suite staying green, and it is its own commit, so the diff that adds behavior stays readable.
-- Structure the PRD names without a row, such as a migration or a config key, belongs to the first slice that needs it.
-- A pure structure slice, with no row and no runnable surface, is allowed only when it has a real check of its own: a command that can be run, a test that can be red.
+- Structure the PRD names without a row, such as a migration or a config key, belongs to the first step that needs it.
+- A pure structure step, with no row and no runnable surface, is allowed only when it has a real check of its own: a command that can be run, a test that can be red.
   "The table exists" and "it builds" are not checks.
 - Work in no row and no structure section, such as an abstraction for later or an unrelated cleanup, is not planned; it goes to Follow-up improvements.
 

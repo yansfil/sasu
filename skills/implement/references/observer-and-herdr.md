@@ -6,7 +6,7 @@
 - [Resolve The Current Role](#resolve-the-current-role)
 - [Dispatch One Implementor](#dispatch-one-implementor)
 - [Handoff Packet](#handoff-packet)
-- [Exception-Only Intervention](#exception-only-intervention)
+- [Looking And Acting](#looking-and-acting)
 - [Recovery And Completion](#recovery-and-completion)
 
 ## Role Boundary
@@ -141,7 +141,7 @@ Do not run a background command to wait on the run: a finished background comman
 ## The Supervisor Tick
 
 One user LaunchAgent runs `sasu supervisor tick` every 30 seconds for every run on the machine.
-It is level-triggered: each tick re-reads the index of watched `state.json` paths, each run's record, and herdr's `agent get` for the Implementor and the Observer, and reaches its verdict from those facts alone.
+It is level-triggered: each tick re-reads the index of watched `state.json` paths, each run's record and git tree, and herdr's `agent get` for the Implementor and the Observer, and reaches its verdict from those facts alone.
 It writes no run state and holds no cursor, so a tick killed at any point, or a machine rebooted, reaches the same verdict on the next tick; the only cost is one interval of delay.
 
 It wakes the recorded Observer for exactly these reasons:
@@ -152,6 +152,8 @@ It wakes the recorded Observer for exactly these reasons:
 | `blocked` | herdr reports the Implementor blocked |
 | `escalate` | an `escalate` event was recorded |
 | `plan` | a `plan` event was recorded by `sasu implement plan`; once per event, the Implementor keeps working |
+| `commit` | the run's HEAD moved and commits exist since dispatch (`git rev-list --count <dispatch head>..HEAD`); several commits between two ticks are one wake |
+| `drift` | any of: `repeated-fail`, the last two or more verify attempts since dispatch are FAIL on one `inputFingerprint`; `outside-boundary`, the digest's list of changed paths outside the delivery boundary is non-empty; `uncommitted-age`, uncommitted changes whose newest is 20 minutes old while the Implementor is working. The detail line names each fact present |
 | `stall` | no `state.json` event AND no herdr lifecycle activity for 10 minutes; a working Implementor is activity |
 | `implementor-gone` | the Implementor's pane is empty or holds another agent |
 | `terminal` | the run was retired; it leaves the index after this wake |
@@ -159,7 +161,10 @@ It wakes the recorded Observer for exactly these reasons:
 
 Artifact, verify, dispatch and amendment events do not wake; they only reset the stall clock.
 A missing plan event is not a reason either: the tick reads nothing into its absence (D-11).
+`commit` and `drift` come from the run's git tree and verify attempts, read by the tick with bounded git calls and no model; a git tree it cannot read adds neither and shows as the run's current failure in `sasu supervisor status`.
 Each condition is answered once per episode; a working Observer is not interrupted and receives the same condition on the next tick it is idle; several runs watched by one Observer arrive in one wake.
+A `drift` fact that persists is the one exception to answering once: every 10 minutes since the fact began it becomes a new episode and is raised again, and its detail says `raised again`, until the fact clears.
+A `drift` rides along with `settled`, `blocked`, `stall` or a due `patrol` in the same wake instead of being suppressed by them, and an accepted `commit` wake counts as the Observer's look, so `patrol` waits a full interval after it.
 
 Before every wake the tick compares `agent get` on the recorded Observer pane with the recorded session UUID and terminal.
 A different session in the same pane, with the same name and cwd, receives nothing: the run shows `observer-gone` in `sasu supervisor status` until a person hands it over with `sasu supervisor handover --slug <slug> --approval "<verbatim user words>"` from the new Observer's pane.
@@ -185,20 +190,42 @@ Read the digest first.
 It reports deterministic facts since dispatch - elapsed time, the Implementor's herdr state and last activity, commits and recent subjects, changed files and lines, per-file churn, paths outside the delivery boundary, verify attempts and repeatedly failing suites, uncommitted changes and their age - and no judgment.
 It answers only the recorded Observer session; another session that receives a stray wake is refused and nothing changes.
 Then read the pane tail with `herdr agent read <implementor-name> --source recent-unwrapped --lines 120`, for diagnosis only.
-On the first `patrol` wake also read `agents/runs/<slug>/plan.md`: it is the Implementor's declared order and slice boundaries, the one place a wrong reading of the structure or a missing existing helper is visible before the code shows it.
+The plan at `agents/runs/<slug>/plan.md` is the Implementor's declared structure and order, the one place a wrong reading of the structure or a missing existing helper is visible before the code shows it.
 
-A `plan` wake names the file in its detail line.
-Read it, and either end the turn or give one line of direction; the Implementor is working, so the direction lands in its composer and is read at its next prompt.
-From those two, choose one of three: it is fine and the turn ends; one line of direction to the Implementor; or stop.
+What each reason asks of the Observer:
+
+- `plan`: read the file the detail line names.
+  Answer only a "What I decide and go with" item you disagree with, or a structure that differs from the approved PRD; otherwise end the turn.
+- `commit`: read the digest and the plan, and compare the commit subjects and changed paths with the plan's structure and order.
+  A commit off the structure, off the order, or touching what the plan said it would not gets one line of direction; otherwise end the turn.
+- `drift`: one move is required, never "fine"; [Looking And Acting](#looking-and-acting) says which.
+- `patrol`: read the digest, and on the first one the plan; end the turn or give one line of direction.
+- `settled` without a current deterministic report, `blocked`, an `OBSERVER_BLOCK`: decide from the handoff or escalate, as below.
+- `escalate`: an escalation was recorded; forward the suggested next step from its diagnosis, or follow the replacement it started.
+- `stall`, `implementor-gone`, `terminal`: [Recovery And Completion](#recovery-and-completion).
+
+The Implementor is working through most of these, so one line of direction lands in its composer and is read at its next prompt.
 Use Sasu state, not transcript keywords, as the source of truth.
 
 The Observer's Stop hook confirms the handover when a turn ends normally: it exits 0 in every case, never blocks a stop, and only asks launchd for an immediate tick when this session is the recorded Observer of an indexed run.
 It is not what watches the run; the tick has been watching since dispatch.
 
-## Exception-Only Intervention
+## Looking And Acting
 
-The normal path is silent.
-The Observer intervenes only on `blocked`, an idle or done agent without a current deterministic report, `unknown` or exited runtime state, a scope or authority violation, or an explicit user change.
+The normal path is a glance per commit, not silence.
+The tick wakes the Observer on progress (`plan`, `commit`) and on drift, and most of those wakes end in one read and no message.
+The Observer never edits implementation files; its moves are one line of direction, `sasu implement escalate`, or stop.
+Beyond one line of direction it acts on `blocked`, an idle or done agent without a current deterministic report, `unknown` or exited runtime state, a scope or authority violation, an explicit user change, and drift.
+
+A `drift` wake is a recorded fact that the run is going wrong, so "fine" is not an answer to it.
+Choose one:
+
+- One line of direction, when the cause is plain from the digest and the pane tail.
+- `sasu implement escalate --reason "<the drift fact>" --adopt "<why>"` without `--agent`, then forward the suggested next step from the diagnosis it writes (`agents/runs/<slug>/artifacts/solver/diagnosis-<n>.md`) to the Implementor as the direction.
+  The run is the Implementor's, so escalating takes it over with `--adopt`; the forwarded direction tells the Implementor to pass `--adopt` on its next mutating `sasu implement` command to take the run back.
+
+The second `drift` wake for the same fact kind on the same run, one whose detail says `raised again` because the fact persisted through a 10-minute interval, requires the escalation: one line of direction has already not cleared it.
+The budget of three escalations per run stands and is the cap; once it is spent, surface the persisting drift to the user instead of looping (Sasu 13).
 
 Before waiting for an answer, the Implementor must emit this packet as final text and end its turn instead of opening an interactive question UI:
 
