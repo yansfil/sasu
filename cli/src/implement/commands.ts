@@ -1417,22 +1417,63 @@ function nativeReviewNames(state: ImplementState): string {
   return state.prd.reviewProfile === "high-risk" ? "Fidelity, Code, and Security" : "Fidelity and Code";
 }
 
-function verificationNextActions(state: ImplementState, verdict: VerificationStatus): string[] {
+/**
+ * Failed required commands of one attempt, in sealed order. The attempt's
+ * mechanical records carry no suite id; the suite result written in the same
+ * state update carries it with the attempt id, which is also how the report's
+ * requiredCommands names them.
+ */
+function failedRequiredCommands(state: ImplementState, attempt: UnifiedVerificationAttempt): string[] {
+  return state.suite.commands.flatMap((command) => {
+    const result = state.suite.results.find((entry) => entry.commandId === command.id && entry.attemptId === attempt.id);
+    if (result?.status !== "RED") return [];
+    return [`${command.id} \`${command.command}\` (${result.mutatedTree ? "changed the judged source" : `exit ${result.exitCode}`})`];
+  });
+}
+
+/**
+ * How many FAIL attempts in a row, ending with this one, ran on the same
+ * recorded input. herdr-ide `web-shell-pivot-s4` (2026-09-24) ran attempts
+ * 6-8 on one inputFingerprint, each a full suite of about 1-4 minutes, and
+ * every one failed in the Rust suite. The count is disclosed, never enforced:
+ * reproducing a failure on unchanged input is a legitimate diagnostic.
+ */
+function identicalInputFailures(state: ImplementState, attempt: UnifiedVerificationAttempt): number {
+  let index = state.verificationAttempts.findIndex((entry) => entry.id === attempt.id);
+  if (index < 0) throw new Error(`verification attempt ${attempt.id} is missing from the run record`);
+  let count = 0;
+  for (; index >= 0; index -= 1) {
+    const held = state.verificationAttempts[index]!;
+    if (effectiveVerdict(held) !== "FAIL" || held.inputFingerprint !== attempt.inputFingerprint) break;
+    count += 1;
+  }
+  return count;
+}
+
+function verificationNextActions(state: ImplementState, attempt: UnifiedVerificationAttempt): string[] {
+  const verdict = effectiveVerdict(attempt);
   if (verdict !== "PASS") {
+    const failed = failedRequiredCommands(state, attempt);
+    let cause: string;
+    if (failed.length > 0) cause = `Failed required commands: ${failed.join("; ")}. Reproduce each failed command in isolation, fix the cause, commit, then rerun the full sasu implement verify.`;
+    else if (attempt.error !== null) cause = `It stopped at ${attempt.error.stage} (${attempt.error.code}): ${attempt.error.message}. Fix that cause, commit, then rerun the full sasu implement verify.`;
+    else throw new Error(`verification attempt ${attempt.id} is ${verdict} with neither a failed command nor an error`);
+    const repeated = identicalInputFailures(state, attempt);
     return [
-      "Next action: fix the deterministic failures in the report, then rerun sasu implement verify.",
-      "Do not review or ship this head until deterministic verification passes.",
+      `Next action: ship is blocked; verification ${verdict}. ${cause}`,
+      ...(repeated > 1 ? [`Repeated input: ${repeated} consecutive FAIL attempts ran on identical verification input; a rerun without a change is a diagnostic reproduction, not a fix.`] : []),
     ];
   }
   return [
-    `Next action: spawn native ${nativeReviewNames(state)} review subagents in parallel from this runtime for this exact verified head.`,
+    "Next action: if the last native review covered exactly this verified head and the registered evidence is unchanged since that review, continue to ship.",
+    `Otherwise spawn one set of native ${nativeReviewNames(state)} review subagents in parallel from this runtime for this exact verified head: a follow-up review with the prior review context on the diff, or the full-scope review when no prior review exists.`,
     // The tool is named per runtime because "native subagent" alone was read by Codex Implementors as the Herdr skill's `herdr agent start reviewer` example (2026-09-17), so reviews ran in split panes instead of subagents.
     "Subagent tool: Claude Code uses the Agent tool; Codex uses spawn_agent. Do not split a Herdr pane or start a Herdr agent for review.",
     "Review context: give reviewers the approved PRD, current base/head, source, verification report, and evidence. If a previous review exists, also provide its actual reviewed HEAD (not merely a verified HEAD), findings, coverage, dispositions, the diff to this HEAD, and approved contract or material evidence changes.",
     "Re-review: check unresolved findings, fix closure, and affected flows first while retaining complete reviewer scope. Identify reused evidence; inspect missing or invalidated coverage. Without applicable prior review context, perform the full-scope review.",
     "Review output: Fix now, Follow-up improvements, and What was checked. Sasu sets no reviewer turn limit; if a reviewer fails, record REVIEW_UNAVAILABLE with the visible cause.",
     "Fix now items need concrete failure evidence or a traceable failure path, the affected approved behavior, and an observable closure condition. Explain new evidence when reopening a resolved item; nonessential expansion belongs in Follow-up improvements.",
-    "Then fix valid current-scope findings. If source or material evidence changes, commit it and rerun verify and review; otherwise continue to ship.",
+    "Then fix valid current-scope findings: commit the fix, run its focused checks, request the follow-up review on that commit, and run the full verify again on the final committed candidate.",
   ];
 }
 
@@ -1507,6 +1548,16 @@ function digest(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   return result("status", true, `${state.topicSlug}: digest since dispatch`, { digest: built }, renderDigest(built));
 }
 
+/** The one move `status` names for the run's current verification verdict. */
+function statusNextStep(state: ImplementState, verdict: string, eligible: boolean, problems: string[]): string {
+  if (state.status !== "active") return "start a new run if more work is required";
+  if (verdict === "PASS" && eligible) return "ship if the last native review covered this exact head with unchanged evidence; otherwise run one native review set on this head (a follow-up with the prior review context, or the full scope when none exists) before shipping";
+  if (problems.length > 0) return "resolve the reported input or evidence problem, commit, then rerun the full verify";
+  if (verdict === "FAIL") return "reproduce the failed required command(s) in isolation, fix, commit, then rerun the full verify";
+  if (verdict === "ERROR") return "fix the reported verification error, commit, then rerun the full verify";
+  return "commit coherent work and request native review on the committed head with this verdict disclosed; run the full verify on the final committed candidate; delivery needs a current PASS";
+}
+
 function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   if (args.flags.get("digest") === true) return digest(projectRoot, args);
   const { state } = loadState(projectRoot, stateOptions(args));
@@ -1528,11 +1579,11 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
       `Source: ${sourceDigest ?? "unavailable"}; ${state.requirements.length} requirements retained in the contract`,
       `Required suite: ${JSON.stringify(suiteScore(state))}`,
       `Verification report: ${state.verificationReport?.markdownPath ?? "not generated"}`,
-      `Agent Review: ${verificationVerdict === "PASS" && currentDelivery.eligible ? `spawn native ${nativeReviewNames(state)} subagents in parallel (Claude Code: Agent tool; Codex: spawn_agent; never a Herdr pane); record Fix now and Follow-up improvements in the PR` : "wait for a current deterministic PASS"}`,
+      `Agent Review: ${verificationVerdict === "PASS" && currentDelivery.eligible ? `ship if the last native review covered this exact head with unchanged evidence; otherwise one native ${nativeReviewNames(state)} review set in parallel (Claude Code: Agent tool; Codex: spawn_agent; never a Herdr pane) on this head, a follow-up with the prior review context or the full scope when none exists; record Fix now and Follow-up improvements in the PR` : `native ${nativeReviewNames(state)} subagents in parallel (Claude Code: Agent tool; Codex: spawn_agent; never a Herdr pane) may review a committed head with the current verification verdict (${verificationVerdict}) disclosed; delivery still needs a current deterministic PASS`}`,
       `escalations: ${state.escalations.length} of ${ESCALATE_LIMIT_PER_RUN} used${state.escalations.length >= ESCALATE_LIMIT_PER_RUN ? "; bound spent" : ""}`,
       ...currentDelivery.reasons.map((reason) => `Delivery: ${reason}`),
       ...(state.activeVerification ? [`Verification in progress: ${state.activeVerification.attemptId}`] : []),
-      `Next: ${state.status !== "active" ? "start a new run if more work is required" : verificationVerdict === "PASS" && currentDelivery.eligible ? "run native agent review, fix in-scope findings, rerun deterministic verify after source changes, then deliver" : "resolve the reported deterministic or freshness failure and rerun verify"}`,
+      `Next: ${statusNextStep(state, verificationVerdict, currentDelivery.eligible, problems)}`,
     ]);
 }
 
@@ -1635,7 +1686,7 @@ function verificationReportData(state: ImplementState, attempt: UnifiedVerificat
     jsonPath,
     markdownPath,
   };
-  const nextActions = verificationNextActions(state, status);
+  const nextActions = verificationNextActions(state, attempt);
   const evidence = state.artifacts
     .filter((entry) => entry.command === undefined)
     .map((entry) => ({
@@ -1829,7 +1880,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const final = state.verificationAttempts.find((entry) => entry.id === attempt.id)!;
   progress(`verification ${final.verdict}; ${(final.durationMs / 1000).toFixed(1)}s`);
   const message = `deterministic verification ${final.verdict}; report ${report.identity.markdownPath}`;
-  const nextActions = verificationNextActions(state, final.verdict);
+  const nextActions = verificationNextActions(state, final);
   return result("verify", final.verdict === "PASS", message, { attempt: attemptSummary(final), report: report.identity, agentReview: nextActions.join(" ") }, nextActions);
 }
 

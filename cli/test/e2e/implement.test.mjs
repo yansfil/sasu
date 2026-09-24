@@ -47,12 +47,16 @@ test("verify runs the sealed suite, writes a current report, and starts no revie
     environment: "disposable project",
   }]);
   assert.equal(report.agentReview.status, "NOT_RUN");
-  assert.match(verified.stdout, /Next action: spawn native Fidelity and Code review subagents in parallel/);
   assert.match(verified.stdout, /Subagent tool: Claude Code uses the Agent tool; Codex uses spawn_agent\. Do not split a Herdr pane/);
   assert.match(verified.stdout, /Fix now, Follow-up improvements, and What was checked/);
   assert.match(verified.stdout, /Sasu sets no reviewer turn limit/);
   assert.match(verified.stdout, /REVIEW_UNAVAILABLE/);
+  assert.doesNotMatch(verified.stdout, /rerun verify and review/);
   for (const instruction of [
+    /Next action: if the last native review covered exactly this verified head and the registered evidence is unchanged since that review, continue to ship\./,
+    /Otherwise spawn one set of native Fidelity and Code review subagents in parallel from this runtime for this exact verified head/,
+    /a follow-up review with the prior review context on the diff, or the full-scope review when no prior review exists/,
+    /commit the fix, run its focused checks, request the follow-up review on that commit, and run the full verify again on the final committed candidate/,
     /If a previous review exists.*actual reviewed HEAD \(not merely a verified HEAD\)/,
     /findings, coverage, dispositions, the diff to this HEAD/,
     /approved contract or material evidence changes/,
@@ -71,6 +75,8 @@ test("verify runs the sealed suite, writes a current report, and starts no revie
   const status = ok(run(root, ["implement", "status"]));
   assert.equal(status.detail.delivery.eligible, true);
   assert.equal(status.detail.verification.verdict, "PASS");
+  const summary = runText(root, ["implement", "status"]).stdout;
+  assert.match(summary, /Next: ship if the last native review covered this exact head with unchanged evidence; otherwise run one native review set on this head \(a follow-up with the prior review context, or the full scope when none exists\)/);
 });
 
 test("source drift makes the report stale until deterministic verify is rerun", () => {
@@ -106,10 +112,45 @@ test("a failed required suite writes an honest failed report and remains caller-
   assert.equal(state.verificationAttempts.at(-1).mechanical[0].exitCode, 7);
   assert.equal(report.status, "FAIL");
   assert.equal(report.requiredCommands[0].result.status, "RED");
-  assert.match(failed.stdout, /fix the deterministic failures/);
-  assert.doesNotMatch(failed.stdout, /spawn native/);
-  assert.match(report.agentReview.instruction, /Do not review or ship this head/);
+  for (const text of [failed.stdout, report.agentReview.instruction]) {
+    assert.match(text, /Next action: ship is blocked; verification FAIL\. Failed required commands: S1 `[^`]+` \(exit 7\)\./);
+    assert.match(text, /Reproduce each failed command in isolation, fix the cause, commit, then rerun the full sasu implement verify\./);
+    assert.doesNotMatch(text, /spawn native/);
+    assert.doesNotMatch(text, /Do not review/);
+    assert.doesNotMatch(text, /consecutive FAIL/);
+  }
   assert.equal(ok(run(root, ["implement", "status"])).detail.delivery.eligible, false);
+
+  // Review is no longer gated on PASS; delivery still is.
+  const summary = runText(root, ["implement", "status"]);
+  assert.equal(summary.status, 0, summary.stderr);
+  assert.match(summary.stdout, /Agent Review: native Fidelity and Code subagents .* may review a committed head with the current verification verdict \(FAIL\) disclosed; delivery still needs a current deterministic PASS/);
+  assert.doesNotMatch(summary.stdout, /wait for a current deterministic PASS/);
+  assert.match(summary.stdout, /Next: reproduce the failed required command\(s\) in isolation, fix, commit, then rerun the full verify/);
+});
+
+test("a repeated FAIL on identical input is named as diagnostic, and changed input resets the count", () => {
+  const root = makeProject({ testExit: 7 });
+  start(root);
+  const first = runText(root, ["implement", "verify"]);
+  assert.notEqual(first.status, 0);
+  assert.doesNotMatch(first.stdout, /consecutive FAIL/);
+
+  const repeated = runText(root, ["implement", "verify"]);
+  assert.notEqual(repeated.status, 0);
+  const state = readState(root);
+  assert.equal(state.verificationAttempts[0].inputFingerprint, state.verificationAttempts[1].inputFingerprint);
+  for (const text of [repeated.stdout, readReport(root).agentReview.instruction]) {
+    assert.match(text, /Failed required commands: S1 /);
+    assert.match(text, /Repeated input: 2 consecutive FAIL attempts ran on identical verification input; a rerun without a change is a diagnostic reproduction, not a fix\./);
+  }
+
+  fs.appendFileSync(path.join(root, "implementation.txt"), "attempted fix\n");
+  const changed = runText(root, ["implement", "verify"]);
+  assert.notEqual(changed.status, 0);
+  assert.notEqual(readState(root).verificationAttempts[2].inputFingerprint, state.verificationAttempts[1].inputFingerprint);
+  assert.doesNotMatch(changed.stdout, /consecutive FAIL/);
+  assert.equal(fs.readFileSync(path.join(root, "agents/suite-count.log"), "utf8"), "ran\nran\nran\n", "a repeated input is never refused");
 });
 
 test("a suite that mutates source publishes a source-moved failure and releases its lease", () => {
