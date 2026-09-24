@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import test from "node:test";
 
-import { getAgent, guardedPromptSupport, HERDR_TIMEOUT_KILL_SIGNAL, initializedCodex, promptAgent } from "../../dist/implement/herdr.js";
+import { getAgent, guardedPromptSupport, HERDR_TIMEOUT_KILL_SIGNAL, initializedCodex, prepareCodexFirstTurn, promptAgent } from "../../dist/implement/herdr.js";
 
 // The shapes below are herdr 0.9.1's answers as measured 2026-09-18, and
 // the guarded shapes are the fork's (modakbul-gongbang/herdr#3), the same
@@ -20,24 +20,51 @@ test("agent get is parsed into identity, lifecycle and the epoch activity herdr 
   assert.deepEqual(looked.agent, { paneId: "w8D:p1", name: null, kind: "claude", sessionId: "d8a008dd-2af7-4791-8dfd-1184746de089", terminalId: "term_65bba8f3ff55f24", status: "idle", activityAt: 1789706907560, stateChangeSeq: 67, inputGuard: null, interactiveReady: true });
 });
 
-test("a newly owned Codex pane advances only recognized startup screens before its session is bound", () => {
+test("a first-turn preflight clears the exact update menu before allowing the visible composer", () => {
   let now = 0, stage = 0;
   const selections = [];
-  const result = initializedCodex({ paneId: "owned:p1", name: "worker" }, {
+  const result = prepareCodexFirstTurn({ paneId: "owned:p1", name: "worker" }, {
     clock: { now: () => now, sleep: (ms) => { now += ms; } },
     run: (args) => {
-      if (args[1] === "get") return { status: 0, stderr: "", stdout: JSON.stringify({ result: { type: "agent_info", agent: { pane_id: "owned:p1", name: "worker", agent: "codex", terminal_id: "term-owned", agent_status: "idle", interactive_ready: true, ...(stage === 2 ? { agent_session: { value: "session-owned" } } : {}) } } }) };
-      if (args[1] === "read") { assert.deepEqual(args, ["agent", "read", "owned:p1", "--source", "visible"]); return { status: 0, stderr: "", stdout: stage === 0 ? "Hooks need review\n3. Continue without trusting (hooks won't run)" : "Update available\n2. Skip\n3. Skip until next version" }; }
+      if (args[1] === "get") return { status: 0, stderr: "", stdout: JSON.stringify({ result: { type: "agent_info", agent: { pane_id: "owned:p1", name: "worker", agent: "codex", terminal_id: "term-owned", agent_status: "idle", interactive_ready: true } } }) };
+      if (args[1] === "read") { assert.deepEqual(args, ["agent", "read", "owned:p1", "--source", "visible"]); return { status: 0, stderr: "", stdout: stage === 0 ? "Update available\n1. Update now\n2. Skip\n3. Skip until next version" : "› Ask Codex to do anything" }; }
       if (args[1] === "send-keys") { selections.push(args); stage += 1; return { status: 0, stdout: "{}", stderr: "" }; }
       throw new Error(`unexpected operation: ${args.join(" ")}`);
     },
   });
   assert.equal(result.kind, "found");
-  assert.equal(result.agent.sessionId, "session-owned");
-  assert.deepEqual(selections, [
-    ["agent", "send-keys", "owned:p1", "3", "enter"],
-    ["agent", "send-keys", "owned:p1", "2", "enter"],
-  ]);
+  assert.equal(result.agent.sessionId, null);
+  assert.deepEqual(selections, [["agent", "send-keys", "owned:p1", "2", "enter"]]);
+});
+
+test("first-turn preflight refuses hook consent, active update and an unknown idle screen without sending input", () => {
+  for (const screen of ["Hooks need review\n3. Continue without trusting (hooks won't run)", "Updating Codex via pnpm add -g @openai/codex", "Unknown first-run dialog"]) {
+    const calls = [];
+    const result = prepareCodexFirstTurn({ paneId: "owned:p1", name: "worker" }, { run: (args) => {
+      calls.push(args);
+      if (args[1] === "get") return { status: 0, stderr: "", stdout: JSON.stringify({ result: { type: "agent_info", agent: { pane_id: "owned:p1", name: "worker", agent: "codex", terminal_id: "term-owned", agent_status: "idle", interactive_ready: true } } }) };
+      if (args[1] === "read") return { status: 0, stderr: "", stdout: screen };
+      throw new Error(`unexpected operation: ${args.join(" ")}`);
+    } });
+    assert.equal(result.kind, "unavailable", screen);
+    assert.equal(calls.some((args) => args[1] === "send-keys" || args[1] === "prompt"), false, screen);
+  }
+});
+
+test("post-prompt session wait never presses a startup menu", () => {
+  let now = 0;
+  const calls = [];
+  const result = initializedCodex({ paneId: "owned:p1", name: "worker" }, {
+    clock: { now: () => now, sleep: (ms) => { now += ms; } },
+    run: (args) => {
+      calls.push(args);
+      if (args[1] === "get") return { status: 0, stderr: "", stdout: JSON.stringify({ result: { type: "agent_info", agent: { pane_id: "owned:p1", name: "worker", agent: "codex", terminal_id: "term-owned", agent_status: "idle", interactive_ready: true } } }) };
+      if (args[1] === "read") return { status: 0, stderr: "", stdout: "Update available\n2. Skip" };
+      throw new Error(`unexpected operation: ${args.join(" ")}`);
+    },
+  });
+  assert.equal(result.kind, "unavailable");
+  assert.equal(calls.some((args) => args[1] === "send-keys"), false);
 });
 
 test("agent get distinguishes an empty target from a herdr that is not answering", () => {

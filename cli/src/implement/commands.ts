@@ -921,7 +921,9 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     const where = placed.placement.kind === "workspace"
       ? `a new workspace on ${dispatched.cwd}`
       : `a new tab of workspace ${dispatched.workspaceId} at ${dispatched.cwd}`;
-    const supervised = `supervised as instance ${runInstanceId} (patrol every ${Math.round(patrolIntervalMs / 60_000)} min, recovery owner ${recoveryOwner})`;
+    const supervised = coordinationOwner === "hcoord"
+      ? `coordinated by hcoord as instance ${runInstanceId}`
+      : `supervised as instance ${runInstanceId} (patrol every ${Math.round(patrolIntervalMs / 60_000)} min, recovery owner ${recoveryOwner})`;
     return result(
       "dispatch",
       true,
@@ -929,7 +931,9 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       { ...dispatched, dispatchId: recordId, slug: state.topicSlug, runInstanceId, observer: observer.identity, patrolIntervalMs, recoveryOwner, enrolled: true, enrollProblem: null },
       [
         ...(dispatched.parentLineage === "reported" ? [] : [`Lineage was not recorded: ${dispatched.parentLineage.unreported}`]),
-        `The supervisor tick wakes this session when the implementor settles, blocks, escalates, registers a plan, stalls, disappears or finishes, and on patrol; nothing else needs arming.`,
+        coordinationOwner === "hcoord"
+          ? "hcoord watches this implementor and wakes the Observer when a watch cycle needs inspection. End this turn while waiting; the legacy supervisor is not enrolled for this run."
+          : "The supervisor tick wakes this session when the implementor settles, blocks, escalates, registers a plan, stalls, disappears or finishes, and on patrol; nothing else needs arming.",
         `On a wake, read \`sasu implement status --slug ${state.topicSlug} --digest\` and \`herdr agent read ${dispatched.agent} --source recent-unwrapped --lines 120\` for diagnosis only.`,
       ],
     );
@@ -1546,13 +1550,10 @@ function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult
 
 /**
  * Register the execution plan the Implementor wrote before its first source
- * change. The only effect is a `plan` event: the supervisor tick wakes the
- * Observer once per plan event, so the plan reaches the Observer within one
- * tick interval without the Implementor ending its turn. This is the one
- * runtime-agnostic path from a working Implementor to the Observer, because
- * herdr's own `agent prompt` is keystrokes into whatever the Observer is
- * typing (2026-09-21). Absence is not a signal: the tick reads nothing into
- * a run that never registers a plan (D-11).
+ * change. The only effect is a `plan` event. Legacy runs wake the Observer
+ * once per plan event through their supervisor tick. New hcoord runs retain
+ * the Sasu event and use the coordinator's watch cycle for observation; plan
+ * registration does not itself submit a prompt (D-09).
  */
 function plan(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
@@ -1564,7 +1565,10 @@ function plan(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   const digest = sha256(bytes).slice(0, 12);
   const event = recordEvent(state, { kind: "plan", actor: resolveIssuer(flag(args, "issuer")), subject: target.relative, summary: `execution plan ${target.relative} (${digest})`, at: nowIso() });
   persistState(statePath, state);
-  return result("plan", true, `plan ${event.id} registered: ${target.relative}; the supervisor tick wakes the Observer once for it`, { event });
+  const nextAction = state.supervision?.coordinationOwner === "hcoord"
+    ? "hcoord observes the implementor on its configured watch cycle; plan registration does not send an immediate prompt"
+    : "the supervisor tick wakes the Observer once for it";
+  return result("plan", true, `plan ${event.id} registered: ${target.relative}; ${nextAction}`, { event });
 }
 
 function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandResult {

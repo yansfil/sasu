@@ -4,7 +4,7 @@ import os from "node:os";
 import { API_VERSION, HcoordError, MAX_CONNECTIONS, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, own, put, type Ledger } from "./model";
 import { event } from "./model";
 import { execute, watchForRequest } from "./service";
-import { confirmSpawnPane, createSpawnPane, discoverLocalAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, startSpawnedAgent, submitOfficial, validateLocalBinding } from "./herdr";
+import { confirmSpawnPane, createSpawnPane, discoverLocalAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateLocalBinding, waitForSpawnInitialization } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
 import { notifyHuman } from "./platform";
@@ -122,7 +122,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
         // Older persisted intents lack placement, so retain their parent placement check.
         confirmSpawnPane({ ...intent, pane: reconcilePane }, intent.placement ?? parentPlacement(parent));
         const found = inspectSpawnedAgent({ ...intent, pane: reconcilePane });
-        if (found === null && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "pane is confirmed but has no agent; retry with --reconcile-pane and --resume-start after inspecting it", { intent: intent.key, pane: reconcilePane, unfinishedStep: "agent_start" });
+        if (found.state === "absent" && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "pane is confirmed but has no agent; retry with --reconcile-pane and --resume-start after inspecting it", { intent: intent.key, pane: reconcilePane, unfinishedStep: "agent_start" });
         intent = commit("agent.spawn.pane", { intent: intent.key, pane: reconcilePane }, new Date().toISOString()) as SpawnIntent;
       } else {
         if (reconcilePane !== null && reconcilePane !== undefined) throw new HcoordError("invalid_argument", "a new spawn intent cannot reconcile an existing pane");
@@ -137,14 +137,39 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
       }
     }
     let identity = inspectSpawnedAgent(intent);
-    if (identity === null) {
+    if (identity.state === "absent") {
       if (!createdNow && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "saved pane has no confirmed agent; inspect it and retry this intent with --resume-start", { intent: intent.key, pane: intent.pane, unfinishedStep: "agent_start" });
       if (!createdNow) confirmSpawnPane(intent, intent.placement ?? parentPlacement(ledger.participants[intent.parent]!));
       if (ledger.events.length >= MAX_EVENTS) throw new HcoordError("capacity", "event history has no room to record the resumed agent; resolve retention before starting it", { intent: intent.key, pane: intent.pane });
       startSpawnedAgent(intent);
       identity = inspectSpawnedAgent(intent);
-      if (identity === null) throw new HcoordError("spawn_uncertain", "agent start returned but execution identity is unavailable", { intent: intent.key, pane: intent.pane });
+      if (identity.state === "absent") throw new HcoordError("spawn_uncertain", "agent start returned but its named execution is unavailable", { intent: intent.key, pane: intent.pane });
     }
+    if (identity.state === "initializing") {
+      if (intent.observedInstance != null && identity.instance !== intent.observedInstance) throw new HcoordError("identity_conflict", "spawn terminal was replaced after its first observation", { intent: intent.key, pane: intent.pane });
+      if (intent.kind !== "codex" || intent.initialization !== "pending") throw new HcoordError("spawn_uncertain", "first-turn submission may already have occurred; inspect the saved pane without resubmitting it", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
+      if (identity.interactiveReady !== true || (identity.runtime !== "idle" && identity.runtime !== "done")) throw new HcoordError("spawn_uncertain", "named agent is not interactive-ready for its first turn", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
+      prepareSpawnInitialization(intent, identity.instance);
+      intent = commit("agent.spawn.initialization", { intent: intent.key, phase: "reserved", instance: identity.instance }, new Date().toISOString()) as SpawnIntent;
+      let submitted: ReturnType<typeof submitSpawnInitialization>;
+      try { submitted = submitSpawnInitialization(intent, identity.instance); }
+      catch (error) {
+        // Inspection and argument validation precede the prompt effect.
+        if (error instanceof HcoordError) commit("agent.spawn.initialization", { intent: intent.key, phase: "pending" }, new Date().toISOString());
+        throw error;
+      }
+      if (submitted.outcome === "rejected") {
+        commit("agent.spawn.initialization", { intent: intent.key, phase: "pending" }, new Date().toISOString());
+        throw new HcoordError("spawn_uncertain", "official first-turn prompt was rejected before input; retry this saved intent after the pane is ready", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent", code: submitted.code });
+      }
+      if (submitted.outcome === "unknown") throw new HcoordError("spawn_uncertain", "official first-turn submission is unknown; inspect this pane before retrying without another prompt", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent", code: submitted.code });
+      waitForSpawnInitialization(intent);
+      identity = inspectSpawnedAgent(intent);
+      if (identity.state !== "ready") throw new HcoordError("spawn_uncertain", "first turn was submitted but execution identity is not yet available; retry this intent without resubmitting it", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
+    }
+    if (identity.state !== "ready") throw new HcoordError("spawn_uncertain", "spawned execution identity remains unavailable", { intent: intent.key, pane: intent.pane, unfinishedStep: "inspect_agent" });
+    if (intent.initialization === undefined && !createdNow) throw new HcoordError("spawn_uncertain", "legacy spawn intent has no first execution observation; do not bind a possible replacement automatically", { intent: intent.key, pane: intent.pane, unfinishedStep: "inspect_agent" });
+    intent = commit("agent.spawn.identity", { intent: intent.key, runtimeSession: identity.session, instance: identity.instance }, new Date().toISOString()) as SpawnIntent;
     try { return commit("agent.spawn.complete", { intent: intent.key, runtimeSession: identity.session, instance: identity.instance, runtime: identity.runtime, project: ledger.participants[intent.parent]?.project }, new Date().toISOString()); }
     catch (error) { throw new HcoordError("spawn_uncertain", "agent exists but registration failed; inspect the saved pane and retry this intent after repairing storage", { intent: intent.key, pane: intent.pane, unfinishedStep: "register_agent", code: error instanceof HcoordError ? error.code : "storage_failed" }); }
   };
@@ -177,7 +202,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
         const watch = watchForRequest(ledger, item);
         // Stop preserves the open cycle for explicit restart or reassignment.
         // Do not submit its retained wake to the former observer while paused.
-        if (watch?.status === "stopped") continue;
+        if (watch?.status === "stopped" && delivery.recipient !== "human") continue;
         if (item.status === "answered" && (delivery.phase ?? "request") === "request") {
           const next = structuredClone(ledger);
           const current = next.requests[item.id]!.deliveries.find((entry) => entry.id === delivery.id)!;

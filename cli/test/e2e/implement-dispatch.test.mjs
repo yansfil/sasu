@@ -79,10 +79,12 @@ test("Codex initialization precedes durable handoff and supervisor enrollment", 
   assert.equal(recorded.pendingDispatch, null);
   assert.equal(recorded.supervision.implementor.sessionId, "impl-session");
   assert.equal(recorded.dispatches.length, 1);
-  assert.equal(fake.prompts().length, 1, "executable work is sent once, after initialization");
-  assert.equal(fake.prompts()[0].text, PACKET);
+  assert.equal(fake.prompts().length, 2, "initialization and executable work are separate official prompts");
+  assert.match(fake.prompts()[0].text, /Session initialization only/);
+  assert.equal(fake.prompts()[1].text, PACKET);
   const launch = fake.argv().find((args) => args[0] === "agent" && args[1] === "start");
-  assert.equal(launch.includes(PACKET), false, "launch-time initialization contains no task authority");
+  assert.equal(launch.includes(PACKET), false, "launch-time arguments contain no task authority");
+  assert.equal(launch.some((arg) => arg.includes("Session initialization only")), false, "Herdr readiness does not include a model turn");
   assert.ok(launch.includes("gpt-6-sol"));
   assert.ok(launch.includes('model_reasoning_effort="xhigh"'));
   assert.equal(readIndex(path.join(home, ".sasu", "supervisor", "index.json")).entries.length, 1);

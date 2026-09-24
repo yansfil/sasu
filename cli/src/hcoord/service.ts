@@ -125,12 +125,19 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const prior = own(state.spawnIntents, key);
     if (prior) {
       if (prior.parent !== parent.id || prior.machine !== machine || prior.session !== session || prior.name !== name || prior.kind !== kind || prior.noWatch !== (args["noWatch"] === true) || JSON.stringify(prior.nativeArgs) !== JSON.stringify(nativeArgs)) throw new HcoordError("intent_conflict", "spawn intent key already belongs to another operation", { participant: prior.participant, pane: prior.pane });
+      // Older completed records retained a tab-creation warning. A same-key
+      // read repairs that obsolete progress without repeating any external act.
+      if (prior.status === "complete" && (prior.reason !== null || prior.initialization !== "complete")) {
+        prior.reason = null;
+        prior.initialization = "complete";
+        return { changed: true, value: prior };
+      }
       return { changed: false, value: prior };
     }
     if (Object.keys(state.participants).length >= MAX_AGENTS) throw new HcoordError("capacity", `participant limit ${MAX_AGENTS} reached`);
     if (Object.keys(state.spawnIntents).length >= MAX_SPAWN_INTENTS) throw new HcoordError("capacity", `spawn intent limit ${MAX_SPAWN_INTENTS} reached; uncertain outcomes remain inspectable`);
     if (MAX_EVENTS - state.events.length < 4) throw new HcoordError("capacity", "event history has insufficient room for a complete spawn; resolve retention before creating a pane");
-    const record = { key, parent: parent.id, machine, hostScope: parent.hostScope, session, name, kind, nativeArgs, noWatch: args["noWatch"] === true, status: "reserved" as const, pane: null, participant: null, reason: null, at };
+    const record = { key, parent: parent.id, machine, hostScope: parent.hostScope, session, name, kind, nativeArgs, noWatch: args["noWatch"] === true, status: "reserved" as const, pane: null, participant: null, reason: null, at, initialization: "pending" as const, observedInstance: null, observedSession: null };
     put(state.spawnIntents, key, record);
     event(state, at, "agent.spawn_reserved", parent.id, key);
     return { changed: true, value: record };
@@ -153,11 +160,38 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     event(state, at, "agent.spawn_uncertain", record.parent, record.key, { pane: record.pane });
     return { changed: true, value: record };
   }
+  if (operation === "agent.spawn.initialization") {
+    const record = own(state.spawnIntents, required(args, "intent"));
+    if (!record || record.pane === null || record.status === "complete") throw new HcoordError("invalid_state", "spawn initialization has no active saved pane");
+    const phase = required(args, "phase");
+    if (phase === "reserved" && record.initialization === "pending") {
+      const instance = required(args, "instance");
+      if (record.observedInstance !== null && record.observedInstance !== instance) throw new HcoordError("identity_conflict", "spawn terminal differs from its first observation");
+      record.observedInstance = instance;
+      record.initialization = "reserved";
+    }
+    else if (phase === "pending" && record.initialization === "reserved") record.initialization = "pending";
+    else throw new HcoordError("invalid_state", "spawn initialization phase cannot make that transition");
+    event(state, at, `agent.spawn_initialization_${phase}`, record.parent, record.key, { pane: record.pane });
+    return { changed: true, value: record };
+  }
+  if (operation === "agent.spawn.identity") {
+    const record = own(state.spawnIntents, required(args, "intent"));
+    if (!record || record.pane === null || record.status === "complete") throw new HcoordError("invalid_state", "spawn has no active saved pane");
+    const instance = required(args, "instance"), session = required(args, "runtimeSession");
+    if ((record.observedInstance !== null && record.observedInstance !== undefined && record.observedInstance !== instance)
+      || (record.observedSession !== null && record.observedSession !== undefined && record.observedSession !== session)) throw new HcoordError("identity_conflict", "spawn execution differs from its first observation");
+    record.observedInstance = instance; record.observedSession = session;
+    event(state, at, "agent.spawn_identity", record.parent, record.key, { pane: record.pane });
+    return { changed: true, value: record };
+  }
   if (operation === "agent.spawn.complete") {
     const record = own(state.spawnIntents, required(args, "intent"));
     if (!record || record.pane === null) throw new HcoordError("not_found", "spawn pane is not recorded");
     if (record.status === "complete") return { changed: false, value: { intent: record, participant: state.participants[record.participant!] } };
     const runtimeSession = required(args, "runtimeSession"), instance = required(args, "instance");
+    if ((record.observedInstance !== null && record.observedInstance !== undefined && record.observedInstance !== instance)
+      || (record.observedSession !== null && record.observedSession !== undefined && record.observedSession !== runtimeSession)) throw new HcoordError("identity_conflict", "spawn execution changed before registration");
     const matches = Object.values(state.participants).filter((p) => p.machine === record.machine && p.hostScope === record.hostScope && p.session === runtimeSession && p.instance === instance);
     if (matches.length) throw new HcoordError("identity_conflict", "spawned execution is already registered elsewhere", { candidates: matches });
     const runtime = required(args, "runtime") as Participant["runtime"];
@@ -168,7 +202,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       const watch: Watch = { target: participant.id, observer: record.parent, generation: 1, status: "active", intervalMs: state.config.watchMs, dueAt: timed(at, state.config.watchMs), cycle: null, requestId: null, checkedAt: null, startedAt: at, stoppedAt: null, observation: null };
       state.watches[participant.id] = watch;
     }
-    record.status = "complete"; record.participant = participant.id;
+    record.status = "complete"; record.participant = participant.id; record.reason = null; record.initialization = "complete";
     event(state, at, "agent.spawn_complete", participant.id, record.key, { parent: record.parent, watch: !record.noWatch });
     return { changed: true, value: { intent: record, participant, watch: state.watches[participant.id] ?? null } };
   }

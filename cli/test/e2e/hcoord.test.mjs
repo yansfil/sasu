@@ -20,7 +20,7 @@ const target=process.argv[4];
 if(process.argv[2]==='agent' && process.argv[3]==='get') {
   const row=target==='parent-pane'?{name:'parent',session:'one',instance:'a'}:target==='child-pane'?{name:'child',session:'two',instance:'b'}:target?.endsWith('-pane') && fs.existsSync(path.join(process.env.HOME,target+'.started'))?{name:target.slice(0,-5),session:target+'-session',instance:target+'-instance'}:null;
   if(!row){process.stderr.write(JSON.stringify({error:{code:'agent_not_found'}}));process.exitCode=1;}
-  else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';const initial=target==='optioned-pane'&&!fs.existsSync(path.join(process.env.HOME,'optioned.initialized'));if(initial)fs.writeFileSync(path.join(process.env.HOME,'optioned.initialized'),'1');process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:process.env.HCOORD_FAKE_OBSERVER_REPLACED==='1'&&target==='parent-pane'?'replacement':row.name,agent:process.env.HCOORD_FAKE_WRONG_KIND==='1'&&target==='kind-check-pane'?'claude':'codex',agent_session:initial?undefined:{value:row.session},terminal_id:row.instance,agent_status:status,interactive_ready:process.env.HCOORD_FAKE_NOT_READY!=='1'}}}));}
+  else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';const instanceFile=path.join(process.env.HOME,target+'.instance');const instance=fs.existsSync(instanceFile)?fs.readFileSync(instanceFile,'utf8').trim():row.instance;const initializing=target.endsWith('-pane')&&!['parent-pane','child-pane'].includes(target)&&!fs.existsSync(path.join(process.env.HOME,row.name+'.initialized'));process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:process.env.HCOORD_FAKE_OBSERVER_REPLACED==='1'&&target==='parent-pane'?'replacement':row.name,agent:process.env.HCOORD_FAKE_WRONG_KIND==='1'&&target==='kind-check-pane'?'claude':'codex',agent_session:initializing?undefined:{value:row.session},terminal_id:instance,agent_status:status,interactive_ready:process.env.HCOORD_FAKE_NOT_READY!=='1'}}}));}
 } else if(process.argv[2]==='pane' && process.argv[3]==='get') {
   if(target?.endsWith('-pane') && !['parent-pane','child-pane'].includes(target) && !fs.existsSync(path.join(process.env.HOME,target.slice(0,-5)+'.tab'))){process.stderr.write('pane missing');process.exitCode=1;}
   else {const cwdFile=path.join(process.env.HOME,target==='parent-pane'?'parent.cwd':target.slice(0,-5)+'.cwd');const cwd=fs.existsSync(cwdFile)?fs.readFileSync(cwdFile,'utf8'):process.env.HOME;process.stdout.write(JSON.stringify({result:{type:'pane_info',pane:{pane_id:process.env.HCOORD_FAKE_PANE_ID_MISSING==='1'&&target==='partial-pane'?undefined:target,workspace_id:'test-workspace',cwd}}}));}
@@ -32,10 +32,17 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   const name=process.argv[4], pane=process.argv[process.argv.indexOf('--pane')+1];
   if(process.env.HCOORD_FAKE_START_FAIL==='1'){process.stderr.write('start outcome unknown');process.exitCode=8;}
   else {fs.writeFileSync(path.join(process.env.HOME,pane+'.started'),'1');if(name==='optioned')fs.writeFileSync(path.join(process.env.HOME,'optioned.start-args.json'),JSON.stringify(process.argv.slice(2)));process.stdout.write(JSON.stringify({result:{agent:{name,pane_id:pane}}}));}
+} else if(process.argv[2]==='agent' && process.argv[3]==='read') {
+  process.stdout.write(process.env.HCOORD_FAKE_FIRST_TURN_SCREEN||'› Ask Codex to do anything');
 } else if(process.argv[2]==='agent' && process.argv[3]==='prompt') {
   if(process.argv[4]==='--help') process.stdout.write(process.env.HCOORD_FAKE_PROMPT_API==='0'?'Usage: herdr agent prompt --unsupported':'Usage: herdr agent prompt <TARGET> <TEXT>');
   else if(!process.argv.includes('--expected-input-guard')) {
+    if(process.argv[4].endsWith('-pane') && fs.existsSync(path.join(process.env.HOME,process.argv[4]+'.started'))) fs.writeFileSync(path.join(process.env.HOME,process.argv[4].slice(0,-5)+'.initialized'),'1');
     fs.appendFileSync(path.join(process.env.HOME,'official-prompts.jsonl'),JSON.stringify({target:process.argv[4],text:process.argv[5]})+'\\n');
+    if(process.env.HCOORD_FAKE_PROMPT_UNKNOWN_ONCE==='1' && process.argv[4].startsWith('uncertain-')) {
+      const marker=path.join(process.env.HOME,process.argv[4]+'.unknown');
+      if(!fs.existsSync(marker)) {fs.writeFileSync(marker,'1');if(process.env.HCOORD_FAKE_REPLACE_TERMINAL_ON_UNKNOWN==='1')fs.writeFileSync(path.join(process.env.HOME,process.argv[4]+'.instance'),'replacement-instance');process.stderr.write('submitted but reply lost');process.exit(8);}
+    }
     process.stdout.write(JSON.stringify({result:{outcome:'submitted'}}));
   } else {fs.writeFileSync(path.join(process.env.HOME,'UNSUPPORTED_GUARD'),'1');process.stderr.write('unexpected guarded prompt');process.exitCode=9;}
 } else if(process.argv[2]==='notification' && process.argv[3]==='show') {
@@ -54,7 +61,8 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
     let error = "";
     daemon.stderr.on("data", (chunk) => { error += chunk; daemonErrors += chunk; });
     for (let attempt = 0; attempt < 500; attempt += 1) {
-      if (fs.existsSync(path.join(home, ".hcoord", "api.sock"))) return;
+      const socket = path.join(home, ".hcoord", "api.sock");
+      if (fs.existsSync(socket) && (fs.statSync(socket).mode & 0o777) === 0o600) return;
       if (daemon.exitCode !== null) throw new Error(`daemon exited: ${error}`);
       await wait(20);
     }
@@ -154,8 +162,40 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(optionedResult.status, 0, optionedResult.stdout);
   assert.equal(JSON.parse(optionedResult.stdout).value.participant.name, "optioned");
   const startArgs = JSON.parse(fs.readFileSync(path.join(home, "optioned.start-args.json"), "utf8"));
-  assert.deepEqual(startArgs.slice(-5, -1), ["-m", "gpt-6-sol", "-c", "model_reasoning_effort=xhigh"]);
-  assert.match(startArgs.at(-1), /Session initialization only/);
+  assert.deepEqual(startArgs.slice(-4), ["-m", "gpt-6-sol", "-c", "model_reasoning_effort=xhigh"]);
+  assert.equal(fs.existsSync(path.join(home, "optioned.initialized")), true, "first turn follows Herdr readiness");
+  const taskResult = spawnSync(process.execPath, [CLI, "agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "tasked", "--intent", "spawn-tasked", "--json", "--", "-m", "gpt-6-sol", "Return blue"], { env, encoding: "utf8" });
+  assert.equal(taskResult.status, 0, taskResult.stdout);
+  assert.equal(fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").split("\n").some((line) => line.includes('"target":"tasked-pane","text":"Return blue"')), true, "explicit user task is submitted after readiness without replacement by the initialization text");
+  env.HCOORD_FAKE_PROMPT_UNKNOWN_ONCE = "1";
+  await stop();
+  await start();
+  const uncertainArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "uncertain-child", "--intent", "uncertain-child"];
+  assert.equal(JSON.parse(command(...uncertainArgs).stdout).error.code, "spawn_uncertain");
+  const recovered = ok(...uncertainArgs);
+  assert.equal(recovered.participant.name, "uncertain-child", "same intent binds the observed first execution");
+  assert.equal(fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").split("\n").filter((line) => line.includes('"target":"uncertain-child-pane"')).length, 1, "unknown prompt outcome is never blindly resubmitted");
+  env.HCOORD_FAKE_REPLACE_TERMINAL_ON_UNKNOWN = "1";
+  await stop();
+  await start();
+  const replacedArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "uncertain-replaced", "--intent", "uncertain-replaced"];
+  assert.equal(JSON.parse(command(...replacedArgs).stdout).error.code, "spawn_uncertain");
+  assert.equal(JSON.parse(command(...replacedArgs).stdout).error.code, "identity_conflict", "a replacement with the same pane, name and kind cannot inherit the reserved first turn");
+  assert.equal(fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").split("\n").filter((line) => line.includes('"target":"uncertain-replaced-pane"')).length, 1);
+  delete env.HCOORD_FAKE_PROMPT_UNKNOWN_ONCE;
+  delete env.HCOORD_FAKE_REPLACE_TERMINAL_ON_UNKNOWN;
+  env.HCOORD_FAKE_FIRST_TURN_SCREEN = "Updating Codex via pnpm add -g @openai/codex";
+  await stop();
+  await start();
+  const unsafeArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "update-screen", "--intent", "update-screen"];
+  assert.equal(JSON.parse(command(...unsafeArgs).stdout).error.code, "spawn_uncertain", "a reported idle agent on an update screen is not ready for a first prompt");
+  assert.equal(fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").includes('"target":"update-screen-pane"'), false);
+  delete env.HCOORD_FAKE_FIRST_TURN_SCREEN;
+  await stop();
+  await start();
+  assert.equal(ok(...unsafeArgs).participant.name, "update-screen", "the same saved intent resumes when its real composer appears");
+  await stop();
+  await start();
   assert.equal(JSON.parse(command("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "Bad Name", "--intent", "invalid-spawn").stdout).error.code, "invalid_argument");
   assert.equal(fs.existsSync(path.join(home, "Bad Name.tab")), false, "invalid spawn does not create a pane");
   const unobserved = ok("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "solo", "--intent", "spawn-2", "--no-watch");
@@ -207,7 +247,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   await stop();
   const ledgerFile = path.join(home, ".hcoord", "ledger.json");
   const interrupted = JSON.parse(fs.readFileSync(ledgerFile, "utf8"));
-  interrupted.spawnIntents["reconcile-1"] = { ...resumed.intent, key: "reconcile-1", name: "reconciled", status: "unknown", pane: null, participant: null, reason: "pane recording interrupted" };
+  interrupted.spawnIntents["reconcile-1"] = { ...resumed.intent, key: "reconcile-1", name: "reconciled", status: "unknown", pane: null, participant: null, reason: "pane recording interrupted", initialization: "pending", observedInstance: null, observedSession: null };
   const legacyIntent = { ...resumed.intent, key: "legacy-1", name: "legacy", status: "unknown", pane: null, participant: null, reason: "older pane recording interrupted" };
   delete legacyIntent.placement;
   interrupted.spawnIntents["legacy-1"] = legacyIntent;
@@ -282,6 +322,16 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(cycleRequest.deliveries[0].status, "deferred", "a stopped watch holds its unsent check even when the old observer is idle");
   assert.match(cycleRequest.nextAction, /watch is stopped/);
   assert.equal(fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").includes(cycleRequestId), false, "a stopped watch sends no misleading request prompt");
+  ok("config", "set", "--key", "escalateMs", "--value", "1s");
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    cycleRequest = ok("request", "show", cycleRequestId);
+    if (cycleRequest.deliveries.some((delivery) => delivery.recipient === "human" && delivery.status === "accepted")) break;
+    await wait(100);
+  }
+  assert.equal(cycleRequest.deliveries[0].status, "deferred", "human escalation does not wake the former observer");
+  assert.equal(cycleRequest.deliveries.some((delivery) => delivery.recipient === "human" && delivery.status === "accepted"), true, "a stopped watch still notifies the human when its request escalates");
+  assert.match(fs.readFileSync(path.join(home, "notification-args.json"), "utf8"), new RegExp(cycleRequestId));
+  ok("config", "set", "--key", "escalateMs", "--value", "30m");
   const resumedWatch = ok("watch", "start", child.id, "--observer", parent.id, "--actor", "human", "--interval", "1s");
   assert.equal(resumedWatch.cycle, watch.cycle);
   assert.equal(resumedWatch.requestId, cycleRequestId);

@@ -415,3 +415,37 @@ test("retention releases ended participants and completed spawn intents without 
   assert.equal(state.spawnIntents["completed-child"], undefined);
   assert.ok(state.participants[parent.id]);
 });
+
+test("a saved spawn intent rejects a different terminal or session before registration", () => {
+  const at = "2026-09-01T00:00:00.000Z", state = emptyLedger(at);
+  const run = (operation, args = {}) => execute(state, operation, args, at).value;
+  const parent = run("agent.register", { machine: "local", hostScope: "default", session: "parent", instance: "parent-terminal", name: "parent", pane: "parent-pane", runtime: "idle" });
+  run("agent.spawn.reserve", { parent: parent.id, intent: "spawn", machine: "local", session: "parent", name: "child", kind: "codex", nativeArgs: [] });
+  run("agent.spawn.pane", { intent: "spawn", pane: "child-pane" });
+  run("agent.spawn.initialization", { intent: "spawn", phase: "reserved", instance: "original-terminal" });
+  assert.throws(() => run("agent.spawn.identity", { intent: "spawn", runtimeSession: "original-session", instance: "replacement-terminal" }), { code: "identity_conflict" });
+  run("agent.spawn.identity", { intent: "spawn", runtimeSession: "original-session", instance: "original-terminal" });
+  assert.throws(() => run("agent.spawn.identity", { intent: "spawn", runtimeSession: "replacement-session", instance: "original-terminal" }), { code: "identity_conflict" });
+  assert.throws(() => run("agent.spawn.complete", { intent: "spawn", runtimeSession: "replacement-session", instance: "original-terminal", runtime: "idle" }), { code: "identity_conflict" });
+});
+
+test("completed spawn progress clears old pending guidance and same-intent retry repairs an older record", () => {
+  const at = "2026-09-01T00:00:00.000Z", state = emptyLedger(at);
+  const run = (operation, args = {}) => execute(state, operation, args, at).value;
+  const parent = run("agent.register", { machine: "local", hostScope: "default", session: "parent", instance: "parent-terminal", name: "parent", pane: "parent-pane", runtime: "idle" });
+  const input = { parent: parent.id, intent: "spawn", machine: "local", session: "parent", name: "child", kind: "codex", nativeArgs: [], noWatch: false };
+  run("agent.spawn.reserve", input);
+  run("agent.spawn.unknown", { intent: "spawn", reason: "tab creation reserved; outcome pending", workspace: "w1", cwd: "/fixture" });
+  run("agent.spawn.pane", { intent: "spawn", pane: "child-pane" });
+  run("agent.spawn.initialization", { intent: "spawn", phase: "reserved", instance: "child-terminal" });
+  const complete = run("agent.spawn.complete", { intent: "spawn", runtimeSession: "child-session", instance: "child-terminal", runtime: "done" });
+  assert.equal(complete.intent.reason, null);
+  assert.equal(complete.intent.initialization, "complete");
+  complete.intent.reason = "tab creation reserved; outcome pending";
+  complete.intent.initialization = "reserved";
+  const repaired = execute(state, "agent.spawn.reserve", input, at);
+  assert.equal(repaired.changed, true);
+  assert.equal(repaired.value.reason, null);
+  assert.equal(repaired.value.initialization, "complete");
+  assert.equal(repaired.value.participant, complete.participant.id);
+});

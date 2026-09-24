@@ -123,7 +123,9 @@ function defaultRun(args: string[], cwd?: string, env: NodeJS.ProcessEnv = proce
     env,
     encoding: "utf8",
     shell: false,
-    timeout: Math.max(1, Math.min(15_000, Math.floor(timeoutMs))),
+    // Official agent start may use its 30 s readiness window. Give that call
+    // a matching process deadline while ordinary probes retain their 15 s default.
+    timeout: Math.max(1, Math.min(35_000, Math.floor(timeoutMs))),
     killSignal: HERDR_TIMEOUT_KILL_SIGNAL,
   });
   if (executed.error !== undefined) return { status: null, stdout: "", stderr: String(executed.error), errorCode: (executed.error as NodeJS.ErrnoException).code };
@@ -177,21 +179,67 @@ export function startAgentWhenPaneReady(argv: string[], environment: HerdrEnviro
   const run = environmentRun(environment);
   const clock = environment.clock ?? defaultClock;
   const firstStartAt = clock.now();
-  let result = run(argv, cwd);
+  let result = run(argv, cwd, 35_000);
   let busyRetries = 0;
   while (result.status !== 0 && herdrErrorCode(result.stderr) === "agent_pane_busy"
     && clock.now() - firstStartAt < AGENT_START_BUSY_TIMEOUT_MS) {
     clock.sleep(AGENT_START_BUSY_RETRY_MS);
     busyRetries += 1;
-    result = run(argv, cwd);
+    result = run(argv, cwd, 35_000);
   }
   return { result, busyRetries, elapsedMs: clock.now() - firstStartAt };
 }
 
 // Codex 0.156.0 creates/reports its session at its first turn, not at the
-// empty composer (observed 2026-09-24). Initialize only the session at launch;
-// executable handoff still waits for durable identity and final revalidation.
+// empty composer (observed 2026-09-24). Submit this only after Herdr has
+// finished agent start; model work inside its readiness wait can lose the name.
 export const CODEX_INITIALIZATION_PROMPT = "Session initialization only. Reply with READY and end this turn. Do not use tools, read or edit files, run commands, start implementation, or dispatch agents. The actual task will arrive separately after the coordinator verifies your session identity.";
+
+/** An official ready agent can still be showing a first-run menu. Clear only
+ * the known update offer before the first model turn; hook consent is external
+ * authority and must never be silently skipped. */
+export function prepareCodexFirstTurn(prepared: Pick<PreparedSpawn, "paneId" | "name">, environment: HerdrEnvironment, advanceUpdate = true): AgentLookup {
+  const run = environmentRun(environment);
+  const clock = environment.clock ?? defaultClock;
+  const deadline = clock.now() + CODEX_INITIALIZATION_TIMEOUT_MS;
+  let initialTerminal: string | null = null;
+  let advanced = false;
+  while (clock.now() < deadline) {
+    const observed = getAgent(prepared.paneId, environment, Math.min(2000, deadline - clock.now()));
+    if (observed.kind !== "found") return observed;
+    const agent = observed.agent;
+    if (agent.paneId !== prepared.paneId || agent.name !== prepared.name || agent.kind !== "codex" || agent.terminalId === null
+      || (initialTerminal !== null && agent.terminalId !== initialTerminal)) return { kind: "unavailable", detail: "Codex first-turn target changed before submission" };
+    initialTerminal = agent.terminalId;
+    if (agent.status === "blocked" || agent.interactiveReady !== true || (agent.status !== "idle" && agent.status !== "done")) return { kind: "unavailable", detail: "Codex first-turn target is not interactive-ready" };
+    if (agent.sessionId !== null) return observed;
+    const screen = run(["agent", "read", prepared.paneId, "--source", "visible"], undefined, Math.min(2000, deadline - clock.now()));
+    if (screen.status !== 0) return { kind: "unavailable", detail: "Codex first-turn screen could not be inspected" };
+    if (/Hooks need review/.test(screen.stdout)) return { kind: "unavailable", detail: "Codex hooks need explicit fixture or user consent before session initialization" };
+    if (/Updating Codex via/.test(screen.stdout)) return { kind: "unavailable", detail: "Codex is updating; first-turn submission was withheld" };
+    const hasComposer = /›\s*Ask Codex to do anything/.test(screen.stdout);
+    const hasUpdateMenu = /Update available[\s\S]*2\. Skip(?:\s|$)/.test(screen.stdout);
+    if (hasComposer && hasUpdateMenu) return { kind: "unavailable", detail: "Codex first-turn screen has conflicting composer and update signals; no input was sent" };
+    if (hasUpdateMenu) {
+      if (!advanceUpdate || advanced) return { kind: "unavailable", detail: "Codex update screen is not safely cleared before the first turn" };
+      const current = getAgent(prepared.paneId, environment, Math.min(2000, deadline - clock.now()));
+      const repeated = run(["agent", "read", prepared.paneId, "--source", "visible"], undefined, Math.min(2000, deadline - clock.now()));
+      if (current.kind !== "found" || current.agent.name !== prepared.name || current.agent.terminalId !== initialTerminal
+        || current.agent.sessionId !== null || current.agent.interactiveReady !== true || repeated.status !== 0 || repeated.stdout !== screen.stdout) return { kind: "unavailable", detail: "Codex update screen changed before Skip could be selected" };
+      const selected = run(["agent", "send-keys", prepared.paneId, "2", "enter"], undefined, Math.min(2000, deadline - clock.now()));
+      if (selected.status !== 0) return { kind: "unavailable", detail: "Codex update screen could not be skipped" };
+      advanced = true;
+      clock.sleep(CODEX_INITIALIZATION_POLL_MS);
+      continue;
+    }
+    // Herdr reports idle and interactive_ready for a Codex startup menu too.
+    // The visible composer is the only affirmative TUI signal available in
+    // official 0.9.1, so an unknown first-run screen cannot receive Enter.
+    if (!hasComposer) return { kind: "unavailable", detail: "Codex first-turn composer is not visible; no prompt was submitted" };
+    return observed;
+  }
+  return { kind: "unavailable", detail: "Codex first-turn readiness did not settle in 30 seconds" };
+}
 
 export function environmentCapabilities(environment: HerdrEnvironment): HerdrCapabilities {
   const env = environment.env ?? process.env;
@@ -298,16 +346,14 @@ function nativeAgentArgs(kind: string, model?: string, effort?: string): string[
     if (kind === "codex") args.push("--config", `model_reasoning_effort="${effort}"`);
     else args.push("--effort", effort);
   }
-  if (kind === "codex") args.push(CODEX_INITIALIZATION_PROMPT);
   return args.length === 0 ? [] : ["--", ...args];
 }
 
-export function initializedCodex(prepared: Pick<PreparedSpawn, "paneId" | "name">, environment: HerdrEnvironment): AgentLookup {
+export function initializedCodex(prepared: Pick<PreparedSpawn, "paneId" | "name">, environment: HerdrEnvironment, requireSettled = true): AgentLookup {
   const clock = environment.clock ?? defaultClock;
   const deadline = clock.now() + CODEX_INITIALIZATION_TIMEOUT_MS;
   let terminalId: string | null = null;
   let sessionId: string | null = null;
-  const handledStartupScreens = new Set<string>();
   while (clock.now() < deadline) {
     const observed = getAgent(prepared.paneId, environment, deadline - clock.now());
     if (observed.kind !== "found") return observed;
@@ -321,25 +367,13 @@ export function initializedCodex(prepared: Pick<PreparedSpawn, "paneId" | "name"
     }
     sessionId ??= agent.sessionId;
     if (agent.status === "blocked") return { kind: "unavailable", detail: "Codex initialization is blocked; inspect the retained pane" };
-    if (sessionId !== null && (agent.status === "idle" || agent.status === "done")) return observed;
+    if (sessionId !== null && (!requireSettled || agent.status === "idle" || agent.status === "done")) return observed;
     if (terminalId !== null && sessionId === null && agent.status === "idle") {
       const run = environmentRun(environment);
       const screen = run(["agent", "read", prepared.paneId, "--source", "visible"], undefined, Math.min(2000, deadline - clock.now()));
       if (screen.status === 0) {
-        const choice = /Hooks need review[\s\S]*Continue without trusting \(hooks won't run\)/.test(screen.stdout) ? { key: "untrusted-hooks", option: "3" }
-          : /Update available[\s\S]*2\. Skip(?:\s|$)/.test(screen.stdout) ? { key: "defer-update", option: "2" } : null;
-        if (choice !== null && !handledStartupScreens.has(choice.key)) {
-          // Only a fresh pane owned by this spawn reaches here. Reconfirm its terminal before sending a menu choice.
-          const beforeChoice = getAgent(prepared.paneId, environment, Math.min(2000, deadline - clock.now()));
-          if (beforeChoice.kind !== "found" || beforeChoice.agent.name !== prepared.name || beforeChoice.agent.terminalId !== terminalId || beforeChoice.agent.sessionId !== null || beforeChoice.agent.status !== "idle") {
-            return { kind: "unavailable", detail: "Codex startup screen changed before the owned pane could be advanced" };
-          }
-          const currentScreen = run(["agent", "read", prepared.paneId, "--source", "visible"], undefined, Math.min(2000, deadline - clock.now()));
-          if (currentScreen.status !== 0 || currentScreen.stdout !== screen.stdout) return { kind: "unavailable", detail: "Codex startup screen changed before the owned pane could be advanced" };
-          const selected = run(["agent", "send-keys", prepared.paneId, choice.option, "enter"], undefined, Math.min(2000, deadline - clock.now()));
-          if (selected.status !== 0) return { kind: "unavailable", detail: "Codex startup screen could not be advanced; inspect the retained pane" };
-          handledStartupScreens.add(choice.key);
-        }
+        if (/Hooks need review/.test(screen.stdout)) return { kind: "unavailable", detail: "Codex hooks need explicit consent; session integration cannot be skipped" };
+        if (/Updating Codex via|Update available[\s\S]*2\. Skip(?:\s|$)/.test(screen.stdout)) return { kind: "unavailable", detail: "Codex startup screen appeared after first-turn submission; inspect the retained pane without further input" };
       }
     }
     const remaining = deadline - clock.now();
@@ -599,9 +633,22 @@ export function spawnImplementor(
       : `herdr pane report-metadata ${created} failed (${declared.status ?? "no status"}): ${(declared.stderr || declared.stdout).trim()}; the row will show as a root, not under ${dispatcher}`,
   };
 
-  const observed = kind === "codex"
-    ? initializedCodex(prepared, { ...environment, run })
-    : getAgent(created, { ...environment, run });
+  if (kind === "codex") {
+    const beforeInitialization = prepareCodexFirstTurn(prepared, { ...environment, run });
+    if (beforeInitialization.kind !== "found" || beforeInitialization.agent.paneId !== created
+      || beforeInitialization.agent.name !== input.name || beforeInitialization.agent.kind !== "codex"
+      || beforeInitialization.agent.terminalId === null || beforeInitialization.agent.interactiveReady !== true
+      || (beforeInitialization.agent.status !== "idle" && beforeInitialization.agent.status !== "done")) {
+      return { ok: false, value: null, problem: `implementor ${input.name} in ${created} is not confirmed ready for session initialization; no handoff was sent` };
+    }
+    if (beforeInitialization.agent.sessionId === null) {
+      const finalReady = prepareCodexFirstTurn(prepared, { ...environment, run }, false);
+      if (finalReady.kind !== "found" || finalReady.agent.terminalId !== beforeInitialization.agent.terminalId || finalReady.agent.sessionId !== null) return { ok: false, value: null, problem: `implementor ${input.name} in ${created} changed before session initialization; no handoff was sent` };
+      const initialized = promptAgent({ target: created, text: CODEX_INITIALIZATION_PROMPT, expectedInputGuard: finalReady.agent.inputGuard }, { ...environment, run });
+      if (initialized.outcome !== "accepted") return { ok: false, value: null, problem: `implementor ${input.name} in ${created} initialization submission was ${initialized.outcome} (${initialized.code}); no handoff was sent` };
+    }
+  }
+  const observed = kind === "codex" ? initializedCodex(prepared, { ...environment, run }) : getAgent(created, { ...environment, run });
   if (observed.kind !== "found" || observed.agent.paneId !== created || observed.agent.name !== input.name
     || observed.agent.sessionId === null || observed.agent.terminalId === null) {
     const detail = observed.kind === "found"

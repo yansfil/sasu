@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { CODEX_INITIALIZATION_PROMPT, getAgent, initializedCodex, promptAgent, runHerdrCommand, startAgentWhenPaneReady } from "../implement/herdr";
+import { CODEX_INITIALIZATION_PROMPT, getAgent, initializedCodex, prepareCodexFirstTurn, promptAgent, runHerdrCommand, startAgentWhenPaneReady } from "../implement/herdr";
 import { HcoordError, validateSpawnSpec, type Delivery, type Participant, type Request, type SpawnIntent } from "./model";
 
 function scopeEnv(hostScope: string): NodeJS.ProcessEnv {
@@ -118,44 +118,69 @@ export function confirmSpawnPane(record: SpawnIntent, placement: { workspace: st
   }
 }
 
-export function inspectSpawnedAgent(record: SpawnIntent): { session: string; instance: string; runtime: Participant["runtime"] } | null {
-  if (record.pane === null) return null;
+export type SpawnInspection = { state: "absent" } | { state: "initializing"; instance: string; interactiveReady: boolean | null; runtime: Participant["runtime"] } | { state: "ready"; session: string; instance: string; runtime: Participant["runtime"] };
+
+export function inspectSpawnedAgent(record: SpawnIntent): SpawnInspection {
+  if (record.pane === null) return { state: "absent" };
   const found = getAgent(record.pane, { env: scopeEnv(record.hostScope) }, 2000);
-  if (found.kind === "absent") return null;
+  if (found.kind === "absent") return { state: "absent" };
   if (found.kind !== "found") throw new HcoordError("spawn_uncertain", "Herdr cannot inspect the spawned pane; retain its ID and retry after reconnection", { intent: record.key, pane: record.pane, unfinishedStep: "inspect_agent" });
   if (found.agent.paneId !== record.pane || found.agent.name !== record.name || found.agent.kind !== record.kind) throw new HcoordError("identity_conflict", "spawn pane hosts a different execution; no binding was changed", { intent: record.key, pane: record.pane });
-  if (found.agent.sessionId === null || found.agent.terminalId === null) throw new HcoordError("spawn_uncertain", "spawned agent has no stable execution identity yet", { intent: record.key, pane: record.pane, unfinishedStep: "inspect_agent" });
-  return { session: found.agent.sessionId, instance: found.agent.terminalId, runtime: found.agent.status === "blocked" ? "unknown" : found.agent.status };
+  if (found.agent.terminalId === null) throw new HcoordError("spawn_uncertain", "spawned agent has no terminal identity yet", { intent: record.key, pane: record.pane, unfinishedStep: "inspect_agent" });
+  const runtime = found.agent.status === "blocked" ? "unknown" : found.agent.status;
+  if (found.agent.sessionId === null) return { state: "initializing", instance: found.agent.terminalId, interactiveReady: found.agent.interactiveReady, runtime };
+  return { state: "ready", session: found.agent.sessionId, instance: found.agent.terminalId, runtime };
 }
 
-/** Preserve an explicit user task; initialize sessions launched with Codex options only. */
-function codexLaunchArgs(nativeArgs: string[]): string[] {
+/** The first Codex turn follows agent start, including an explicit task. */
+function codexLaunchArgs(nativeArgs: string[]): { startArgs: string[]; prompt: string } {
   const valueFlags = new Set(["-c", "--config", "-i", "--image", "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir", "-a", "--ask-for-approval", "--remote", "--remote-auth-token-env", "--local-provider", "--enable", "--disable"]);
-  let hasTask = false;
   for (let index = 0; index < nativeArgs.length; index += 1) {
     const arg = nativeArgs[index]!;
-    if (arg === "--") { hasTask = index + 1 < nativeArgs.length; break; }
+    if (arg === "--") {
+      if (nativeArgs.length - index !== 2) throw new HcoordError("invalid_argument", "Codex accepts one task argument after --");
+      return { startArgs: nativeArgs.slice(0, index), prompt: nativeArgs[index + 1]! };
+    }
     if (valueFlags.has(arg)) { index += 1; continue; }
     if (arg.startsWith("-")) continue;
-    hasTask = true;
-    break;
+    if (index !== nativeArgs.length - 1) throw new HcoordError("invalid_argument", "Codex task must be the final native argument");
+    return { startArgs: nativeArgs.slice(0, index), prompt: arg };
   }
-  return hasTask ? nativeArgs : [...nativeArgs, CODEX_INITIALIZATION_PROMPT];
+  return { startArgs: nativeArgs, prompt: CODEX_INITIALIZATION_PROMPT };
 }
 
 export function startSpawnedAgent(record: SpawnIntent): void {
   if (record.pane === null) throw new HcoordError("invalid_state", "spawn intent has no pane");
   validateSpawnSpec(record.name, record.kind);
-  const nativeArgs = record.kind === "codex" ? codexLaunchArgs(record.nativeArgs) : record.nativeArgs;
-  const { result } = startAgentWhenPaneReady(["agent", "start", record.name, "--kind", record.kind, "--pane", record.pane, "--timeout", "10000", ...(nativeArgs.length ? ["--", ...nativeArgs] : [])], { env: scopeEnv(record.hostScope) });
+  const nativeArgs = record.kind === "codex" ? codexLaunchArgs(record.nativeArgs).startArgs : record.nativeArgs;
+  const { result } = startAgentWhenPaneReady(["agent", "start", record.name, "--kind", record.kind, "--pane", record.pane, ...(nativeArgs.length ? ["--", ...nativeArgs] : [])], { env: scopeEnv(record.hostScope) });
   if (result.status !== 0) throw new HcoordError("spawn_uncertain", "Herdr did not confirm agent start; inspect the saved pane before retry", { intent: record.key, pane: record.pane, unfinishedStep: "agent_start" });
-  if (record.kind === "codex") {
-    const observed = initializedCodex({ paneId: record.pane, name: record.name }, { env: scopeEnv(record.hostScope) });
-    if (observed.kind !== "found" || observed.agent.sessionId === null || observed.agent.terminalId === null) {
-      // A mismatched execution is a conflict even if the startup wait ended first.
-      inspectSpawnedAgent(record);
-      throw new HcoordError("spawn_uncertain", "Codex initialization did not confirm a settled execution identity; retry this intent after inspecting the saved pane", { intent: record.key, pane: record.pane, unfinishedStep: "inspect_agent" });
-    }
+}
+
+export function prepareSpawnInitialization(record: SpawnIntent, instance: string, advanceUpdate = true): void {
+  if (record.pane === null || record.kind !== "codex") throw new HcoordError("invalid_state", "Codex initialization requires its saved pane");
+  const observed = prepareCodexFirstTurn({ paneId: record.pane, name: record.name }, { env: scopeEnv(record.hostScope) }, advanceUpdate);
+  if (observed.kind !== "found") throw new HcoordError("spawn_uncertain", `Codex first-turn preflight could not confirm its composer: ${observed.detail}`, { intent: record.key, pane: record.pane, unfinishedStep: "initialize_agent" });
+  if (observed.agent.terminalId !== instance || observed.agent.sessionId !== null) throw new HcoordError("identity_conflict", "spawn execution changed before initialization submission", { intent: record.key, pane: record.pane });
+}
+
+export function submitSpawnInitialization(record: SpawnIntent, instance: string): { outcome: "accepted" | "rejected" | "unknown"; code: string } {
+  if (record.pane === null || record.kind !== "codex") throw new HcoordError("invalid_state", "Codex initialization requires its saved pane");
+  const observed = inspectSpawnedAgent(record);
+  if (observed.state !== "initializing" || observed.instance !== instance) throw new HcoordError("identity_conflict", "spawn execution changed before initialization submission", { intent: record.key, pane: record.pane });
+  if (observed.interactiveReady !== true || (observed.runtime !== "idle" && observed.runtime !== "done")) throw new HcoordError("spawn_uncertain", "spawned agent is not interactive-ready; inspect the saved pane before retry", { intent: record.key, pane: record.pane, unfinishedStep: "initialize_agent" });
+  prepareSpawnInitialization(record, instance, false);
+  const result = promptAgent({ target: record.pane, text: codexLaunchArgs(record.nativeArgs).prompt, expectedInputGuard: null }, { env: scopeEnv(record.hostScope) });
+  return { outcome: result.outcome, code: result.code };
+}
+
+export function waitForSpawnInitialization(record: SpawnIntent): void {
+  if (record.pane === null) throw new HcoordError("invalid_state", "spawn intent has no pane");
+  const isInitialTurn = codexLaunchArgs(record.nativeArgs).prompt === CODEX_INITIALIZATION_PROMPT;
+  const observed = initializedCodex({ paneId: record.pane, name: record.name }, { env: scopeEnv(record.hostScope) }, isInitialTurn);
+  if (observed.kind !== "found" || observed.agent.sessionId === null || observed.agent.terminalId === null) {
+    inspectSpawnedAgent(record);
+    throw new HcoordError("spawn_uncertain", "Codex first turn did not confirm an execution identity; inspect the saved pane and retry this intent without resubmitting it", { intent: record.key, pane: record.pane, unfinishedStep: "initialize_agent" });
   }
 }
 

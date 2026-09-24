@@ -56,14 +56,11 @@ if (key === "agent start") {
   const kind = argv[argv.indexOf("--kind") + 1];
   const file = process.env.HERDR_FAKE_AGENTS_FILE;
   const current = file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
-  current[pane] = { name, agent: kind, agent_status: "working", pane_id: pane, terminal_id: "term_impl", agent_session: { value: "impl-session" }, tokens: { activity: String(Date.now()) }, state_change_seq: 1 };
-  // Codex reports its session only after a first turn. The native initial
-  // prompt initializes it without delivering the executable handoff.
+  current[pane] = { name, agent: kind, agent_status: "working", interactive_ready: true, pane_id: pane, terminal_id: "term_impl", agent_session: { value: "impl-session" }, tokens: { activity: String(Date.now()) }, state_change_seq: 1 };
+  // Codex reports its session only after the first official prompt.
   if (kind === "codex") {
-    const separator = argv.indexOf("--");
-    const initialPrompt = separator !== -1 && !argv[argv.length - 1].startsWith("--") && argv[argv.length - 1].includes("Session initialization only.");
     current[pane].agent_status = "idle";
-    if (!initialPrompt) delete current[pane].agent_session;
+    delete current[pane].agent_session;
   }
   if (file) fs.writeFileSync(file, JSON.stringify(current));
   answer({ result: { type: "agent_started" } });
@@ -81,6 +78,12 @@ if (key === "agent prompt") {
   if (found && guardIndex !== -1 && argv[guardIndex + 1] !== found.input_guard) refuse("agent_input_guard_mismatch", "input guard mismatch");
   if (process.env.HERDR_FAKE_PROMPT_FAIL === "1") { process.stderr.write("scripted prompt failure\\n"); process.exit(1); }
   if (process.env.HERDR_FAKE_PROMPT_LOG) fs.appendFileSync(process.env.HERDR_FAKE_PROMPT_LOG, JSON.stringify({ target, text: argv[3], guard: guardIndex === -1 ? null : argv[guardIndex + 1] }) + "\\n");
+  if (found && found.agent === "codex" && argv[3]?.includes("Session initialization only.")) {
+    const file = process.env.HERDR_FAKE_AGENTS_FILE;
+    const current = agents();
+    current[found.pane_id].agent_session = { value: "impl-session" };
+    if (file) fs.writeFileSync(file, JSON.stringify(current));
+  }
   // E2E kill tests stop the whole spawned process group after the observable
   // prompt effect but before the wrapper can report success. The barrier
   // makes that failure boundary exact instead of relying on scheduler timing.
@@ -91,6 +94,7 @@ if (key === "agent prompt") {
   }
   answer({ result: { type: "agent_prompt", outcome: "submitted" } });
 }
+if (key === "agent read" && argv.includes("--source") && argv.includes("visible")) { process.stdout.write("› Ask Codex to do anything\\n"); process.exit(0); }
 if (key === "workspace create") answer({ result: { type: "workspace_created", workspace: { workspace_id: "w7Z" }, tab: { tab_id: "w7Z:t1" }, root_pane: { pane_id: "w7Z:p1" } } });
 if (key === "tab create") answer({ result: { type: "tab_created", tab: { tab_id: "w4G:t9" }, root_pane: { pane_id: "w4G:p13" } } });
 answer({ result: {} });
