@@ -13,6 +13,15 @@ export const MAX_SPAWN_INTENTS = 4096;
 export const MAX_WATCH_HISTORY = 20000;
 export const MAX_QUEUE = 256;
 export const MAX_MESSAGE_BYTES = 1024 * 1024;
+// Every agent write travels as a letter so a stopped daemon or an unreachable
+// HQ delays the write instead of losing it (PRD D-10, D-11, D-12).
+export const LETTER_SCHEMA = "hcoord.letter.v1" as const;
+// The HQ and each remote hcoord must speak the same remote protocol before the
+// HQ registers, spawns on, or collects from that machine (PRD D-12, D-17).
+export const REMOTE_PROTOCOL = 1;
+export const MAX_OUTBOX_LETTERS = 1024;
+export const MAX_LETTER_RECORDS = 20000;
+export const LETTER_OPERATIONS = new Set(["config.set", "agent.register", "agent.spawn", "watch.start", "watch.assign", "watch.stop", "watch.check", "request.send", "request.reply", "request.relay", "request.ack", "request.cancel", "request.escalate"]);
 export const DEFAULTS = { watchMs: 5 * 60_000, remindMs: 15 * 60_000, escalateMs: 30 * 60_000, retentionMs: 30 * 24 * 60 * 60_000 };
 
 export type RequestStatus = "open" | "answered" | "canceled";
@@ -44,15 +53,19 @@ export interface Request {
   deliveryRemindedAt?: string | null; deliveryEscalatedAt?: string | null;
   deliveries: Delivery[];
 }
+export interface Letter { schema: string; id: string; operation: string; args: Record<string, unknown>; createdAt: string; writer: { host: string; protocol: number } }
+/** One processed or refused letter. `reported` means the writer already saw the outcome directly. */
+export interface LetterRecord { id: string; origin: string; operation: string; at: string; outcome: "applied" | "rejected" | "unsupported"; code: string | null; message: string | null; reported: boolean }
 export interface Event { seq: number; at: string; type: string; subjectId: string; correlationId: string | null; detail: Record<string, string | number | boolean | null> }
 export interface SpawnIntent { key: string; parent: string; machine: string; hostScope: string; session: string; name: string; kind: string; nativeArgs: string[]; noWatch: boolean; status: "reserved" | "unknown" | "complete"; pane: string | null; participant: string | null; reason: string | null; at: string; placement?: { workspace: string; cwd: string }; initialization?: "pending" | "reserved" | "complete"; observedInstance?: string | null; observedSession?: string | null }
 export interface Ledger {
   schema: typeof SCHEMA; seq: number; updatedAt: string; config: typeof DEFAULTS;
   participants: Record<string, Participant>; watches: Record<string, Watch>; watchHistory: Watch[]; requests: Record<string, Request>;
   spawnIntents: Record<string, SpawnIntent>; sasuRuns: Record<string, { observer: string; implementor: string; project: string; registeredAt: string }>; events: Event[]; prunedBefore: string | null;
+  letters: Record<string, LetterRecord>;
 }
 export function emptyLedger(now: string): Ledger {
-  return { schema: SCHEMA, seq: 0, updatedAt: now, config: { ...DEFAULTS }, participants: {}, watches: {}, watchHistory: [], requests: {}, spawnIntents: {}, sasuRuns: {}, events: [], prunedBefore: null };
+  return { schema: SCHEMA, seq: 0, updatedAt: now, config: { ...DEFAULTS }, participants: {}, watches: {}, watchHistory: [], requests: {}, spawnIntents: {}, sasuRuns: {}, events: [], prunedBefore: null, letters: {} };
 }
 // Persisted dictionaries are plain JSON objects, including after structuredClone.
 // Own-key access prevents caller IDs such as __proto__ from becoming records.

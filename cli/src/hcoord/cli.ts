@@ -2,7 +2,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import { officialPromptSupport } from "./herdr";
-import { HcoordError } from "./model";
+import { HcoordError, LETTER_OPERATIONS } from "./model";
+import { writeLetter } from "./outbox";
 import { platformSupport, startDaemon } from "./platform";
 import { callDaemon, runDaemon, staleRead, type WireResult } from "./transport";
 import { dataDir, legacyRetiredPath, sasuEnabledPath, stopMarkerPath } from "./store";
@@ -60,11 +61,32 @@ function route(args: Parsed): { operation: string; data: Record<string, unknown>
 function print(result: WireResult, json: boolean): void {
   if (json) { process.stdout.write(`${JSON.stringify(result)}\n`); return; }
   if (!result.ok) { process.stderr.write(`hcoord: ${result.error?.code}: ${result.error?.message}\n`); return; }
+  if (result.delivery === "pending") { const value = result.value as { letter: string; reason: string }; process.stdout.write(`pending: letter ${value.letter} waits for the coordinator; ${value.reason}\n`); return; }
   const data = result.value;
   if (Array.isArray(data)) {
     if (data.length === 0) process.stdout.write("No items.\n");
     else for (const item of data) process.stdout.write(`${JSON.stringify(item)}\n`);
   } else process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
+}
+
+/**
+ * Every write is saved in this machine's outbox before anything else, so a
+ * stopped or busy coordinator delays it instead of losing it (PRD B6, B12).
+ * A running local coordinator applies it at once and returns the same result
+ * a direct call returned before letters existed (PRD B1).
+ */
+async function sendLetter(operation: string, data: Record<string, unknown>): Promise<WireResult> {
+  const letter = writeLetter(operation, data);
+  const pending = (reason: string): WireResult => ({ ok: true, delivery: "pending", value: { letter: letter.id, operation, reason }, observedAt: new Date().toISOString() });
+  try {
+    return await callDaemon("outbox.collect", { letter: letter.id }, undefined, operation === "agent.spawn" ? 240_000 : 30_000);
+  } catch (error) {
+    if (!(error instanceof HcoordError)) throw error;
+    if (error.code === "daemon_down") return pending("the coordinator daemon is not running; it applies this letter after hcoord daemon start");
+    if (error.code === "timeout") return pending("the coordinator did not answer in time; it applies this letter in order, so do not resend it");
+    if (error.code === "permission_denied" || error.code === "transport") return pending(`${error.message}; the running coordinator still collects this letter from the outbox`);
+    throw error;
+  }
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -119,6 +141,11 @@ export async function main(argv: string[]): Promise<number> {
         cursor = stream.cursor;
         if (!stream.hasMore) await new Promise((resolve) => setTimeout(resolve, 1000));
       }
+    }
+    if (LETTER_OPERATIONS.has(operation)) {
+      const result = await sendLetter(operation, data);
+      print(result, json);
+      return result.ok ? 0 : 1;
     }
     let result: WireResult;
     try { result = await callDaemon(operation, data); }

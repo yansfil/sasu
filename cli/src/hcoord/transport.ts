@@ -1,26 +1,30 @@
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
-import { API_VERSION, HcoordError, MAX_AGENTS, MAX_CONNECTIONS, MAX_EVENTS, MAX_LEDGER_BYTES, MAX_MESSAGE_BYTES, MAX_QUEUE, SPAWN_EVENT_SLOTS, own, put, type Ledger } from "./model";
+import { API_VERSION, HcoordError, LETTER_OPERATIONS, MAX_AGENTS, MAX_CONNECTIONS, MAX_EVENTS, MAX_LEDGER_BYTES, MAX_MESSAGE_BYTES, MAX_OUTBOX_LETTERS, MAX_QUEUE, REMOTE_PROTOCOL, SPAWN_EVENT_SLOTS, own, put, type Ledger, type LetterRecord } from "./model";
 import { event } from "./model";
-import { execute, watchForRequest } from "./service";
+import { execute, recordLetter, watchForRequest } from "./service";
+import { outboxCount, readOutbox, removeLetters, type Found } from "./outbox";
 import { confirmSpawnPane, createSpawnPane, discoverLocalAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateLocalBinding, waitForSpawnInitialization } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
 import { notifyHuman } from "./platform";
 
 export interface WireRequest { version: number; operation: string; args: Record<string, unknown> }
-export interface WireResult { ok: boolean; value?: unknown; error?: { code: string; message: string; detail?: Record<string, unknown> }; observedAt: string }
+export interface WireResult { ok: boolean; value?: unknown; error?: { code: string; message: string; detail?: Record<string, unknown> }; observedAt: string; delivery?: "delivered" | "pending" }
+/** A local letter younger than this waits for its writer's own collect call before the sweep takes it. */
+const LOCAL_SWEEP_GRACE_MS = 2000;
+const SWEEP_LETTERS_PER_TICK = 16;
 const mutation = (operation: string): boolean => !["status", "agent.list", "agent.show", "watch.list", "request.show", "inbox", "graph", "events"].includes(operation);
 
-export async function callDaemon(operation: string, args: Record<string, unknown> = {}, home = os.homedir()): Promise<WireResult> {
+export async function callDaemon(operation: string, args: Record<string, unknown> = {}, home = os.homedir(), timeoutOverrideMs?: number): Promise<WireResult> {
   if (process.platform === "win32") throw new HcoordError("unsupported_platform", "Windows named-pipe ACL support is unverified; no local daemon connection was attempted");
   const request = `${JSON.stringify({ version: API_VERSION, operation, args })}\n`;
   if (Buffer.byteLength(request) > MAX_MESSAGE_BYTES) throw new HcoordError("capacity", `request exceeds ${MAX_MESSAGE_BYTES} bytes; shorten context or native arguments before retrying`);
   return await new Promise<WireResult>((resolve, reject) => {
     const socket = net.createConnection(socketPath(home));
     let text = "";
-    const timeoutMs = operation === "agent.spawn" ? 75_000 : 10_000;
+    const timeoutMs = timeoutOverrideMs ?? (operation === "agent.spawn" ? 75_000 : 10_000);
     const timer = setTimeout(() => { socket.destroy(); reject(new HcoordError("timeout", `coordinator did not answer within ${timeoutMs / 1000} seconds`)); }, timeoutMs);
     const finish = (error?: Error, value?: WireResult): void => { clearTimeout(timer); socket.destroy(); if (error) reject(error); else resolve(value!); };
     socket.on("connect", () => socket.write(request));
@@ -107,10 +111,11 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
   let tickPending = false;
   let closing = false;
   let lastRetentionAt = 0;
-  const commit = (operation: string, args: Record<string, unknown>, at: string): unknown => {
+  const commit = (operation: string, args: Record<string, unknown>, at: string, letter?: LetterRecord): unknown => {
     const next = structuredClone(ledger);
     const outcome = execute(next, operation, args, at);
-    if (outcome.changed) { saveLedger(next, home); ledger = next; }
+    if (letter) recordLetter(next, letter);
+    if (outcome.changed || letter) { saveLedger(next, home); ledger = next; }
     return outcome.value;
   };
   const spawnAgent = (args: Record<string, unknown>, at: string): unknown => {
@@ -212,6 +217,84 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     if (!prior) put(next.sasuRuns, run, { observer: observer.id, implementor: implementor.id, project, registeredAt: at });
     saveLedger(next, home); ledger = next;
     return { run, observer, implementor, watch, owner: "hcoord" };
+  };
+  const recordOnly = (letter: LetterRecord): void => {
+    const next = structuredClone(ledger);
+    recordLetter(next, letter);
+    saveLedger(next, home); ledger = next;
+  };
+  /** One write, whether it arrived as a letter or as a direct API call. */
+  const performWrite = (operation: string, args: Record<string, unknown>, at: string, letter?: LetterRecord): unknown => {
+    if (operation === "agent.spawn") {
+      const value = spawnAgent(args, at);
+      if (letter) recordOnly(letter);
+      return value;
+    }
+    if (operation === "agent.register") {
+      const binding = validateLocalBinding(String(args["machine"] ?? ""), String(args["session"] ?? ""), String(args["instance"] ?? ""), typeof args["pane"] === "string" ? args["pane"] : null, String(args["hostScope"] ?? "default"), String(args["name"] ?? ""));
+      args = { ...args, runtime: binding.runtime };
+    }
+    return commit(operation, args, at, letter);
+  };
+  // Results of letters the sweep applied before their writer asked; bounded,
+  // and only a convenience: the ledger record remains the dedupe authority.
+  const letterResults = new Map<string, WireResult>();
+  const remember = (letterId: string, result: WireResult): void => {
+    letterResults.set(letterId, result);
+    if (letterResults.size > 256) letterResults.delete(letterResults.keys().next().value!);
+  };
+  const refusal = (error: unknown, at: string): WireResult => {
+    const reason = error instanceof HcoordError ? error : new HcoordError("internal", "coordinator operation failed; inspect daemon stderr");
+    if (!(error instanceof HcoordError)) process.stderr.write(`${JSON.stringify({ event: "hcoord.letter_failed", at, code: "internal" })}\n`);
+    return { ok: false, error: { code: reason.code, message: reason.message, ...(reason.detail ? { detail: reason.detail } : {}) }, observedAt: at };
+  };
+  /**
+   * Applies one letter at most once. The effect and the letter record share
+   * one ledger save; the caller deletes the letter only after that save.
+   * Returns null when the letter must stay in its outbox (unsupported).
+   */
+  const applyLetter = (found: Found, origin: string, reported: boolean): { result: WireResult; remove: boolean } => {
+    const at = new Date().toISOString();
+    const known = own(ledger.letters, found.id);
+    if (known) {
+      const cached = letterResults.get(found.id);
+      const result = cached ?? (known.outcome === "applied" ? { ok: true, value: { letter: found.id, outcome: "applied", operation: known.operation }, observedAt: at } : { ok: false, error: { code: known.code ?? "rejected", message: known.message ?? "letter was not applied" }, observedAt: at });
+      return { result, remove: known.outcome !== "unsupported" };
+    }
+    const record = (outcome: LetterRecord["outcome"], code: string | null, message: string | null): LetterRecord => ({ id: found.id, origin, operation: found.letter?.operation ?? "unknown", at, outcome, code, message, reported });
+    const unsupported = (code: string, message: string): { result: WireResult; remove: boolean } => {
+      recordOnly(record("unsupported", code, message));
+      return { result: { ok: false, error: { code, message }, observedAt: at }, remove: false };
+    };
+    if (found.letter === null) return unsupported("unsupported_letter", found.reason);
+    const letter = found.letter;
+    if (letter.writer.protocol !== REMOTE_PROTOCOL) return unsupported("version_mismatch", `letter from hcoord protocol ${letter.writer.protocol}; this coordinator speaks ${REMOTE_PROTOCOL}`);
+    let result: WireResult;
+    if (!LETTER_OPERATIONS.has(letter.operation)) {
+      result = { ok: false, error: { code: "forbidden", message: `operation ${letter.operation} cannot travel as a letter` }, observedAt: at };
+      recordOnly(record("rejected", "forbidden", result.error!.message));
+      return { result, remove: true };
+    }
+    try {
+      result = { ok: true, value: performWrite(letter.operation, letter.args, at, record("applied", null, null)), observedAt: at };
+    } catch (error) {
+      result = refusal(error, at);
+      if (!own(ledger.letters, found.id)) recordOnly(record("rejected", result.error!.code, result.error!.message));
+    }
+    remember(found.id, result);
+    return { result, remove: true };
+  };
+  /** Applies local letters oldest first; stops after `until` when given. */
+  const collectLocal = (until: string | null, minimumAgeMs: number): WireResult | null => {
+    let requested: WireResult | null = null, applied = 0;
+    for (const found of readOutbox(MAX_OUTBOX_LETTERS, home)) {
+      if (until === null && (Date.now() - found.createdMs < minimumAgeMs || applied >= SWEEP_LETTERS_PER_TICK)) break;
+      if (!own(ledger.letters, found.id)) applied += 1;
+      const outcome = applyLetter(found, "local", found.id === until);
+      if (outcome.remove) removeLetters([found.id], home);
+      if (found.id === until) { requested = outcome.result; break; }
+    }
+    return requested;
   };
   const processOutbox = (): void => {
     let examined = 0;
@@ -338,13 +421,19 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
             closing = true;
           } else {
             if (decoded.operation.startsWith("agent.spawn.") || decoded.operation === "tick" || decoded.operation === "agent.observe") throw new HcoordError("forbidden", "operation is daemon-internal");
-            if (decoded.operation === "agent.register") {
-              const binding = validateLocalBinding(String(decoded.args["machine"] ?? ""), String(decoded.args["session"] ?? ""), String(decoded.args["instance"] ?? ""), typeof decoded.args["pane"] === "string" ? decoded.args["pane"] : null, String(decoded.args["hostScope"] ?? "default"), String(decoded.args["name"] ?? ""));
-              decoded.args["runtime"] = binding.runtime;
+            if (decoded.operation === "outbox.collect") {
+              const letterId = decoded.args["letter"];
+              if (typeof letterId !== "string" || letterId === "") throw new HcoordError("invalid_argument", "letter is required");
+              const collected = collectLocal(letterId, 0);
+              const known = own(ledger.letters, letterId);
+              const resolved = collected ?? letterResults.get(letterId) ?? (known ? applyLetter({ id: letterId, createdMs: 0, letter: null, reason: "" }, "local", true).result : null);
+              if (resolved === null) throw new HcoordError("not_found", "letter is neither in the outbox nor recorded; inspect hcoord inbox before resending");
+              socket.end(`${JSON.stringify({ ...resolved, delivery: "delivered" })}\n`);
+              return;
             }
-            let value = decoded.operation === "agent.spawn" ? spawnAgent(decoded.args, at) : decoded.operation === "sasu.register" ? registerSasuRun(decoded.args, at) : commit(decoded.operation, decoded.args, at);
+            let value = decoded.operation === "sasu.register" ? registerSasuRun(decoded.args, at) : LETTER_OPERATIONS.has(decoded.operation) ? performWrite(decoded.operation, decoded.args, at) : commit(decoded.operation, decoded.args, at);
             if (decoded.operation === "status") {
-              value = { ...(value as object), deliverySafety: OFFICIAL_PROMPT_BOUNDARY, usage: { ledgerBytes: fs.existsSync(ledgerPath(home)) ? fs.statSync(ledgerPath(home)).size : 0,
+              value = { ...(value as object), deliverySafety: OFFICIAL_PROMPT_BOUNDARY, usage: { uncollectedLocalLetters: outboxCount(home), ledgerBytes: fs.existsSync(ledgerPath(home)) ? fs.statSync(ledgerPath(home)).size : 0,
                 connections, queuedOperations, queuedDeliveries: Object.values(ledger.requests).reduce((sum, item) => sum + item.deliveries.filter((delivery) => delivery.status === "pending" || delivery.status === "deferred").length, 0),
                 uncertainSpawns: Object.values(ledger.spawnIntents).filter((intent) => intent.status === "unknown").length } };
             }
@@ -401,6 +490,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
         const outcome = execute(next, "tick", { observedTargets, runRetention }, at);
         if (outcome.changed || observedTargets.length > 0 || oldestUnwatched) { saveLedger(next, home); ledger = next; }
         if (runRetention) lastRetentionAt = Date.parse(at);
+        collectLocal(null, LOCAL_SWEEP_GRACE_MS);
         processOutbox();
       }).catch((error) => { process.stderr.write(`${JSON.stringify({ event: "hcoord.tick_failed", at: new Date().toISOString(), code: error instanceof HcoordError ? error.code : "internal" })}\n`); }).finally(() => { tickPending = false; });
     }, 1000);

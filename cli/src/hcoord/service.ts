@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, validateSpawnSpec, type Delivery, type Ledger, type Participant, type Request, type Watch } from "./model";
+import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_LETTER_RECORDS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, validateSpawnSpec, type Delivery, type Ledger, type LetterRecord, type Participant, type Request, type Watch } from "./model";
 
 type Args = Record<string, unknown>;
 export interface Outcome { value: unknown; changed: boolean }
@@ -79,6 +79,18 @@ const retireUnsent = (item: Request, reason: string, phase?: Delivery["phase"]):
     delivery.reason = reason;
   }
 };
+/**
+ * Records a letter in the same ledger save as its effect, so a crash before the
+ * outbox deletion re-reads a letter the ledger already knows (PRD B10).
+ */
+export function recordLetter(state: Ledger, record: LetterRecord): void {
+  if (own(state.letters, record.id)) throw new HcoordError("conflict", "letter is already recorded");
+  if (Object.keys(state.letters).length >= MAX_LETTER_RECORDS) throw new HcoordError("capacity", `letter history reached ${MAX_LETTER_RECORDS}; the letter stays in its outbox until retention frees room`);
+  put(state.letters, record.id, record);
+  if (record.outcome !== "applied") event(state, record.at, "letter.rejected", record.id, null, { origin: record.origin, operation: record.operation, code: record.code });
+  else state.updatedAt = record.at;
+}
+
 export function execute(state: Ledger, operation: string, args: Args, at: string): Outcome {
   if (operation === "status") return { changed: false, value: {
     schema: state.schema, at, lastUpdatedAt: state.updatedAt, eventCursor: state.seq, counts: {
@@ -420,6 +432,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       if ((item.status === "open" && item.requiresReply && (item.to === "human" || item.escalatedAt !== null)) || pendingRelay(item)) items.push({ kind: pendingRelay(item) ? "relay_problem" : "question", requestId: item.id, createdAt: item.createdAt, from: item.from, to: item.to, status: item.status, nextAction: pendingRelay(item) ? "inspect parent delivery and relay the recorded answer" : uncheckedWatchRequest(state, item) ? "assign or restart the watch for an explicit check, or stop and cancel the old request" : "reply or cancel this request" });
       if (item.status !== "canceled" && !pendingRelay(item) && item.deliveries.some((delivery) => !delivery.actionClosedAt && (delivery.status === "unknown" || delivery.status === "deferred" || (delivery.status === "failed" && !(item.status === "answered" && (delivery.phase ?? "request") === "request"))))) items.push({ kind: "delivery_problem", requestId: item.id, createdAt: item.createdAt, nextAction: "inspect delivery history and recipient identity" });
     }
+    for (const record of Object.values(state.letters)) if (record.outcome !== "applied" && !record.reported) items.push({ kind: "letter_rejected", letter: record.id, origin: record.origin, operation: record.operation, at: record.at, code: record.code, reason: record.message, nextAction: record.outcome === "unsupported" ? "upgrade the writing machine's hcoord to this coordinator's version; the letter stays in its outbox" : "the letter was not applied; resend the command if it is still needed" });
     for (const watch of Object.values(state.watches)) if (watch.status === "active" && (watch.observer === null || own(state.participants, watch.observer)?.connection === "unavailable" || !own(state.participants, watch.observer))) items.push({ kind: "watch_unassigned", target: watch.target, observer: watch.observer, nextAction: "inspect current observer and assign explicitly" });
     return { changed: false, value: items };
   }
@@ -468,6 +481,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
         state.prunedBefore = at; changed = true;
       }
       for (const [key, intent] of Object.entries(state.spawnIntents)) if (intent.status === "reserved" && Date.parse(intent.at) < before) { delete state.spawnIntents[key]; state.prunedBefore = at; changed = true; }
+      for (const [key, record] of Object.entries(state.letters)) if (Date.parse(record.at) < before) { delete state.letters[key]; state.prunedBefore = at; changed = true; }
       const retained = state.events.filter((entry) => Date.parse(entry.at) >= before);
       if (retained.length !== state.events.length) { state.events = retained; state.prunedBefore = at; changed = true; }
     }

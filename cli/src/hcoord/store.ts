@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { emptyLedger, HcoordError, MAX_LEDGER_BYTES, SCHEMA, type Ledger } from "./model";
 
-export function dataDir(home = os.homedir()): string { return path.join(home, ".hcoord"); }
+/** HCOORD_HOME relocates every hcoord file, so an isolated install never touches ~/.hcoord. */
+export function dataDir(home = os.homedir()): string {
+  const override = process.env["HCOORD_HOME"];
+  return override !== undefined && override !== "" ? path.resolve(override) : path.join(home, ".hcoord");
+}
 export function ledgerPath(home = os.homedir()): string { return path.join(dataDir(home), "ledger.json"); }
 export function socketPath(home = os.homedir()): string {
   if (process.platform === "win32") return `\\\\.\\pipe\\hcoord-${os.userInfo().username}`;
@@ -29,7 +33,7 @@ export function loadLedger(home = os.homedir()): Ledger {
   const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
   if (!Number.isSafeInteger(ledger.seq) || !Array.isArray(ledger.events) || !record(ledger.config) ||
       !record(ledger.requests) || !record(ledger.participants) || !record(ledger.watches) ||
-      !record(ledger.spawnIntents) || (ledger.sasuRuns !== undefined && !record(ledger.sasuRuns)) ||
+      !record(ledger.spawnIntents) || (ledger.letters !== undefined && !record(ledger.letters)) || (ledger.sasuRuns !== undefined && !record(ledger.sasuRuns)) ||
       (ledger.watchHistory !== undefined && !Array.isArray(ledger.watchHistory)) ||
       Object.values(ledger.requests).some((request) => !record(request) || !Array.isArray(request.deliveries) || !Array.isArray(request.lateAnswers)) ||
       Object.values(ledger.watches).some((watch) => !record(watch) || typeof watch.target !== "string" || typeof watch.generation !== "number")) {
@@ -37,6 +41,7 @@ export function loadLedger(home = os.homedir()): Ledger {
   }
   ledger.watchHistory ??= [];
   ledger.sasuRuns ??= {};
+  ledger.letters ??= {};
   return ledger;
 }
 
