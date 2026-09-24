@@ -97,9 +97,9 @@ Shared document and PRD gate helpers stay in `cli/lib/`.
 ### State And Authority
 
 The CLI is the only writer of `state.json`.
-Mutating commands declare `implementor`, `observer`, or `human` issuer authority according to `skills/implement/SKILL.md`.
-Issuer is an audit declaration, with the session transcript as its supporting evidence.
-`amend` is human-only and invalidates the current verification report.
+Mutating commands record an optional `--issuer` label (`implementor`, `observer`, `human`) in the verb history for audit; the label is self-declared and gates nothing.
+Structural facts do the guarding: session ownership of the run, the `SASU_HERDR_ROLE` pane marker for dispatch and escalate, and the verification lease.
+`amend` requires the recorded human approval text and invalidates the current verification report.
 `retire` ends a run before delivery.
 `finalize`, `confirm`, and implementation `risk` are retired and fail explicitly.
 

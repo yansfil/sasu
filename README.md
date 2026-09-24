@@ -82,7 +82,7 @@ sasu implement start --prd <approved-prd>
 sasu implement artifact --kind <kind> --path <path> --description <description>
 sasu implement status
 sasu implement verify
-sasu implement amend --issuer human --approval <evidence> --reason <reason>
+sasu implement amend --approval <evidence> --reason <reason>
 sasu implement retire
 ```
 

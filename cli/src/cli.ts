@@ -46,7 +46,7 @@ Usage:
   sasu gate override  --slug <topic> --gate <gap-audit|spec> --reason "<why>" [--json]
   sasu implement intake   [--json]
   sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--dirty-attribution <pre-existing|run-owned|JSON-path-map>] [--json]
-  sasu implement amend    --issuer human --reason "<why>" --approval "<verbatim human approval>" [--exclude-suite "<S1,...>"] [--json]
+  sasu implement amend    --reason "<why>" --approval "<verbatim human approval>" [--exclude-suite "<S1,...>"] [--json]
     (archives and re-seals the edited PRD, refreshes metadata, and invalidates the current verification report.)
   sasu implement dispatch --name <unique-agent-name> --prd <path> [--kind <agent>] [--model <model>] [--effort <level>] [--env KEY=VALUE ...] [--patrol <minutes>] [--recovery-owner <supervisor|task-factory>] [--json]
     (starts exactly one marked implementor in its own pane with the handoff packet on stdin, records this pane as the run's Observer,
@@ -63,7 +63,7 @@ Usage:
     (executes the sealed required suite, validates current source and evidence, and writes a fresh verification-report.json and verification-report.md.
      Native Fidelity, Code, and optional Security subagents run visibly through the workflow skill and never change this deterministic result.)
   sasu implement retire   [--slug <topic> | --state <path>] [--adopt "<verbatim user approval>"] [--json]
-    (state-changing commands accept --issuer <implementor|observer|human>, default implementor; issuer is an audited declaration, not authentication.
+    (state-changing commands record an optional --issuer <implementor|observer|human> label, default implementor, for the audit trail; nothing is gated on it.
      Mutating another session's run requires --adopt "<verbatim user approval>"; all domain mutations are refused during a live verify lease.)
   sasu prd readiness       --prd <path> [--json]
   sasu prd ready           --prd <path> [--json]   (flips status to ready; refused while readiness has blocking gaps)

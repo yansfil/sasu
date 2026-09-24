@@ -118,7 +118,7 @@ export interface ImplementEvent {
   subject: string | null; summary: string;
 }
 export type IssuedCommand = "artifact" | "plan" | "verify" | "escalate" | "amend" | "retire";
-export type VerbRejectionCheck = "arguments" | "authority" | "transition";
+export type VerbRejectionCheck = "arguments" | "transition";
 export interface VerbRecord {
   id: number;
   at: string;
@@ -139,7 +139,7 @@ export interface EvidenceReplacement {
 export interface AmendmentRecord {
   id: number;
   at: string;
-  issuer: "human";
+  issuer: IssuerLabel;
   approval: string;
   reason: string;
   prdSha256: string;

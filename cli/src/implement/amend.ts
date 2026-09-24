@@ -5,7 +5,7 @@ import { excludeSuiteCommand, suiteCommandNamed } from "./suite";
 import type { AmendmentRecord, BehaviorRequirement, ImplementState, IssuerLabel } from "./types";
 
 export class AmendmentRejected extends Error {
-  constructor(readonly check: "arguments" | "authority" | "transition", message: string) { super(message); this.name = "AmendmentRejected"; }
+  constructor(readonly check: "arguments" | "transition", message: string) { super(message); this.name = "AmendmentRejected"; }
 }
 
 export interface AmendmentPlan {
@@ -39,7 +39,6 @@ export interface AmendmentOutcome { record: AmendmentRecord; plan: AmendmentPlan
 export function amendmentArchivePath(runDir: string, id: number): string { return `${runDir}/amendments/prd-${id}-superseded.md`; }
 
 export function applyAmendment(recordRoot: string, state: ImplementState, input: AmendmentInput, at: string): AmendmentOutcome {
-  if (input.issuer !== "human") throw new AmendmentRejected("authority", "amend is human-only; PRD and suite changes require the person's recorded approval");
   if (input.approval.trim() === "") throw new AmendmentRejected("arguments", "amend requires --approval <verbatim human approval>");
   if (input.reason.trim() === "") throw new AmendmentRejected("arguments", "amend requires --reason <why>");
   if (state.activeVerification !== undefined) throw new AmendmentRejected("transition", "verification still active; PRD amendment is refused");
@@ -77,7 +76,7 @@ export function applyAmendment(recordRoot: string, state: ImplementState, input:
   // contract, never selected rows; no result is promoted onto this snapshot.
   state.verificationReport = null;
   const record: AmendmentRecord = {
-    id, at, issuer: "human", approval: input.approval.trim(), reason: input.reason.trim(),
+    id, at, issuer: input.issuer, approval: input.approval.trim(), reason: input.reason.trim(),
     prdSha256: state.prd.sha256, snapshotPath: state.prd.snapshotPath, previousSnapshotPath,
     changedRequirements: plan.changedRequirements, addedRequirements: plan.addedRequirements,
     removedRequirements: plan.removedRequirements, closedHumanFindings: [],

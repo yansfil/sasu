@@ -13,7 +13,7 @@ function helpText() {
 }
 
 function documentedCommands() {
-  const section = skill.slice(skill.indexOf("## Commands And Authority"), skill.indexOf("## Final Report"));
+  const section = skill.slice(skill.indexOf("## Commands"), skill.indexOf("## Final Report"));
   return [...section.matchAll(/^\| `([a-z-]+)` \|/gm)].map((match) => match[1]);
 }
 
@@ -24,8 +24,8 @@ test("the skill documents every active implementation command exposed by help", 
 });
 
 test("the active command registry and skill table agree", async () => {
-  const { COMMAND_AUTHORITY, UNGATED_COMMANDS } = await import(path.join(repoRoot, "cli", "dist", "implement", "verbs.js"));
-  const dispatched = new Set([...Object.keys(COMMAND_AUTHORITY), ...UNGATED_COMMANDS]);
+  const { ISSUED_COMMANDS, UNRECORDED_COMMANDS } = await import(path.join(repoRoot, "cli", "dist", "implement", "verbs.js"));
+  const dispatched = new Set([...ISSUED_COMMANDS, ...UNRECORDED_COMMANDS]);
   assert.deepEqual(documentedCommands().filter((command) => !dispatched.has(command)), []);
   for (const retired of ["finalize", "confirm", "risk", "risk-non-convergent"]) {
     assert.equal(dispatched.has(retired), false);

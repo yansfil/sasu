@@ -20,7 +20,7 @@ import { ESCALATE_LIMIT_PER_RUN } from "./types";
  */
 
 export class EscalateRejected extends Error {
-  constructor(readonly check: "arguments" | "authority" | "transition", message: string) {
+  constructor(readonly check: "arguments" | "transition", message: string) {
     super(message);
     this.name = "EscalateRejected";
   }

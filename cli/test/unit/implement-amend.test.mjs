@@ -24,9 +24,8 @@ function fixture(t, text = prd()) {
 }
 const input = (text, extra = {}) => ({ issuer: "human", approval: APPROVAL, reason: "TEST-FIXTURE: change the approved contract", text, ...extra });
 
-test("every PRD amendment and suite exclusion is human-only", (t) => {
+test("every PRD amendment and suite exclusion needs the recorded approval text", (t) => {
   const f = fixture(t);
-  for (const issuer of ["implementor", "observer"]) assert.throws(() => applyAmendment(f.root, f.state, input(prd({ count: 3 }), { issuer }), AT), /human-only/);
   assert.throws(() => applyAmendment(f.root, f.state, input(prd({ count: 3 }), { approval: "" }), AT), /approval/);
   assert.equal(f.state.amendments.length, 0);
   assert.equal(fs.readFileSync(f.pinned, "utf8"), f.text);

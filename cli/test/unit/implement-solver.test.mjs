@@ -10,7 +10,6 @@ import {
   validateDiagnosis,
 } from "../../dist/implement/solver.js";
 import { ESCALATE_LIMIT_PER_RUN } from "../../dist/implement/types.js";
-import { assertCommandAuthority } from "../../dist/implement/verbs.js";
 
 const AT = "2026-08-29T12:00:00.000Z";
 const DIAGNOSIS = {
@@ -146,9 +145,3 @@ test("escalation ids are monotonic and derived from the ledger", () => {
   assert.deepEqual(state.escalations.map((entry) => entry.id), [1, 2, 3]);
 });
 
-test("escalate stays an observer verb; the implementor cannot summon its own replacement", () => {
-  assert.throws(() => assertCommandAuthority("escalate", "implementor"), /limited to observer, human/);
-  for (const issuer of ["observer", "human"]) {
-    assert.doesNotThrow(() => assertCommandAuthority("escalate", issuer));
-  }
-});

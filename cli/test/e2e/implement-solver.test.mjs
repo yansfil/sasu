@@ -249,12 +249,15 @@ test("AC35: escalate needs a reason and accepts a freeform diagnostic target", (
   assert.equal(state(root).escalations.length, 1, "only the actual diagnosis spends an escalation");
 });
 
-test("AC35: the implementor may not summon its own replacement", () => {
+test("AC35: a pane marked implementor may not summon its own replacement", () => {
   const root = makeProject();
-  const env = stubEnv(root);
-  const refused = run(root, ["implement", "escalate", "--reason", "stuck"], env);
+  const env = { ...stubEnv(root), SASU_HERDR_ROLE: "implementor" };
+  // The guard is the pane marker, not the typed label: the same command with
+  // an observer label from a marked pane is refused just the same.
+  const refused = run(root, ["implement", "escalate", "--issuer", "observer", "--reason", "stuck"], env);
   assert.notEqual(refused.status, 0);
-  assert.match(refused.json.message, /implementor may not issue .*escalate/);
+  assert.match(refused.json.message, /marked SASU_HERDR_ROLE=implementor/);
+  assert.equal(state(root).escalations.length, 0, "a refused summon spends nothing");
 });
 
 // --- AC41/AC43: what the record says after the solver path is spent ---------

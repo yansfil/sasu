@@ -43,66 +43,29 @@ export class VerbRejected extends Error {
  * is a request for discipline, not a guard (AGENTS.md Review Guide 7).
  */
 /**
- * Who may issue what.
+ * The recorded verb vocabulary: the mutating subcommands whose every attempt,
+ * accepted or refused, lands in `state.verbs` with its declared issuer. The
+ * store validates against this list, so a command the dispatcher accepts can
+ * never be a verb the next read refuses.
  *
- * The label is a DECLARATION, not an authentication. The CLI cannot tell a
- * supervisor typing `--issuer human` from the human (PRD 10장, D-39): this
- * table encodes intent and produces an audit record, and the mitigation for a
- * false declaration is the transcript, not this code. Treating it as a
- * security boundary would be a mistake.
- *
- * What it does buy is the thing R16 ② asked for: the supervisor is meant to
- * be read-only over implementation, and until now nothing but self-restraint
- * stopped it from closing a task or registering an artifact. Now the code
- * says so.
+ * The issuer label is a DECLARATION for the audit trail, not an authority
+ * gate. An earlier table refused commands by label; the label was typed by
+ * the same process it claimed to restrict, so the gate stopped nothing a
+ * transcript would not already show and blocked legitimate cleanup (an
+ * Observer retiring its own scratch run, 2026-09-24). Structural facts guard
+ * what needs guarding: session ownership, the pane marker, the verify lease.
  */
-export const COMMAND_AUTHORITY: Record<IssuedCommand, IssuerLabel[]> = {
-  artifact: ["implementor", "human"],
-  plan: ["implementor", "human"],
-  verify: ["implementor", "human"],
-  retire: ["implementor", "human"],
-  escalate: ["observer", "human"],
-  amend: ["human"],
-};
+export const ISSUED_COMMANDS: IssuedCommand[] = ["artifact", "plan", "verify", "retire", "escalate", "amend"];
 
 /**
- * The runtime spelling of the vocabulary, derived from the authority table
- * rather than typed out beside it. The store validates against this, so a
- * command the gate accepts can never be a verb the next read refuses - which
- * is exactly what happened when the two lists were written separately.
+ * Subcommands with no verb record: reads, and the two that run before a run
+ * record exists to write into. Compared against the dispatcher by test so a
+ * new subcommand is placed deliberately in one list or the other.
  */
-export const ISSUED_COMMANDS = Object.keys(COMMAND_AUTHORITY) as IssuedCommand[];
-
-/**
- * Subcommands that are deliberately ungated, and why.
- *
- * The gate is fail-open on a command it does not know, which is right for
- * these - anyone may look at a run, and `start` is not a
- * state change an issuer label means anything about. It is wrong for a
- * command someone forgets to add to the table, so the two lists are compared
- * against the dispatcher by test (implement-authority) rather than trusted to
- * stay in step. Fail-closed instead would mean listing every read-only
- * surface in an authority table, which is the same list one indirection away.
- */
-// `dispatch` belongs here for the same reason as `start`: it runs before a
-// run exists, so there is no verb history to attribute an issuer label to.
-// Its guard is not a declaration anyway - dispatchImplementor refuses a pane
-// already marked SASU_HERDR_ROLE=implementor, which is structural and cannot
-// be typed around the way `--issuer` can.
-export const UNGATED_COMMANDS = ["intake", "start", "status", "dispatch"] as const;
+export const UNRECORDED_COMMANDS = ["intake", "start", "status", "dispatch"] as const;
 
 export function isIssuedCommand(value: string): value is IssuedCommand {
   return (ISSUED_COMMANDS as string[]).includes(value);
-}
-
-export function assertCommandAuthority(command: string, issuer: IssuerLabel): void {
-  if (!isIssuedCommand(command)) return;
-  const allowed = COMMAND_AUTHORITY[command];
-  if (allowed.includes(issuer)) return;
-  throw new VerbRejected(
-    "authority",
-    `${issuer} may not issue \`sasu implement ${command}\`; this command is limited to ${allowed.join(", ")}. Issuer labels are self-declared and recorded for audit, not authenticated.`,
-  );
 }
 
 const ISSUERS: IssuerLabel[] = ["implementor", "observer", "human"];

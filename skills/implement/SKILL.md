@@ -144,20 +144,23 @@ GitHub Actions reruns repository checks from the pushed head.
 Human review and repository merge rules are the final authority.
 High-risk changes require the repository's independent specialist review and explicit human merge approval.
 
-## Commands And Authority
+## Commands
 
-| Command | Required | Authority |
+| Command | Required | Notes |
 | --- | --- | --- |
-| `intake` | none | any role, read-only |
+| `intake` | none | read-only |
 | `start` | `--prd` | Observer under Herdr; the implementing session outside Herdr |
-| `dispatch` | `--name`, `--prd` | Observer only by structural Herdr rule; after `start`; records the Observer and enrolls the run with the supervisor tick |
-| `status` | optional `--state` or `--slug` | any role, read-only |
-| `artifact` | kind, path, description | implementor, human |
-| `plan` | `--path` | implementor, human; records the execution plan, wakes the Observer once under Herdr |
-| `amend` | human approval and reason | human |
-| `escalate` | reason | observer, human |
-| `retire` | active run | implementor, human |
-| `verify` | current run | implementor, human |
+| `dispatch` | `--name`, `--prd` | after `start`; refused from a pane marked implementor; records the Observer and enrolls the run with the supervisor tick |
+| `status` | optional `--state` or `--slug` | read-only |
+| `artifact` | kind, path, description | registers runtime evidence |
+| `plan` | `--path` | records the execution plan, wakes the Observer once under Herdr |
+| `amend` | `--approval`, `--reason` | re-seals the PRD with the recorded human approval; invalidates the report |
+| `escalate` | `--reason` | Observer diagnosis; refused from a pane marked implementor |
+| `retire` | active run | ends the run; another session's run needs `--adopt` |
+| `verify` | current run | runs the sealed suite and writes the report |
+
+Mutating commands take an optional `--issuer implementor|observer|human` label that is recorded in the verb history; it gates nothing.
+Ownership is by session: a run owned by another session is mutated only with `--adopt`, which records the takeover.
 
 `finalize`, `confirm`, implementation `risk`, and the one-shot `await` waiter are retired.
 Reviewer judgment is no longer encoded as CLI state.

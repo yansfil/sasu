@@ -21,7 +21,7 @@ The Observer owns conversation continuity, delegation, liveness, exception triag
 The Implementor owns implementation repository writes, focused checks, evidence registration, deterministic verification, native review disposition, fixes, and conditional delivery from a ready PRD.
 It never authors or repairs the qa-log or PRD.
 While the implementation phase is active, only the Implementor may mutate implementation files after dispatch; the CLI alone writes Sasu run state.
-All sealed PRD changes require human authorization, recorded by `sasu implement amend --issuer human --approval '<verbatim user approval>' --reason '<why and what changed>'`.
+All sealed PRD changes require human authorization, recorded by `sasu implement amend --approval '<verbatim user approval>' --reason '<why and what changed>'`.
 Existing authorization that covers the change is sufficient; the Implementor does not edit the PRD or qa-log on its own.
 The Observer may read repository state, `sasu gate status`, `sasu implement status`, verification reports and the Implementor transcript.
 It must not become a second implementor or repeat verification.

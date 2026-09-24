@@ -14,7 +14,7 @@ import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { parseImplementContract, reviewProfile, suiteCommands } from "./contract";
 import { planRunUnits, runBatch, parseCommandArgv, type RunUnit, type RunUnitResult } from "./runner";
 import { suiteScore } from "./suite";
-import { assertCommandAuthority, isIssuedCommand, recordVerb, resolveIssuer, VerbRejected } from "./verbs";
+import { isIssuedCommand, recordVerb, resolveIssuer, VerbRejected } from "./verbs";
 import { recordEvent } from "./events";
 import { AmendmentRejected, applyAmendment } from "./amend";
 import { assertNoActiveVerification, recoverVerification, cancelVerificationExecution, completeVerificationExecution, beginVerification, progressVerification, prepareVerificationExecution, recordVerificationExecution, finishVerification } from "./verification-activity";
@@ -951,6 +951,11 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
   assertRunOwnership(statePath, state, args);
   const config = loadConfig(state.projectRoot);
   const issuer = resolveIssuer(flag(args, "issuer"));
+  // An escalation may end in a replacement Implementor. A pane marked as the
+  // Implementor summoning its own replacement forks the run's authority the
+  // same way a recursive dispatch does, so the same structural marker refuses
+  // it; a typed --issuer label used to stand here and guarded nothing.
+  if (currentHerdrRole() === "implementor") throw new EscalateRejected("transition", "this pane is marked SASU_HERDR_ROLE=implementor; an implementor does not escalate for its own replacement, the Observer does");
   assertEscalateBudget(state);
   const reason = flag(args, "reason")?.trim() ?? "";
   if (reason === "") throw new EscalateRejected("arguments", "escalate requires --reason <what the implementor is stuck on>");
@@ -1888,7 +1893,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   return result("verify", final.verdict === "PASS", message, { attempt: attemptSummary(final), report: report.identity, agentReview: nextActions.join(" ") }, nextActions);
 }
 
-function recordRefusal(projectRoot: string, args: ImplementArgs, subject: IssuedCommand, issuer: IssuerLabel, check: "authority" | "transition" | "arguments", message: string): void {
+function recordRefusal(projectRoot: string, args: ImplementArgs, subject: IssuedCommand, issuer: IssuerLabel, check: "transition" | "arguments", message: string): void {
   const at = nowIso();
   for (let retry = 0; retry < 3; retry += 1) {
     let loaded: ReturnType<typeof loadState>;
@@ -1906,7 +1911,6 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
   try {
     if (["check", "park", "resume", "qa-brief", "trail", "design", "risk", "finalize", "confirm"].includes(subcommand ?? "")) throw new Error(`implement ${subcommand} is retired in contract 0.11.0; last support commit 9149d9826fad2af3ba7200761e674b5228ef9b7d. Use autonomous implementation, collect evidence, run deterministic verify, then deliver.`);
     if (args.flags.has("row")) throw new Error("--row is retired; requirements are references, not workflow state");
-    if (subject !== undefined) assertCommandAuthority(subject, issuer);
     if (subject !== undefined && isIssuedCommand(subject)) {
       const loaded = loadState(projectRoot, stateOptions(args));
       // One structural guard protects every domain mutation, including
