@@ -40,6 +40,7 @@ Apply these principles together:
 
 The approved [stateless verification change](docs/plans/2026-09-15-stateless-verification.md) replaces receipt-backed completion, in-CLI implementation judges, correction budgets, and reviewer finding state.
 The [verification convergence plan](docs/plans/2026-09-24-verification-convergence.md) moves native review ahead of the full verify of the final committed candidate.
+The [observer drift plan](docs/plans/2026-09-25-observer-drift-advisor.md) makes the execution plan answer four questions and wakes the Observer on each commit and on drift facts.
 Full reasoning lives in [PRINCIPLES.md](PRINCIPLES.md).
 
 ## Current Verification Contract
@@ -123,7 +124,7 @@ No hook changes verification or completion state; the Stop hook only confirms an
 Any hook the installer has owned stays listed in `HARNESS_HOOK_MARKERS` in `cli/lib/hooks.js` so later installs can retire it without touching foreign hooks.
 
 The installer also loads one user LaunchAgent (`com.sasu.supervisor`) that runs `sasu supervisor tick` every 30 seconds.
-The tick reads the index under `~/.sasu/supervisor/`, each watched `state.json`, and herdr, and wakes a run's recorded Observer; it never writes run state.
+The tick reads the index under `~/.sasu/supervisor/`, each watched `state.json` and its run's git tree, and herdr, and wakes a run's recorded Observer; it never writes run state.
 Tests exercise it only under an isolated `HOME` with a fake `herdr` and `launchctl` on `PATH`; never bootstrap a label into the real launchd domain or address a live pane from a test.
 
 ### Concurrent Sessions
