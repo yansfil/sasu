@@ -11,11 +11,13 @@ On macOS, `hcoord daemon start` installs a user LaunchAgent that starts at login
 `hcoord daemon status --json` shows actual feature support, usage, and the last stored snapshot when the daemon is down.
 A down daemon permits marked stale reads and refuses mutations.
 The daemon stores a private ledger and user socket under `~/.hcoord`, writes the ledger atomically, and rejects requests when finite caps are reached.
+An agent runtime must allow access to that user-local socket; `permission_denied` identifies a sandbox or filesystem access refusal and asks the caller to permit the connection before retrying.
 The service reserves an unknown outcome before sending external input and never blindly repeats such submissions after a restart.
 
 Register an existing exact Herdr pane with `hcoord agent register --machine local --session <session> --instance <terminal-id> --pane <pane-id> --name <name>`.
 Use the returned participant ID in `hcoord agent spawn --parent <id> --machine local --session <session> --name worker --intent <stable-key> -- <Herdr agent-start args>`.
 The spawn intent must remain the same on retry; an uncertain tab or start requires inspection of the saved pane before a new external effect.
+Spawn admission also checks event slots and ledger byte headroom before tab creation, agent start, and the first prompt, so capacity refusal does not start new external work.
 If the pane ID was saved but agent start remains uncertain, inspect that pane and retry the same spawn with `--resume-start`.
 If tab creation returned a pane ID but saving it failed, repair the reported storage problem, inspect that pane, and retry the same intent with `--reconcile-pane <pane-id> --resume-start`.
 `--no-watch` skips automatic watch assignment while preserving creation lineage and explicit requests.

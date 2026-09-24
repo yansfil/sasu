@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
-import { API_VERSION, HcoordError, MAX_AGENTS, MAX_CONNECTIONS, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, SPAWN_EVENT_SLOTS, own, put, type Ledger } from "./model";
+import { API_VERSION, HcoordError, MAX_AGENTS, MAX_CONNECTIONS, MAX_EVENTS, MAX_LEDGER_BYTES, MAX_MESSAGE_BYTES, MAX_QUEUE, SPAWN_EVENT_SLOTS, own, put, type Ledger } from "./model";
 import { event } from "./model";
 import { execute, watchForRequest } from "./service";
 import { confirmSpawnPane, createSpawnPane, discoverLocalAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateLocalBinding, waitForSpawnInitialization } from "./herdr";
@@ -32,7 +32,12 @@ export async function callDaemon(operation: string, args: Record<string, unknown
       try { finish(undefined, JSON.parse(text.slice(0, newline)) as WireResult); }
       catch { finish(new HcoordError("protocol", "coordinator returned invalid JSON")); }
     });
-    socket.on("error", (error: NodeJS.ErrnoException) => { clearTimeout(timer); reject(new HcoordError(error.code === "ENOENT" || error.code === "ECONNREFUSED" ? "daemon_down" : "transport", error.code === "ENOENT" || error.code === "ECONNREFUSED" ? "coordinator daemon is not running; start it with hcoord daemon start" : "coordinator transport failed")); });
+    socket.on("error", (error: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      if (error.code === "ENOENT" || error.code === "ECONNREFUSED") reject(new HcoordError("daemon_down", "coordinator daemon is not running; start it with hcoord daemon start"));
+      else if (error.code === "EACCES" || error.code === "EPERM") reject(new HcoordError("permission_denied", "coordinator socket access was denied; allow this session to connect to the local user socket, then retry"));
+      else reject(new HcoordError("transport", "coordinator transport failed; inspect the local socket and daemon log before retrying"));
+    });
   });
 }
 
@@ -113,6 +118,12 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     const requireEventSlots = (slots: number, unfinishedStep: string): void => {
       if (MAX_EVENTS - ledger.events.length < slots) throw new HcoordError("capacity", "event history has insufficient room to finish the saved spawn; resolve retention before retrying", { intent: intent.key, pane: intent.pane, unfinishedStep });
     };
+    const requireSpawnStorage = (steps: number, unfinishedStep: string): void => {
+      // The daemon serializes operations. Reserve one maximum wire payload per
+      // remaining progress write before any external effect can add an identity.
+      const available = MAX_LEDGER_BYTES - fs.statSync(ledgerPath(home)).size;
+      if (available < steps * MAX_MESSAGE_BYTES) throw new HcoordError("capacity", "ledger has insufficient byte headroom to finish the saved spawn; resolve retention before retrying", { intent: intent.key, pane: intent.pane, unfinishedStep, availableBytes: available });
+    };
     const reconcilePane = args["reconcilePane"];
     if (reconcilePane !== null && reconcilePane !== undefined && (typeof reconcilePane !== "string" || reconcilePane.trim() === "")) throw new HcoordError("invalid_argument", "--reconcile-pane requires an exact pane ID");
     if (intent.pane !== null && reconcilePane !== null && reconcilePane !== undefined && reconcilePane !== intent.pane) throw new HcoordError("identity_conflict", "the spawn intent already owns a different pane", { intent: intent.key, pane: intent.pane });
@@ -131,6 +142,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
       } else {
         if (reconcilePane !== null && reconcilePane !== undefined) throw new HcoordError("invalid_argument", "a new spawn intent cannot reconcile an existing pane");
         const placement = parentPlacement(parent);
+        requireSpawnStorage(SPAWN_EVENT_SLOTS.reserve - 1, "create_pane");
         intent = commit("agent.spawn.unknown", { intent: intent.key, reason: "tab creation reserved; outcome pending", ...placement }, at) as SpawnIntent;
         let pane: string;
         try { pane = createSpawnPane(intent, placement); }
@@ -145,6 +157,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
       if (!createdNow && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "saved pane has no confirmed agent; inspect it and retry this intent with --resume-start", { intent: intent.key, pane: intent.pane, unfinishedStep: "agent_start" });
       if (!createdNow) confirmSpawnPane(intent, intent.placement ?? parentPlacement(ledger.participants[intent.parent]!));
       requireEventSlots(intent.kind === "codex" ? SPAWN_EVENT_SLOTS.beforeExternalStart : SPAWN_EVENT_SLOTS.beforeRegistration, "agent_start");
+      requireSpawnStorage(intent.kind === "codex" ? SPAWN_EVENT_SLOTS.beforeExternalStart : SPAWN_EVENT_SLOTS.beforeRegistration, "agent_start");
       startSpawnedAgent(intent);
       identity = inspectSpawnedAgent(intent);
       if (identity.state === "absent") throw new HcoordError("spawn_uncertain", "agent start returned but its named execution is unavailable", { intent: intent.key, pane: intent.pane });
@@ -154,6 +167,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
       if (intent.kind !== "codex" || intent.initialization !== "pending") throw new HcoordError("spawn_uncertain", "first-turn submission may already have occurred; inspect the saved pane without resubmitting it", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
       if (identity.interactiveReady !== true || (identity.runtime !== "idle" && identity.runtime !== "done")) throw new HcoordError("spawn_uncertain", "named agent is not interactive-ready for its first turn", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
       requireEventSlots(SPAWN_EVENT_SLOTS.beforeFirstTurn, "initialize_agent");
+      requireSpawnStorage(SPAWN_EVENT_SLOTS.beforeFirstTurn, "initialize_agent");
       prepareSpawnInitialization(intent, identity.instance);
       intent = commit("agent.spawn.initialization", { intent: intent.key, phase: "reserved", instance: identity.instance }, new Date().toISOString()) as SpawnIntent;
       let submitted: ReturnType<typeof submitSpawnInitialization>;
@@ -175,6 +189,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     if (identity.state !== "ready") throw new HcoordError("spawn_uncertain", "spawned execution identity remains unavailable", { intent: intent.key, pane: intent.pane, unfinishedStep: "inspect_agent" });
     if (intent.initialization === undefined && !createdNow) throw new HcoordError("spawn_uncertain", "legacy spawn intent has no first execution observation; do not bind a possible replacement automatically", { intent: intent.key, pane: intent.pane, unfinishedStep: "inspect_agent" });
     requireEventSlots(SPAWN_EVENT_SLOTS.beforeRegistration, "register_agent");
+    requireSpawnStorage(SPAWN_EVENT_SLOTS.beforeRegistration, "register_agent");
     intent = commit("agent.spawn.identity", { intent: intent.key, runtimeSession: identity.session, instance: identity.instance }, new Date().toISOString()) as SpawnIntent;
     try { return commit("agent.spawn.complete", { intent: intent.key, runtimeSession: identity.session, instance: identity.instance, runtime: identity.runtime, project: ledger.participants[intent.parent]?.project }, new Date().toISOString()); }
     catch (error) { throw new HcoordError("spawn_uncertain", "agent exists but registration failed; inspect the saved pane and retry this intent after repairing storage", { intent: intent.key, pane: intent.pane, unfinishedStep: "register_agent", code: error instanceof HcoordError ? error.code : "storage_failed" }); }

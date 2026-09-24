@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,6 +8,22 @@ import { emptyLedger, MAX_EVENTS } from "../../dist/hcoord/model.js";
 import { execute } from "../../dist/hcoord/service.js";
 import { loadLedger } from "../../dist/hcoord/store.js";
 import { callDaemon } from "../../dist/hcoord/transport.js";
+
+test("a denied local socket gives the caller a permission cause and next action", { skip: process.platform === "win32" }, async (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "hcoord-denied-socket-"));
+  const dir = path.join(home, ".hcoord");
+  fs.mkdirSync(dir);
+  const socketFile = path.join(dir, "api.sock");
+  const server = net.createServer((socket) => socket.end());
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(socketFile, resolve); });
+  t.after(async () => {
+    fs.chmodSync(socketFile, 0o600);
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  fs.chmodSync(socketFile, 0o000);
+  await assert.rejects(callDaemon("status", {}, home), (error) => error.code === "permission_denied" && /socket access was denied.*retry/.test(error.message));
+});
 
 test("an escalated human answer reaches the assigned parent and retains an unresolved relay", () => {
   const at = "2026-09-01T00:00:00.000Z";
