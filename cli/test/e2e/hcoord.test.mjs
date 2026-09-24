@@ -275,7 +275,16 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   }
   assert.equal(cycleRequest.deliveries[0].status, "deferred");
   assert.match(cycleRequest.deliveries[0].reason, /recipient is working/);
+  ok("watch", "stop", child.id, "--actor", parent.id);
   fs.writeFileSync(path.join(home, "parent-pane.status"), "idle");
+  await wait(1200);
+  cycleRequest = ok("request", "show", cycleRequestId);
+  assert.equal(cycleRequest.deliveries[0].status, "deferred", "a stopped watch holds its unsent check even when the old observer is idle");
+  assert.match(cycleRequest.nextAction, /watch is stopped/);
+  assert.equal(fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").includes(cycleRequestId), false, "a stopped watch sends no misleading request prompt");
+  const resumedWatch = ok("watch", "start", child.id, "--observer", parent.id, "--actor", "human", "--interval", "1s");
+  assert.equal(resumedWatch.cycle, watch.cycle);
+  assert.equal(resumedWatch.requestId, cycleRequestId);
   for (let attempt = 0; attempt < 100; attempt += 1) {
     cycleRequest = ok("request", "show", cycleRequestId);
     if (cycleRequest.deliveries[0].status === "accepted") break;
@@ -303,7 +312,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(ok("watch", "list").find((item) => item.target === child.id).cycle, null);
   assert.equal(command("watch", "assign", child.id, "--observer", spawned.participant.id, "--actor", "human").status, 1);
   assert.equal(command("watch", "assign", child.id, "--observer", spawned.participant.id, "--actor", "human", "--expected-generation", "0").status, 1);
-  assert.equal(ok("watch", "assign", child.id, "--observer", spawned.participant.id, "--actor", "human", "--expected-generation", "2").generation, 3);
+  assert.equal(ok("watch", "assign", child.id, "--observer", spawned.participant.id, "--actor", "human", "--expected-generation", "3").generation, 4);
   await stop();
   const stale = ok("request", "show", sent.id);
   assert.equal(stale.stale, true);

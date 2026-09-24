@@ -56,9 +56,9 @@ const uncheckedWatchRequest = (state: Ledger, item: Request): boolean => {
   if (watch.requestId !== undefined && watch.requestId !== null) return watch.requestId === item.id;
   return legacyWatchIntent(watch, item) && watchRequest(state, watch)?.id === item.id;
 };
-export const activeWatchCycleForRequest = (state: Ledger, item: Request): string | null => {
+export const watchForRequest = (state: Ledger, item: Request): Watch | null => {
   const watch = own(state.watches, item.from);
-  return watch?.status === "active" && uncheckedWatchRequest(state, item) ? watch.cycle : null;
+  return watch && uncheckedWatchRequest(state, item) ? watch : null;
 };
 const terminalRequest = (state: Ledger, item: Request): boolean => !(uncheckedWatchRequest(state, item) && item.status !== "canceled") && (item.status === "canceled" || (item.status === "answered" && !pendingRelay(item) && item.deliveries.every((delivery) => {
   if (item.watchCheckedAt && delivery.actionClosedAt) return true;

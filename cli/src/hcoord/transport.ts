@@ -3,7 +3,7 @@ import net from "node:net";
 import os from "node:os";
 import { API_VERSION, HcoordError, MAX_CONNECTIONS, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, own, put, type Ledger } from "./model";
 import { event } from "./model";
-import { activeWatchCycleForRequest, execute } from "./service";
+import { execute, watchForRequest } from "./service";
 import { confirmSpawnPane, createSpawnPane, discoverLocalAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, startSpawnedAgent, submitOfficial, validateLocalBinding } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
@@ -174,6 +174,10 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
       for (const delivery of item.deliveries) {
         if (examined >= 1) return;
         if (delivery.status !== "pending" && delivery.status !== "deferred") continue;
+        const watch = watchForRequest(ledger, item);
+        // Stop preserves the open cycle for explicit restart or reassignment.
+        // Do not submit its retained wake to the former observer while paused.
+        if (watch?.status === "stopped") continue;
         if (item.status === "answered" && (delivery.phase ?? "request") === "request") {
           const next = structuredClone(ledger);
           const current = next.requests[item.id]!.deliveries.find((entry) => entry.id === delivery.id)!;
@@ -242,7 +246,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
           saveLedger(deferred, home); ledger = deferred;
           continue;
         }
-        const outcome = submitOfficial(item, delivery, recipient, activeWatchCycleForRequest(ledger, item));
+        const outcome = submitOfficial(item, delivery, recipient, watch?.cycle ?? null);
         const finished = structuredClone(ledger);
         const recorded = finished.requests[item.id]!.deliveries.find((entry) => entry.id === delivery.id)!;
         recorded.status = outcome.status;
