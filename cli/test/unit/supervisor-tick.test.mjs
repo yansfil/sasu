@@ -992,6 +992,25 @@ test("drift: identical-input FAIL attempts since dispatch reach the Observer as 
   assert.equal(tick(index, herdr, T0 + 6 * MIN).runs[0].action, "none", "answered within its 10 minutes");
 });
 
+test("drift: repeated-fail compares the head the latest failing report recorded with the tree's HEAD", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  const fingerprint = "b".repeat(64);
+  const failed = (id, finishedAt) => attemptFixture({ id, inputFingerprint: fingerprint, phase: "complete", verdict: "FAIL", startedAt: finishedAt, finishedAt });
+  const report = (headSha) => ({ schema: "sasu.verification-report.v1", inputFingerprint: fingerprint, prdSha256: "a".repeat(64), baseSha: null, headSha, sourceFingerprint: "a".repeat(64), generatedAt: "2026-09-18T10:04:00.000Z", status: "FAIL", jsonPath: "agents/runs/fixture/verification-report.json", markdownPath: "agents/runs/fixture/verification-report.md", reportSha256: "c".repeat(64) });
+  patchState(run.statePath, (state) => {
+    state.verificationAttempts = [failed("V2", "2026-09-18T10:02:00.000Z"), failed("V3", "2026-09-18T10:04:00.000Z")];
+    state.verificationReport = report("f".repeat(40));
+  });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "working" }) } });
+  assert.equal(tick(index, herdr, T0 + 5 * MIN).runs[0].action, "none", "the tree's HEAD is not the head the failures ran on");
+  const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: run.root, encoding: "utf8" }).stdout.trim();
+  patchState(run.statePath, (state) => { state.verificationReport = report(head); });
+  const woke = tick(index, herdr, T0 + 6 * MIN);
+  assert.deepEqual(woke.runs[0].decision.due.map((entry) => entry.reason), ["drift"], "the same head: nothing changed since the failures");
+});
+
 test("engineering 10: a git tree the tick cannot read is the run's current failure, and the state-derived reasons still decide", () => {
   const index = indexFile();
   const run = makeSupervisedRun();

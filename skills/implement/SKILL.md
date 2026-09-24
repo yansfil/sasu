@@ -155,12 +155,12 @@ High-risk changes require the repository's independent specialist review and exp
 | `artifact` | kind, path, description | registers runtime evidence |
 | `plan` | `--path` | records the execution plan, wakes the Observer once under Herdr |
 | `amend` | `--approval`, `--reason` | re-seals the PRD with the recorded human approval; invalidates the report |
-| `escalate` | `--reason` | Observer diagnosis; refused from a pane marked implementor |
+| `escalate` | `--reason` | Observer diagnosis; the recorded Observer needs no `--adopt`; refused from a pane marked implementor |
 | `retire` | active run | ends the run; another session's run needs `--adopt` |
 | `verify` | current run | runs the sealed suite and writes the report |
 
 Mutating commands take an optional `--issuer implementor|observer|human` label that is recorded in the verb history; it gates nothing.
-Ownership is by session: a run owned by another session is mutated only with `--adopt`, which records the takeover.
+Ownership is by session: a run owned by another session is mutated only with `--adopt`, which records the takeover; the recorded Observer's `escalate` is the one exception and leaves ownership unchanged.
 
 `finalize`, `confirm`, implementation `risk`, and the one-shot `await` waiter are retired.
 Reviewer judgment is no longer encoded as CLI state.

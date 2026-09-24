@@ -67,6 +67,45 @@ test("D-04: escalation persists replacement identity and enrollment before submi
   assert.equal(state(root).pendingDispatch, null);
 });
 
+// Review R1: the drift rule makes escalation the Observer's required move, so
+// the recorded Observer escalates on its own identity instead of taking the
+// run over with --adopt and leaving the Implementor to take it back.
+test("R1: the recorded Observer escalates without --adopt and the Implementor keeps the run; any other session is still refused", () => {
+  const root = fs.realpathSync(createProject({ count: 1 }));
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const outside = fs.mkdtempSync(`${root}-herdr-`);
+  const fake = installFakeHerdr(outside);
+  const home = path.join(outside, "home");
+  fs.mkdirSync(home, { recursive: true });
+  const observerEnv = { ...fake.env, HOME: home, HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12", HERDR_WORKSPACE_ID: "w4G", CLAUDE_SESSION_ID: "observer-session" };
+  assert.equal(runCli(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env: observerEnv }).status, 0);
+  const dispatched = spawnSync(process.execPath, [CLI, "implement", "dispatch", "--name", "impl", "--prd", PRD_PATH, "--json"], {
+    cwd: root, encoding: "utf8", env: isolatedEnv(observerEnv), input: "ROLE: Implementor\nSOURCE: fixture\nRETURN CONTRACT: status", timeout: 30_000,
+  });
+  assert.equal(dispatched.status, 0, dispatched.stderr + dispatched.stdout);
+  const implementorEnv = { ...fake.env, HOME: home, HERDR_ENV: "1", SASU_HERDR_ROLE: "implementor", SASU_RUN_INSTANCE_ID: state(root).supervision.runInstanceId, CLAUDE_SESSION_ID: "impl-session" };
+  fs.mkdirSync(path.join(root, "notes"), { recursive: true });
+  fs.writeFileSync(path.join(root, "notes", "plan.md"), "# plan\n");
+  const claimed = run(root, ["implement", "plan", "--path", "notes/plan.md"], implementorEnv);
+  assert.equal(claimed.status, 0, claimed.stderr + claimed.stdout);
+  assert.equal(state(root).ownerSessionId, "impl-session");
+
+  const judge = stubEnv(root);
+  const escalated = run(root, ["implement", "escalate", "--issuer", "observer", "--reason", "drift: repeated-fail: 2 consecutive FAIL verify attempts"], { ...observerEnv, ...judge });
+  assert.equal(escalated.status, 0, escalated.stderr + escalated.stdout);
+  assert.equal(state(root).escalations.length, 1);
+  assert.equal(state(root).ownerSessionId, "impl-session", "the escalation takes nothing from the Implementor");
+  assert.deepEqual(state(root).adoptions ?? [], [], "no takeover is recorded");
+
+  const stranger = run(root, ["implement", "escalate", "--issuer", "observer", "--reason", "stuck"], { ...observerEnv, ...judge, CLAUDE_SESSION_ID: "someone-else" });
+  assert.notEqual(stranger.status, 0);
+  assert.match(stranger.json.message, /owned by another session/);
+  assert.equal(state(root).escalations.length, 1, "a refused escalation spends nothing");
+
+  const continued = run(root, ["implement", "plan", "--path", "notes/plan.md"], implementorEnv);
+  assert.equal(continued.status, 0, continued.stderr + continued.stdout);
+});
+
 test("D-04: escalation rechecks run authority after its final target lookup", async () => {
   const root = fs.realpathSync(createProject({ count: 1 }));
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));

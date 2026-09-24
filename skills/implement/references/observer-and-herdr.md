@@ -153,7 +153,7 @@ It wakes the recorded Observer for exactly these reasons:
 | `escalate` | an `escalate` event was recorded |
 | `plan` | a `plan` event was recorded by `sasu implement plan`; once per event, the Implementor keeps working |
 | `commit` | the run's HEAD moved and commits exist since dispatch (`git rev-list --count <dispatch head>..HEAD`); several commits between two ticks are one wake |
-| `drift` | any of: `repeated-fail`, the last two or more verify attempts since dispatch are FAIL on one `inputFingerprint`; `outside-boundary`, the digest's list of changed paths outside the delivery boundary is non-empty; `uncommitted-age`, uncommitted changes whose newest is 20 minutes old while the Implementor is working. The detail line names each fact present |
+| `drift` | any of: `repeated-fail`, the last two or more verify attempts since dispatch are FAIL on one `inputFingerprint` and the tree has not moved since the latest (HEAD is the head its report recorded and no uncommitted change is newer); `outside-boundary`, the digest's list of changed paths outside the delivery boundary is non-empty; `uncommitted-age`, uncommitted changes whose newest is 20 minutes old while the Implementor is working. The detail line names each fact present |
 | `stall` | no `state.json` event AND no herdr lifecycle activity for 10 minutes; a working Implementor is activity |
 | `implementor-gone` | the Implementor's pane is empty or holds another agent |
 | `terminal` | the run was retired; it leaves the index after this wake |
@@ -221,8 +221,8 @@ A `drift` wake is a recorded fact that the run is going wrong, so "fine" is not 
 Choose one:
 
 - One line of direction, when the cause is plain from the digest and the pane tail.
-- `sasu implement escalate --reason "<the drift fact>" --adopt "<why>"` without `--agent`, then forward the suggested next step from the diagnosis it writes (`agents/runs/<slug>/artifacts/solver/diagnosis-<n>.md`) to the Implementor as the direction.
-  The run is the Implementor's, so escalating takes it over with `--adopt`; the forwarded direction tells the Implementor to pass `--adopt` on its next mutating `sasu implement` command to take the run back.
+- `sasu implement escalate --reason "<the drift fact>"` without `--agent`, then forward the suggested next step from the diagnosis it writes (`agents/runs/<slug>/artifacts/solver/diagnosis-<n>.md`) to the Implementor as the direction.
+  The recorded Observer escalates on its own identity: the run stays the Implementor's and nobody passes `--adopt`.
 
 The second `drift` wake for the same fact kind on the same run, one whose detail says `raised again` because the fact persisted through a 10-minute interval, requires the escalation: one line of direction has already not cleared it.
 The budget of three escalations per run stands and is the cap; once it is spent, surface the persisting drift to the user instead of looping (Sasu 13).

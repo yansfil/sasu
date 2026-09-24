@@ -25,8 +25,12 @@ export interface RunFacts {
   lastEscalateId: number | null;
   /** The newest `plan` event with the absolute path of its file, or null when the Implementor registered none. */
   lastPlan: { id: number; path: string } | null;
-  /** The latest verify attempt since dispatch when it ends two or more consecutive FAIL attempts on one inputFingerprint, else null. */
-  repeatedFail: { attemptId: string; count: number; finishedAt: number } | null;
+  /**
+   * The latest verify attempt since dispatch when it ends two or more
+   * consecutive FAIL attempts on one inputFingerprint, else null. `headSha`
+   * is the HEAD its report recorded, null when no report is that attempt's.
+   */
+  repeatedFail: { attemptId: string; count: number; finishedAt: number; headSha: string | null } | null;
   dispatchedAt: number;
   patrolIntervalMs: number;
   observer: ObserverIdentity;
@@ -235,8 +239,15 @@ function driftFacts(facts: RunFacts, work: WorkObservation | null, implementor: 
     const bucket = Math.floor(elapsed / DRIFT_REPEAT_MS);
     found.push({ token: `${kind}:${identity}:${bucket}`, detail: `${kind}: ${detail}${bucket === 0 ? "" : `; present ${Math.floor(elapsed / 60_000)} minutes, raised again`}` });
   };
-  if (facts.repeatedFail !== null) {
-    const repeated = facts.repeatedFail;
+  // The fact is "failing on one input and nothing has changed since" (review
+  // R1): a HEAD other than the one the attempt ran on, or an uncommitted
+  // change newer than the attempt, means the Implementor is already changing
+  // the tree, and raising it then forced an escalation on exactly the work
+  // we want. An unreadable tree leaves the recorded attempts to judge by.
+  const repeated = facts.repeatedFail;
+  const treeMoved = repeated !== null && work !== null && work.kind === "read"
+    && ((repeated.headSha !== null && work.head !== repeated.headSha) || (work.newestChangeAt !== null && work.newestChangeAt > repeated.finishedAt));
+  if (repeated !== null && !treeMoved) {
     raise("repeated-fail", repeated.attemptId, repeated.finishedAt, `${repeated.count} consecutive FAIL verify attempts on one verification input since dispatch, latest ${repeated.attemptId} at ${new Date(repeated.finishedAt).toISOString()}`);
   }
   if (work === null || work.kind !== "read") return found;

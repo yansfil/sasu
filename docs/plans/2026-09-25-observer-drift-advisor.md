@@ -31,7 +31,7 @@ A structure that differs from the approved PRD is still an `OBSERVER_BLOCK` befo
 | Reason | Fact | Episode |
 | --- | --- | --- |
 | `commit` | commits exist since the dispatch head (`git rev-list --count`) | the current HEAD; several commits between two ticks are one wake |
-| `drift` | `repeated-fail`: the last two or more verify attempts since dispatch are FAIL on one `inputFingerprint` | `repeated-fail:<latest attempt id>:<bucket>` |
+| `drift` | `repeated-fail`: the last two or more verify attempts since dispatch are FAIL on one `inputFingerprint`, and the tree has not moved since the latest | `repeated-fail:<latest attempt id>:<bucket>` |
 | | `outside-boundary`: the digest's changed paths outside the delivery boundary | `outside-boundary:<sorted path hash>:<bucket>` |
 | | `uncommitted-age`: uncommitted changes whose newest is 20 minutes old while herdr shows the Implementor working | `uncommitted-age:<newest change time>:<bucket>` |
 
@@ -59,15 +59,15 @@ If attempt 8 runs on the same input anyway, it is a new `repeated-fail` fact on 
 
 - No plan validator or conformance checker; the plan stays prose for people and agents.
 - No model call in the tick; `escalate` stays the only place a diagnosis model runs, and only the Observer invokes it.
-- No change to `escalate`, its solver, its budget, or the replacement path.
-  Escalating therefore still needs `--adopt` from the Observer, and the Implementor takes the run back with `--adopt` on its next mutating command.
+- No change to the solver, the escalation budget, or the replacement path; the recorded Observer escalates on its own identity, without `--adopt`, and the run stays the Implementor's (review R1).
 - No new state file, ledger, or tick memory; drift episodes live in the existing acknowledgements.
 - No change to the stall threshold or the tick interval.
 
 ## Known limits
 
 - The 10-minute re-raise rests on the S4 loop and the 20-minute uncommitted age is an unmeasured initial default; both live beside `STALL_THRESHOLD_MS` in `cli/src/implement/types.ts`.
-- `repeated-fail` persists until the next verify attempt, so an Implementor that spends more than 10 minutes fixing after two identical FAILs is raised again and the Observer escalates.
+- `repeated-fail` means "failing on one input and nothing has changed since": it clears once HEAD differs from the head the latest failing attempt's report recorded, or an uncommitted change is newer than that attempt, so an Implementor that is fixing the failure is not raised again (review R1).
+  With no report for that attempt only the uncommitted-change test applies, and with an unreadable tree the fact stands on the recorded attempts alone.
 - The `outside-boundary` onset is a file modification time: editing the oldest outside path restarts its interval, and a set made only of deletions measures from the dispatch.
 
 ## Principles

@@ -119,7 +119,7 @@ test("commit: a commit wake the Observer received counts as a look, so patrol wa
 });
 
 test("drift: repeated FAIL attempts on one input raise at once and again every 10 minutes while that attempt stands; a new attempt is a new fact", () => {
-  const stuck = { repeatedFail: { attemptId: "V8", count: 3, finishedAt: T0 + 5 * MIN } };
+  const stuck = { repeatedFail: { attemptId: "V8", count: 3, finishedAt: T0 + 5 * MIN, headSha: "h0" } };
   assert.equal(reasons(decide({}, found({ status: "working" }), T0 + 6 * MIN)).includes("drift"), false, "no repeated failure, no drift");
   const first = decide(stuck, found({ status: "working" }), T0 + 6 * MIN);
   assert.deepEqual(reasons(first), ["drift"]);
@@ -132,8 +132,23 @@ test("drift: repeated FAIL attempts on one input raise at once and again every 1
   const againWake = accepted(again, T0 + 15 * MIN);
   assert.deepEqual(reasons(decide(stuck, found({ status: "working" }), T0 + 24 * MIN, { lastWake: againWake })), []);
   assert.deepEqual(reasons(decide(stuck, found({ status: "working" }), T0 + 25 * MIN, { lastWake: againWake })), ["drift"]);
-  const newer = { repeatedFail: { attemptId: "V9", count: 4, finishedAt: T0 + 8 * MIN } };
+  const newer = { repeatedFail: { attemptId: "V9", count: 4, finishedAt: T0 + 8 * MIN, headSha: "h0" } };
   assert.deepEqual(reasons(decide(newer, found({ status: "working" }), T0 + 9 * MIN, { lastWake: firstWake })), ["drift"], "another identical FAIL is a new fact");
+});
+
+// Review R1: "failing on one input and nothing has changed since". An
+// Implementor that is fixing the failure moves the tree, and that clears it.
+test("drift: repeated-fail clears once the tree moved after the latest failing attempt, and stands while nothing changed", () => {
+  const stuck = { repeatedFail: { attemptId: "V8", count: 2, finishedAt: T0 + 5 * MIN, headSha: "h0" } };
+  const fixing = work({ head: "h0", uncommittedFiles: 1, newestChangeAt: T0 + 6 * MIN });
+  assert.equal(reasons(decide(stuck, found({ status: "working" }), T0 + 7 * MIN, { tree: fixing })).includes("drift"), false, "an uncommitted change newer than the attempt");
+  assert.deepEqual(reasons(decide(stuck, found({ status: "working" }), T0 + 7 * MIN, { tree: work({ head: "h1", commitsSinceDispatch: 1 }) })), ["commit"], "HEAD moved past the attempt's head");
+  const untouched = work({ head: "h0", uncommittedFiles: 1, newestChangeAt: T0 + 4 * MIN });
+  const first = decide(stuck, found({ status: "working" }), T0 + 6 * MIN, { tree: untouched });
+  assert.deepEqual(reasons(first), ["drift"], "same head and only changes older than the attempt");
+  assert.deepEqual(reasons(decide(stuck, found({ status: "working" }), T0 + 15 * MIN, { lastWake: accepted(first, T0 + 6 * MIN), tree: untouched })), ["drift"], "and it is raised again while nothing changes");
+  const noReport = { repeatedFail: { ...stuck.repeatedFail, headSha: null } };
+  assert.deepEqual(reasons(decide(noReport, found({ status: "working" }), T0 + 6 * MIN, { tree: work({ head: "h1", commitsSinceDispatch: 1 }) })), ["commit", "drift"], "no recorded head: only a newer uncommitted change can clear it");
 });
 
 test("drift: changed paths outside the delivery boundary raise drift naming them; a different set is a new fact; a persisting set re-raises", () => {
@@ -164,7 +179,7 @@ test("drift: uncommitted changes whose newest is 20 minutes old raise drift only
 });
 
 test("drift rides along with settled, blocked, stall and a due patrol instead of being suppressed by them", () => {
-  const stuck = { repeatedFail: { attemptId: "V8", count: 2, finishedAt: T0 } };
+  const stuck = { repeatedFail: { attemptId: "V8", count: 2, finishedAt: T0, headSha: "h0" } };
   const leaked = work({ outsideBoundary: ["agents/x.md"], outsideSince: T0 });
   assert.deepEqual(reasons(decide(stuck, found({ status: "blocked" }), T0 + MIN)).sort(), ["blocked", "drift"]);
   assert.deepEqual(reasons(decide({}, found({ status: "idle", activityAt: T0 }), T0 + MIN, { tree: leaked })).sort(), ["drift", "settled"]);
@@ -179,7 +194,7 @@ test("drift rides along with settled, blocked, stall and a due patrol instead of
 test("drift and commit: an unreadable git tree adds neither, and the state-derived reasons still decide", () => {
   const unreadable = { kind: "unavailable", detail: "git unavailable" };
   assert.deepEqual(reasons(decide({}, found({ status: "blocked" }), T0 + MIN, { tree: unreadable })), ["blocked"]);
-  assert.deepEqual(reasons(decide({ repeatedFail: { attemptId: "V8", count: 2, finishedAt: T0 } }, found({ status: "working" }), T0 + MIN, { tree: unreadable })), ["drift"]);
+  assert.deepEqual(reasons(decide({ repeatedFail: { attemptId: "V8", count: 2, finishedAt: T0, headSha: "h0" } }, found({ status: "working" }), T0 + MIN, { tree: unreadable })), ["drift"], "without a readable tree the fact stands on state alone");
 });
 
 test("B8: an escalate event wakes once per event", () => {

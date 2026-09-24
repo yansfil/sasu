@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseImplementState } from "../implement/store";
 import { identicalInputFailures } from "../implement/verdict";
-import type { ImplementState, SupervisionRecord } from "../implement/types";
+import type { ImplementState, SupervisionRecord, UnifiedVerificationAttempt } from "../implement/types";
 import type { RunFacts } from "./decide";
 
 /**
@@ -48,12 +48,24 @@ export function runFacts(state: ImplementState, supervision: SupervisionRecord):
     // wake carries the absolute path so the Observer opens the right file
     // (measured 2026-09-21: a relative path pointed at an empty record dir).
     lastPlan: plan === undefined ? null : { id: plan.id, path: path.resolve(state.worktree?.path ?? state.projectRoot, plan.subject ?? "") },
-    repeatedFail: latest !== undefined && repeated >= 2 ? { attemptId: latest.id, count: repeated, finishedAt: Date.parse(latest.finishedAt) } : null,
+    repeatedFail: latest !== undefined && repeated >= 2 ? { attemptId: latest.id, count: repeated, finishedAt: Date.parse(latest.finishedAt), headSha: reportHead(state, latest) } : null,
     dispatchedAt,
     patrolIntervalMs: supervision.patrolIntervalMs,
     observer: supervision.observer,
     implementor: supervision.implementor,
   };
+}
+
+/**
+ * The HEAD the latest attempt ran on. `verify` writes the report with the
+ * attempt it finishes, so the report is that attempt's when it carries the
+ * attempt's input and was generated no earlier than the attempt finished;
+ * otherwise (no report, or one an amendment cleared) the head is unknown.
+ */
+function reportHead(state: ImplementState, attempt: UnifiedVerificationAttempt): string | null {
+  const report = state.verificationReport;
+  if (report === null || report.inputFingerprint !== attempt.inputFingerprint || Date.parse(report.generatedAt) < Date.parse(attempt.finishedAt)) return null;
+  return report.headSha;
 }
 
 /** Read one run record from disk; every failure is the caller's to record against that run alone (B12). */

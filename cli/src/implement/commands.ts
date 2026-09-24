@@ -947,10 +947,28 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   }
 }
 
+/**
+ * Who may escalate. Escalation is a diagnosis, not an implementation
+ * mutation, and the drift rule makes it the recorded Observer's required move,
+ * so that session escalates on its own identity (`supervision.observer`,
+ * written by dispatch) and the run stays the Implementor's. Before review R1
+ * (2026-09-25) it had to take the run over with --adopt and the Implementor
+ * had to take it back. The verification lease still refuses it, and every
+ * other session keeps the ownership rule, where --adopt records a takeover.
+ */
+function assertEscalationAuthority(statePath: string, state: ImplementState, args: ImplementArgs): void {
+  const observer = state.supervision?.observer.sessionId ?? null;
+  if (observer !== null && currentSessionId() === observer) {
+    if (assertNoActiveVerification(state)) persistState(statePath, state);
+    return;
+  }
+  assertRunOwnership(statePath, state, args);
+}
+
 async function escalate(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
   let { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertRunOpenForMutation(state);
-  assertRunOwnership(statePath, state, args);
+  assertEscalationAuthority(statePath, state, args);
   const config = loadConfig(state.projectRoot);
   const issuer = resolveIssuer(flag(args, "issuer"));
   // An escalation may end in a replacement Implementor. A pane marked as the
@@ -994,7 +1012,7 @@ async function escalate(projectRoot: string, args: ImplementArgs): Promise<Imple
   // lease before its result can write files or start a replacement.
   state = loadState(state.projectRoot, { state: statePath }).state;
   await recoverVerification(statePath, state);
-  assertRunOpenForMutation(state); assertRunOwnership(statePath, state, args);
+  assertRunOpenForMutation(state); assertEscalationAuthority(statePath, state, args);
   const at = nowIso();
   if (lane.verdict === "ERROR" || lane.result === null) {
     const failure = lane.error?.message ?? "the solver returned nothing usable";
