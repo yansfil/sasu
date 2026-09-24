@@ -75,9 +75,28 @@ test("caller IDs cannot address inherited records or mutate policy prototypes", 
   assert.throws(() => run("agent.spawn.reserve", { parent: parent.id, intent: "bad-name", machine: "local", session: "s", name: "Bad Name", kind: "codex", nativeArgs: [] }), { code: "invalid_argument" });
   assert.throws(() => run("agent.spawn.reserve", { parent: parent.id, intent: "bad-kind", machine: "local", session: "s", name: "valid", kind: "other", nativeArgs: [] }), { code: "unsupported_runtime" });
   assert.equal(Object.keys(state.spawnIntents).length, 1, "invalid spawn leaves no reserved external effect");
-  state.events.length = MAX_EVENTS - 3;
-  assert.throws(() => run("agent.spawn.reserve", { parent: parent.id, intent: "no-capacity", machine: "local", session: "s", name: "valid", kind: "codex", nativeArgs: [] }), { code: "capacity" });
-  assert.equal(Object.hasOwn(state.spawnIntents, "no-capacity"), false, "a pane is never created without capacity to record its result");
+  for (const free of [4, 5, 6]) {
+    const intent = `no-capacity-${free}`;
+    state.events.length = MAX_EVENTS - free;
+    assert.throws(() => run("agent.spawn.reserve", { parent: parent.id, intent, machine: "local", session: "s", name: "valid", kind: "codex", nativeArgs: [] }), { code: "capacity" });
+    assert.equal(Object.hasOwn(state.spawnIntents, intent), false, "a pane is never created without capacity to record its result");
+  }
+});
+
+test("spawn reservation has room for the full first-turn progress and registration", () => {
+  const at = "2026-09-01T00:00:00.000Z";
+  const state = emptyLedger(at);
+  const run = (operation, args) => execute(state, operation, args, at).value;
+  const parent = run("agent.register", { machine: "local", hostScope: "default", session: "parent", instance: "parent-terminal", name: "parent", pane: "parent-pane", runtime: "idle" });
+  state.events.length = MAX_EVENTS - 7;
+  run("agent.spawn.reserve", { parent: parent.id, intent: "near-cap", machine: "local", session: "parent", name: "child", kind: "codex", nativeArgs: [] });
+  run("agent.spawn.unknown", { intent: "near-cap", reason: "tab creation reserved; outcome pending", workspace: "workspace", cwd: "/fixture" });
+  run("agent.spawn.pane", { intent: "near-cap", pane: "child-pane" });
+  run("agent.spawn.initialization", { intent: "near-cap", phase: "reserved", instance: "child-terminal" });
+  run("agent.spawn.identity", { intent: "near-cap", runtimeSession: "child-session", instance: "child-terminal" });
+  const result = run("agent.spawn.complete", { intent: "near-cap", runtimeSession: "child-session", instance: "child-terminal", runtime: "idle" });
+  assert.equal(result.intent.status, "complete");
+  assert.equal(state.events.length, MAX_EVENTS - 1);
 });
 
 test("watch handover preserves one unchecked cycle and graph history", () => {

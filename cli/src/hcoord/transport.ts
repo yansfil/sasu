@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
-import { API_VERSION, HcoordError, MAX_CONNECTIONS, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, own, put, type Ledger } from "./model";
+import { API_VERSION, HcoordError, MAX_AGENTS, MAX_CONNECTIONS, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, SPAWN_EVENT_SLOTS, own, put, type Ledger } from "./model";
 import { event } from "./model";
 import { execute, watchForRequest } from "./service";
 import { confirmSpawnPane, createSpawnPane, discoverLocalAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateLocalBinding, waitForSpawnInitialization } from "./herdr";
@@ -110,10 +110,14 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
   };
   const spawnAgent = (args: Record<string, unknown>, at: string): unknown => {
     let intent = commit("agent.spawn.reserve", args, at) as SpawnIntent;
+    const requireEventSlots = (slots: number, unfinishedStep: string): void => {
+      if (MAX_EVENTS - ledger.events.length < slots) throw new HcoordError("capacity", "event history has insufficient room to finish the saved spawn; resolve retention before retrying", { intent: intent.key, pane: intent.pane, unfinishedStep });
+    };
     const reconcilePane = args["reconcilePane"];
     if (reconcilePane !== null && reconcilePane !== undefined && (typeof reconcilePane !== "string" || reconcilePane.trim() === "")) throw new HcoordError("invalid_argument", "--reconcile-pane requires an exact pane ID");
     if (intent.pane !== null && reconcilePane !== null && reconcilePane !== undefined && reconcilePane !== intent.pane) throw new HcoordError("identity_conflict", "the spawn intent already owns a different pane", { intent: intent.key, pane: intent.pane });
     if (intent.status === "complete") return { intent, participant: ledger.participants[intent.participant!], watch: ledger.watches[intent.participant!] ?? null };
+    if (Object.keys(ledger.participants).length >= MAX_AGENTS) throw new HcoordError("capacity", "participant limit has no room for this saved spawn; resolve retention before retrying", { intent: intent.key, pane: intent.pane });
     let createdNow = false;
     if (intent.pane === null) {
       const parent = ledger.participants[intent.parent]!;
@@ -140,7 +144,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     if (identity.state === "absent") {
       if (!createdNow && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "saved pane has no confirmed agent; inspect it and retry this intent with --resume-start", { intent: intent.key, pane: intent.pane, unfinishedStep: "agent_start" });
       if (!createdNow) confirmSpawnPane(intent, intent.placement ?? parentPlacement(ledger.participants[intent.parent]!));
-      if (ledger.events.length >= MAX_EVENTS) throw new HcoordError("capacity", "event history has no room to record the resumed agent; resolve retention before starting it", { intent: intent.key, pane: intent.pane });
+      requireEventSlots(intent.kind === "codex" ? SPAWN_EVENT_SLOTS.beforeExternalStart : SPAWN_EVENT_SLOTS.beforeRegistration, "agent_start");
       startSpawnedAgent(intent);
       identity = inspectSpawnedAgent(intent);
       if (identity.state === "absent") throw new HcoordError("spawn_uncertain", "agent start returned but its named execution is unavailable", { intent: intent.key, pane: intent.pane });
@@ -149,6 +153,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
       if (intent.observedInstance != null && identity.instance !== intent.observedInstance) throw new HcoordError("identity_conflict", "spawn terminal was replaced after its first observation", { intent: intent.key, pane: intent.pane });
       if (intent.kind !== "codex" || intent.initialization !== "pending") throw new HcoordError("spawn_uncertain", "first-turn submission may already have occurred; inspect the saved pane without resubmitting it", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
       if (identity.interactiveReady !== true || (identity.runtime !== "idle" && identity.runtime !== "done")) throw new HcoordError("spawn_uncertain", "named agent is not interactive-ready for its first turn", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
+      requireEventSlots(SPAWN_EVENT_SLOTS.beforeFirstTurn, "initialize_agent");
       prepareSpawnInitialization(intent, identity.instance);
       intent = commit("agent.spawn.initialization", { intent: intent.key, phase: "reserved", instance: identity.instance }, new Date().toISOString()) as SpawnIntent;
       let submitted: ReturnType<typeof submitSpawnInitialization>;
@@ -169,6 +174,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     }
     if (identity.state !== "ready") throw new HcoordError("spawn_uncertain", "spawned execution identity remains unavailable", { intent: intent.key, pane: intent.pane, unfinishedStep: "inspect_agent" });
     if (intent.initialization === undefined && !createdNow) throw new HcoordError("spawn_uncertain", "legacy spawn intent has no first execution observation; do not bind a possible replacement automatically", { intent: intent.key, pane: intent.pane, unfinishedStep: "inspect_agent" });
+    requireEventSlots(SPAWN_EVENT_SLOTS.beforeRegistration, "register_agent");
     intent = commit("agent.spawn.identity", { intent: intent.key, runtimeSession: identity.session, instance: identity.instance }, new Date().toISOString()) as SpawnIntent;
     try { return commit("agent.spawn.complete", { intent: intent.key, runtimeSession: identity.session, instance: identity.instance, runtime: identity.runtime, project: ledger.participants[intent.parent]?.project }, new Date().toISOString()); }
     catch (error) { throw new HcoordError("spawn_uncertain", "agent exists but registration failed; inspect the saved pane and retry this intent after repairing storage", { intent: intent.key, pane: intent.pane, unfinishedStep: "register_agent", code: error instanceof HcoordError ? error.code : "storage_failed" }); }

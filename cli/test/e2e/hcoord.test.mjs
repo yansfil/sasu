@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
+import { MAX_EVENTS } from "../../dist/hcoord/model.js";
 
 const CLI = path.resolve(import.meta.dirname, "../../dist/hcoord/cli.js");
 const ADAPTER = path.resolve(import.meta.dirname, "../../../examples/hcoord/channel-adapter.mjs");
@@ -233,6 +234,19 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(JSON.parse(command(...partialArgs).stdout).error.code, "spawn_uncertain", "retry does not repeat an uncertain start");
   await stop();
   delete env.HCOORD_FAKE_START_FAIL;
+  const capacityLedgerFile = path.join(home, ".hcoord", "ledger.json");
+  const beforeCapacityProbe = fs.readFileSync(capacityLedgerFile, "utf8");
+  const nearCap = JSON.parse(beforeCapacityProbe);
+  const observedAt = new Date().toISOString();
+  while (nearCap.events.length < MAX_EVENTS - 3) nearCap.events.push({ seq: ++nearCap.seq, at: observedAt, type: "fixture.capacity", subjectId: "fixture", correlationId: null, detail: {} });
+  fs.writeFileSync(capacityLedgerFile, `${JSON.stringify(nearCap)}\n`);
+  await start();
+  const resumedAtCap = JSON.parse(command(...partialArgs, "--resume-start").stdout);
+  assert.equal(resumedAtCap.error.code, "capacity", "a saved pane is not started without room to record first-turn and registration progress");
+  assert.equal(resumedAtCap.error.detail.unfinishedStep, "agent_start");
+  assert.equal(fs.existsSync(path.join(home, "partial-pane.started")), false, "capacity refusal has no agent start effect");
+  await stop();
+  fs.writeFileSync(capacityLedgerFile, beforeCapacityProbe);
   fs.writeFileSync(path.join(home, "parent.cwd"), path.join(home, "moved-parent"));
   env.HCOORD_FAKE_PANE_ID_MISSING = "1";
   await start();

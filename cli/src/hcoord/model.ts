@@ -3,6 +3,9 @@ export const API_VERSION = 1;
 export const MAX_AGENTS = 2048;
 export const MAX_REQUESTS = 10000;
 export const MAX_EVENTS = 20000;
+// A spawn can write six progress events; one extra slot records a rejected
+// first-turn submission without stranding the saved intent at the event cap.
+export const SPAWN_EVENT_SLOTS = { reserve: 7, beforeExternalStart: 4, beforeFirstTurn: 4, beforeRegistration: 2 } as const;
 export const MAX_BODY_BYTES = 16 * 1024;
 export const MAX_LEDGER_BYTES = 64 * 1024 * 1024;
 export const MAX_CONNECTIONS = 64;

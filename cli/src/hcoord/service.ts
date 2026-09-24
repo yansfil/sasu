@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, own, put, validateSpawnSpec, type Delivery, type Ledger, type Participant, type Request, type Watch } from "./model";
+import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, validateSpawnSpec, type Delivery, type Ledger, type Participant, type Request, type Watch } from "./model";
 
 type Args = Record<string, unknown>;
 export interface Outcome { value: unknown; changed: boolean }
@@ -136,7 +136,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     }
     if (Object.keys(state.participants).length >= MAX_AGENTS) throw new HcoordError("capacity", `participant limit ${MAX_AGENTS} reached`);
     if (Object.keys(state.spawnIntents).length >= MAX_SPAWN_INTENTS) throw new HcoordError("capacity", `spawn intent limit ${MAX_SPAWN_INTENTS} reached; uncertain outcomes remain inspectable`);
-    if (MAX_EVENTS - state.events.length < 4) throw new HcoordError("capacity", "event history has insufficient room for a complete spawn; resolve retention before creating a pane");
+    if (MAX_EVENTS - state.events.length < SPAWN_EVENT_SLOTS.reserve) throw new HcoordError("capacity", "event history has insufficient room for a complete spawn; resolve retention before creating a pane");
     const record = { key, parent: parent.id, machine, hostScope: parent.hostScope, session, name, kind, nativeArgs, noWatch: args["noWatch"] === true, status: "reserved" as const, pane: null, participant: null, reason: null, at, initialization: "pending" as const, observedInstance: null, observedSession: null };
     put(state.spawnIntents, key, record);
     event(state, at, "agent.spawn_reserved", parent.id, key);
@@ -194,6 +194,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       || (record.observedSession !== null && record.observedSession !== undefined && record.observedSession !== runtimeSession)) throw new HcoordError("identity_conflict", "spawn execution changed before registration");
     const matches = Object.values(state.participants).filter((p) => p.machine === record.machine && p.hostScope === record.hostScope && p.session === runtimeSession && p.instance === instance);
     if (matches.length) throw new HcoordError("identity_conflict", "spawned execution is already registered elsewhere", { candidates: matches });
+    if (Object.keys(state.participants).length >= MAX_AGENTS) throw new HcoordError("capacity", `participant limit ${MAX_AGENTS} reached; retain the saved spawn and resolve retention before registration`);
     const runtime = required(args, "runtime") as Participant["runtime"];
     if (!["working", "idle", "done", "unknown"].includes(runtime)) throw new HcoordError("invalid_argument", "spawn runtime observation is invalid");
     const participant: Participant = { id: id("a"), machine: record.machine, hostScope: record.hostScope, session: runtimeSession, instance, name: record.name, project: optional(args, "project"), parent: record.parent, pane: record.pane, runtime, connection: "connected", observedAt: at };
