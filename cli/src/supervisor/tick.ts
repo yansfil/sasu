@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { getAgent, promptAgent, type AgentLookup, type HerdrEnvironment, type PromptOutcome } from "../implement/herdr";
 import { decideRun, episodeKey, judgeObserver, type Candidate, type Decision } from "./decide";
+import { readWork } from "./digest";
 import { readRun, type ReadRun } from "./facts";
 import { MISSING_TICKS_BEFORE_CLEANUP, readIndex, reconcileEnrollmentAuthority, recipientAuthorityKey, updateIndex, type EnrollmentAuthority, type IndexEntry, type SupervisorIndex, type WakeRecord } from "./index";
 import { renderWake, type WakeLine } from "./wake";
@@ -70,6 +71,13 @@ export const MAX_RUNS_PER_TICK = 20;
 export const TICK_DEADLINE_MS = 25_000;
 export const TICK_DECISION_BUDGET_MS = 10_000;
 export const TICK_COMPLETION_RESERVE_MS = 1_000;
+/**
+ * One run's git read (four calls) gets at most this much of the tick. A
+ * normal repository answers in tens of milliseconds; the cap keeps one slow
+ * or wedged tree from spending the whole 10-second decision budget every
+ * run shares, and a read that runs out is that run's reported failure.
+ */
+export const WORK_READ_BUDGET_MS = 5_000;
 
 class TickLimitReached extends Error {}
 
@@ -191,10 +199,14 @@ function executeTick(options: TickOptions, executorOperationId: string, tickNow:
   const log = options.log ?? ((event) => appendLog(path.join(path.dirname(options.indexFile), "tick.log"), event));
   const index = readIndex(options.indexFile);
   let herdrCalls = 0;
-  const checkedCall = <T>(label: string, call: (remainingMs: number) => T): T => {
-    if (herdrCalls >= MAX_HERDR_CALLS_PER_TICK) throw new TickLimitReached(`tick herdr call budget ${MAX_HERDR_CALLS_PER_TICK} exhausted; remaining runs are deferred to the next tick`);
+  const remainingBefore = (label: string): number => {
     const remainingMs = Math.floor(TICK_DEADLINE_MS - TICK_COMPLETION_RESERVE_MS - (monotonicNow() - tickStartedMonotonic));
     if (remainingMs <= 0) throw new TickLimitReached(`tick deadline ${TICK_DEADLINE_MS}ms exhausted before ${label}; the run records this bounded failure for operator inspection`);
+    return remainingMs;
+  };
+  const checkedCall = <T>(label: string, call: (remainingMs: number) => T): T => {
+    if (herdrCalls >= MAX_HERDR_CALLS_PER_TICK) throw new TickLimitReached(`tick herdr call budget ${MAX_HERDR_CALLS_PER_TICK} exhausted; remaining runs are deferred to the next tick`);
+    const remainingMs = remainingBefore(label);
     herdrCalls += 1;
     return call(remainingMs);
   };
@@ -370,10 +382,13 @@ function executeTick(options: TickOptions, executorOperationId: string, tickNow:
     let decision: Decision;
     try {
       const implementorScope = run.supervision.implementor.hostScope;
-      decision = decideRun(run.facts, {
-        implementor: lookup(run.supervision.implementor.paneId, implementorScope),
-        observer: lookup(run.supervision.observer.paneId, run.supervision.observer.hostScope),
-      }, entry, tickNow);
+      const implementorLookup = lookup(run.supervision.implementor.paneId, implementorScope);
+      const observerLookup = lookup(run.supervision.observer.paneId, run.supervision.observer.hostScope);
+      // Commit and drift come from the run's git tree; a finished run is not read.
+      const work = run.facts.status === "active"
+        ? readWork(run.state, run.supervision.dispatchHead, Math.min(WORK_READ_BUDGET_MS, remainingBefore(`git read of ${run.facts.slug}`)))
+        : null;
+      decision = decideRun(run.facts, { implementor: implementorLookup, observer: observerLookup, work }, entry, tickNow);
     } catch (error) {
       if (error instanceof TickLimitReached) {
         limitDetail = error.message;
@@ -403,6 +418,7 @@ function executeTick(options: TickOptions, executorOperationId: string, tickNow:
       held.lastObservation = observation;
       if (decision.observer.kind !== "match") held.lastFailure = { at, detail: decision.observer.detail };
       else if (decision.implementor.kind === "unobservable") held.lastFailure = { at, detail: decision.implementor.detail };
+      else if (decision.work?.kind === "unavailable") held.lastFailure = { at, detail: `commit and drift facts unavailable: ${decision.work.detail}` };
       else if (held.pendingWake === null) held.lastFailure = null;
     });
     if (decision.due.length === 0) {

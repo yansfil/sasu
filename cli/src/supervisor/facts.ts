@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parseImplementState } from "../implement/store";
+import { identicalInputFailures } from "../implement/verdict";
 import type { ImplementState, SupervisionRecord } from "../implement/types";
 import type { RunFacts } from "./decide";
 
@@ -31,6 +32,11 @@ export function runFacts(state: ImplementState, supervision: SupervisionRecord):
   if (!Number.isFinite(dispatchedAt)) throw new Error(`run ${state.topicSlug} has an invalid dispatchedAt`);
   const escalate = [...state.events].reverse().find((event) => event.kind === "escalate");
   const plan = [...state.events].reverse().find((event) => event.kind === "plan");
+  // Only this dispatch's attempts count: a replacement Implementor must not
+  // inherit its predecessor's identical-input failures as its own drift.
+  const attempts = state.verificationAttempts.filter((attempt) => Date.parse(attempt.finishedAt) >= dispatchedAt);
+  const latest = attempts.at(-1);
+  const repeated = latest === undefined ? 0 : identicalInputFailures(attempts, attempts.length - 1);
   return {
     slug: state.topicSlug,
     status: state.status,
@@ -42,6 +48,7 @@ export function runFacts(state: ImplementState, supervision: SupervisionRecord):
     // wake carries the absolute path so the Observer opens the right file
     // (measured 2026-09-21: a relative path pointed at an empty record dir).
     lastPlan: plan === undefined ? null : { id: plan.id, path: path.resolve(state.worktree?.path ?? state.projectRoot, plan.subject ?? "") },
+    repeatedFail: latest !== undefined && repeated >= 2 ? { attemptId: latest.id, count: repeated, finishedAt: Date.parse(latest.finishedAt) } : null,
     dispatchedAt,
     patrolIntervalMs: supervision.patrolIntervalMs,
     observer: supervision.observer,

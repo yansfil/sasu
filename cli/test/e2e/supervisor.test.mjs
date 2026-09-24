@@ -145,6 +145,38 @@ test("B1/B5/B8/B17: a dispatched run is indexed at once, a working implementor w
   assert.match(status.json.summary.join("\n"), /LaunchAgent: NOT installed/);
 });
 
+test("commit and drift: a commit in the run's tree wakes the Observer once, bookkeeping committed into the product and changes left uncommitted raise drift", () => {
+  const run = dispatchedRun();
+  const commit = (message) => git(run.root, ["-c", "user.name=t", "-c", "user.email=t@example.test", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message]);
+  run.herdr.setAgents({ [OBSERVER_PANE]: observerAgent(), [IMPL_PANE]: implAgent() });
+  assert.equal(run.tick().json.detail.runs[0].action, "none", "dispatch alone is not progress");
+
+  fs.writeFileSync(path.join(run.root, "feature.txt"), "one\n");
+  git(run.root, ["add", "feature.txt"]);
+  commit("Add feature");
+  const committed = run.tick();
+  assert.deepEqual(committed.json.detail.runs.map((entry) => [entry.action, entry.due]), [["sent", ["commit"]]]);
+  assert.match(run.wakes()[0].text, /reason: commit\n  commit: 1 commit\(s\) since dispatch/);
+  assert.equal(run.tick().json.detail.runs[0].action, "none", "the same head is answered once");
+
+  fs.mkdirSync(path.join(run.root, "agents", "notes"), { recursive: true });
+  fs.writeFileSync(path.join(run.root, "agents", "notes", "review.md"), "run bookkeeping\n");
+  git(run.root, ["add", "-f", "agents/notes/review.md"]);
+  commit("Record review notes");
+  const leaked = run.tick();
+  assert.deepEqual(leaked.json.detail.runs[0].due, ["commit", "drift"]);
+  assert.match(run.wakes()[1].text, /drift: outside-boundary: 1 changed path\(s\) outside the delivery boundary: agents\/notes\/review\.md/);
+
+  fs.writeFileSync(path.join(run.root, "feature.txt"), "one\ntwo\n");
+  const old = new Date(Date.now() - 25 * 60_000);
+  fs.utimesSync(path.join(run.root, "feature.txt"), old, old);
+  const piled = run.tick();
+  assert.deepEqual(piled.json.detail.runs[0].due, ["drift"]);
+  assert.match(run.wakes()[2].text, /uncommitted-age: 1 uncommitted path\(s\)/);
+  assert.equal(run.tick().json.detail.runs[0].action, "none");
+  assert.equal(run.wakes().length, 3);
+});
+
 test("P2 health and resource bounds: quiet ticks stay silent, rotate launchd output, and report current failures", () => {
   const run = dispatchedRun();
   run.herdr.setAgents({ [OBSERVER_PANE]: observerAgent(), [IMPL_PANE]: implAgent() });

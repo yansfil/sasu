@@ -443,6 +443,28 @@ export interface ImplementCommandResult {
 export const STALL_THRESHOLD_MS = 10 * 60 * 1000;
 
 /**
+ * A drift fact that persists is raised to the Observer again once per this
+ * interval, measured from when the fact began, until it clears. The
+ * measurement it rests on is herdr-ide `web-shell-pivot-s4` (2026-09-24):
+ * attempts 6-8 reran one inputFingerprint for about 6.7 minutes and every one
+ * failed, and nothing woke the Observer. Ten minutes is longer than that whole
+ * loop, so a persisting fact reaches the Observer again about once per such
+ * loop rather than every tick. It is not a measured optimum; retune it after
+ * a real run shows a re-raise arriving too early or too late.
+ */
+export const DRIFT_REPEAT_MS = 10 * 60 * 1000;
+
+/**
+ * Uncommitted changes whose newest edit is this old, while herdr shows the
+ * Implementor working, are a drift fact: it keeps working, but its changes
+ * stopped moving and were never committed. An unmeasured initial default,
+ * twice the stall threshold so a normal build-and-test cycle between two
+ * edits does not trip it; the S4 run above measured the identical-input loop,
+ * not this age.
+ */
+export const UNCOMMITTED_AGE_MS = 20 * 60 * 1000;
+
+/**
  * Escalations allowed per run before further attempts are refused.
  *
  * Also an unmeasured initial default (D-46). The bound exists because a fresh

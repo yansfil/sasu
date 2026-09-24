@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { getAgent, type HerdrEnvironment } from "../implement/herdr";
 import { requireWorkRoot, snapshotExcluded } from "../implement/store";
 import type { ImplementState, SupervisionRecord } from "../implement/types";
+import type { WorkObservation } from "./decide";
 import { runFacts } from "./facts";
 
 /**
@@ -61,10 +62,42 @@ export interface RunDigest {
 const RECENT_COMMITS = 10;
 const CHURN_ROWS = 10;
 
-function git(cwd: string, args: string[]): { ok: boolean; stdout: string; detail: string } {
-  const executed = spawnSync("git", ["--no-optional-locks", ...args], { cwd, encoding: "utf8", timeout: 15_000, maxBuffer: 32 * 1024 * 1024 });
+function git(cwd: string, args: string[], timeoutMs = 15_000): { ok: boolean; stdout: string; detail: string } {
+  const executed = spawnSync("git", ["--no-optional-locks", ...args], { cwd, encoding: "utf8", timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 });
   if (executed.error !== undefined) return { ok: false, stdout: "", detail: String(executed.error) };
   return { ok: executed.status === 0, stdout: executed.stdout ?? "", detail: (executed.stderr ?? "").trim() || `git ${args[0]} exited ${executed.status ?? "without status"}` };
+}
+
+const STATUS_ARGS = ["status", "--porcelain=v1", "-z", "--untracked-files=all"];
+
+/** Paths `git status --porcelain=v1 -z` reports, and which of them are untracked; a rename or copy carries its source as the next token. */
+function statusPaths(stdout: string): { dirty: string[]; untracked: string[] } {
+  const dirty: string[] = [];
+  const untracked: string[] = [];
+  const tokens = stdout.split("\0").filter((token) => token !== "");
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    dirty.push(token.slice(3));
+    if (token.startsWith("??")) untracked.push(token.slice(3));
+    if (/[RC]/.test(token.slice(0, 2))) index += 1;
+  }
+  return { dirty, untracked };
+}
+
+/** Modification times of the paths still on disk; a deleted path has none, and its deletion still counts as a change. */
+function modificationTimes(workRoot: string, relatives: string[]): number[] {
+  const times: number[] = [];
+  for (const relative of relatives) {
+    try { times.push(fs.statSync(path.join(workRoot, relative)).mtimeMs); } catch { /* deleted */ }
+  }
+  return times;
+}
+
+const newestOf = (times: number[]): number | null => times.reduce<number | null>((newest, time) => newest === null || time > newest ? time : newest, null);
+
+/** Changed paths the delivery boundary excludes: the agents/ namespace and anything escaping the tree. */
+function outsideDeliveryBoundary(paths: string[]): string[] {
+  return paths.filter((relative) => snapshotExcluded(relative) || relative.startsWith("../") || path.isAbsolute(relative)).sort();
 }
 
 function gitFacts(workRoot: string, dispatchHead: string | null): RunDigest["git"] {
@@ -89,30 +122,17 @@ function gitFacts(workRoot: string, dispatchHead: string | null): RunDigest["git
     if (file === "") continue;
     churn.push({ path: file, added: addedText === "-" ? 0 : Number(addedText), deleted: deletedText === "-" ? 0 : Number(deletedText) });
   }
-  const status = git(workRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  const status = git(workRoot, STATUS_ARGS);
   if (!status.ok) return { ...empty, head: head.stdout.trim(), problem: `git status failed: ${status.detail}` };
-  const dirty: string[] = [];
-  const statusTokens = status.stdout.split("\0").filter((token) => token !== "");
-  for (let index = 0; index < statusTokens.length; index += 1) {
-    const token = statusTokens[index]!;
-    dirty.push(token.slice(3));
-    if (/[RC]/.test(token.slice(0, 2))) index += 1;
-    if (token.startsWith("??") && !churn.some((entry) => entry.path === token.slice(3))) {
-      let lines = 0;
-      try { lines = fs.readFileSync(path.join(workRoot, token.slice(3)), "utf8").split("\n").length - 1; } catch { lines = 0; }
-      churn.push({ path: token.slice(3), added: lines, deleted: 0 });
-    }
+  const { dirty, untracked } = statusPaths(status.stdout);
+  for (const relative of untracked) {
+    if (churn.some((entry) => entry.path === relative)) continue;
+    let lines = 0;
+    try { lines = fs.readFileSync(path.join(workRoot, relative), "utf8").split("\n").length - 1; } catch { lines = 0; }
+    churn.push({ path: relative, added: lines, deleted: 0 });
   }
   churn.sort((a, b) => (b.added + b.deleted) - (a.added + a.deleted) || a.path.localeCompare(b.path));
-  let newest: number | null = null;
-  for (const relative of dirty) {
-    try {
-      const mtime = fs.statSync(path.join(workRoot, relative)).mtimeMs;
-      if (newest === null || mtime > newest) newest = mtime;
-    } catch {
-      // A deleted path has no mtime; the deletion still counts as a change.
-    }
-  }
+  const newest = newestOf(modificationTimes(workRoot, dirty));
   return {
     available: true,
     problem: null,
@@ -123,8 +143,52 @@ function gitFacts(workRoot: string, dispatchHead: string | null): RunDigest["git
     added: churn.reduce((sum, entry) => sum + entry.added, 0),
     deleted: churn.reduce((sum, entry) => sum + entry.deleted, 0),
     churn: churn.slice(0, CHURN_ROWS),
-    outsideBoundary: churn.map((entry) => entry.path).filter((relative) => snapshotExcluded(relative) || relative.startsWith("../") || path.isAbsolute(relative)).sort(),
+    outsideBoundary: outsideDeliveryBoundary(churn.map((entry) => entry.path)),
     uncommitted: { files: dirty.length, newestChangeAt: newest === null ? null : new Date(Math.round(newest)).toISOString() },
+  };
+}
+
+/**
+ * The slice of `gitFacts` the tick decides on, read on every tick for every
+ * active run: the head, commits since dispatch, paths outside the delivery
+ * boundary and uncommitted changes, from the same git calls and helpers the
+ * digest uses so a wake and the digest the Observer then reads agree. It
+ * leaves out what only the digest shows (the commit log, per-file line
+ * counts) because the tick would pay for them every 30 seconds.
+ *
+ * All four calls share one budget, so one slow repository cannot hold the
+ * tick past its deadline; running out is an unavailable read, never a guess.
+ */
+export function readWork(state: ImplementState, dispatchHead: string | null, budgetMs: number): WorkObservation {
+  let workRoot: string;
+  try { workRoot = requireWorkRoot(state); } catch (error) { return { kind: "unavailable", detail: error instanceof Error ? error.message : String(error) }; }
+  const started = Date.now();
+  const call = (args: string[]) => git(workRoot, args, Math.max(1, budgetMs - (Date.now() - started)));
+  const head = call(["rev-parse", "--verify", "HEAD"]);
+  if (!head.ok) return { kind: "unavailable", detail: `git unavailable in ${workRoot}: ${head.detail}` };
+  const sha = head.stdout.trim();
+  // Without a recorded dispatch head the digest measures from HEAD, so
+  // nothing counts as committed since dispatch; the tick agrees with it.
+  const base = dispatchHead ?? sha;
+  const counted = call(["rev-list", "--count", `${base}..HEAD`]);
+  const commits = Number(counted.stdout.trim());
+  if (!counted.ok || !Number.isInteger(commits)) return { kind: "unavailable", detail: `git rev-list --count ${base}..HEAD failed in ${workRoot}: ${counted.ok ? `unreadable count ${counted.stdout.trim()}` : counted.detail}` };
+  const changed = call(["diff", "--name-only", "-z", base]);
+  if (!changed.ok) return { kind: "unavailable", detail: `git diff --name-only ${base} failed in ${workRoot}: ${changed.detail}` };
+  const status = call(STATUS_ARGS);
+  if (!status.ok) return { kind: "unavailable", detail: `git status failed in ${workRoot}: ${status.detail}` };
+  const { dirty, untracked } = statusPaths(status.stdout);
+  const outside = outsideDeliveryBoundary([...new Set([...changed.stdout.split("\0").filter((entry) => entry !== ""), ...untracked])]);
+  const outsideTimes = modificationTimes(workRoot, outside);
+  const dirtyTimes = modificationTimes(workRoot, dirty);
+  return {
+    kind: "read",
+    head: sha,
+    commitsSinceDispatch: commits,
+    outsideBoundary: outside,
+    outsideSince: outsideTimes.reduce<number | null>((oldest, time) => oldest === null || time < oldest ? time : oldest, null),
+    uncommittedFiles: dirty.length,
+    newestChangeAt: newestOf(dirtyTimes),
   };
 }
 

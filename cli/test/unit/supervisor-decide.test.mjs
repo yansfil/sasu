@@ -14,7 +14,7 @@ const OBSERVER = { runtime: "claude", sessionId: "obs-uuid", terminalId: "term_o
 
 function facts(overrides = {}) {
   return {
-    slug: "fixture", status: "active", lastEventAt: T0, lastEventId: 3, lastEscalateId: null, lastPlan: null,
+    slug: "fixture", status: "active", lastEventAt: T0, lastEventId: 3, lastEscalateId: null, lastPlan: null, repeatedFail: null,
     dispatchedAt: T0, patrolIntervalMs: 15 * MIN, observer: OBSERVER,
     implementor: { paneId: "w2:p1", agent: "impl", sessionId: "impl-uuid", terminalId: "term_impl", hostScope: "sock", recordedAt: new Date(T0).toISOString() },
     ...overrides,
@@ -23,9 +23,13 @@ function facts(overrides = {}) {
 
 const found = (fields) => ({ kind: "found", agent: { paneId: "w2:p1", name: "impl", kind: "claude", sessionId: "impl-uuid", terminalId: "term_impl", status: "working", activityAt: T0, stateChangeSeq: 7, inputGuard: null, ...fields } });
 const observerFound = (fields = {}) => ({ kind: "found", agent: { paneId: "w1:p1", name: null, kind: "claude", sessionId: "obs-uuid", terminalId: "term_obs", status: "idle", activityAt: T0, stateChangeSeq: 2, inputGuard: null, ...fields } });
+/** The run's git tree as the tick reads it: nothing committed or changed since dispatch unless a test says so. */
+const work = (fields = {}) => ({ kind: "read", head: "h0", commitsSinceDispatch: 0, outsideBoundary: [], outsideSince: null, uncommittedFiles: 0, newestChangeAt: null, ...fields });
 
-const decide = (f, implementor, now, { observer = observerFound(), lastWake = null } = {}) => decideRun(facts(f), { implementor, observer }, lastWake, now);
+const decide = (f, implementor, now, { observer = observerFound(), lastWake = null, tree = work() } = {}) => decideRun(facts(f), { implementor, observer, work: tree }, lastWake, now);
 const reasons = (decision) => decision.due.map((entry) => entry.reason);
+const accepted = (decision, at) => ({ at: new Date(at).toISOString(), reasons: reasons(decision), episode: episodeKey(decision.due), outcome: "accepted", path: "session-match", code: "submitted" });
+const detailOf = (decision, reason) => decision.due.find((entry) => entry.reason === reason)?.detail;
 
 test("B5: a working implementor with no other cause wakes nobody before the patrol interval", () => {
   const decision = decide({}, found({ status: "working" }), T0 + 14 * MIN);
@@ -92,6 +96,92 @@ test("plan: a registered plan wakes once per plan event while the implementor ke
   assert.deepEqual(reasons(decide({ lastPlan: { id: 9, path: "agents/runs/fixture/plan.md" } }, found({ status: "working" }), T0 + 2 * MIN, { lastWake: wake })), ["plan"], "a rewritten plan is a new episode");
 });
 
+// The commit and drift rows below hold to the 2026-09-25 observer-drift
+// design (docs/plans/2026-09-25-observer-drift-advisor.md), not to decide.ts.
+test("commit: a new head since dispatch wakes once, several commits between two ticks are one wake, and no commit wakes nothing", () => {
+  assert.deepEqual(reasons(decide({}, found({ status: "working" }), T0 + MIN)), [], "nothing committed since dispatch");
+  const first = decide({}, found({ status: "working" }), T0 + MIN, { tree: work({ head: "c1", commitsSinceDispatch: 1 }) });
+  assert.deepEqual(reasons(first), ["commit"]);
+  const wake = accepted(first, T0 + MIN);
+  assert.deepEqual(reasons(decide({}, found({ status: "working" }), T0 + 2 * MIN, { lastWake: wake, tree: work({ head: "c1", commitsSinceDispatch: 1 }) })), [], "the same head is answered once");
+  const burst = decide({}, found({ status: "working" }), T0 + 3 * MIN, { lastWake: wake, tree: work({ head: "c3", commitsSinceDispatch: 3 }) });
+  assert.deepEqual(reasons(burst), ["commit"], "two new commits since the last look are one wake");
+  assert.notEqual(episodeKey(burst.due), episodeKey(first.due));
+});
+
+test("commit: a commit wake the Observer received counts as a look, so patrol waits a full interval after it", () => {
+  const tree = work({ head: "c1", commitsSinceDispatch: 1 });
+  const commit = decide({}, found({ status: "working" }), T0 + 10 * MIN, { tree });
+  assert.deepEqual(reasons(commit), ["commit"]);
+  const wake = accepted(commit, T0 + 10 * MIN);
+  assert.deepEqual(reasons(decide({}, found({ status: "working" }), T0 + 15 * MIN, { lastWake: wake, tree })), [], "15 minutes after dispatch but 5 after the commit wake");
+  assert.deepEqual(reasons(decide({}, found({ status: "working" }), T0 + 25 * MIN, { lastWake: wake, tree })), ["patrol"], "no commit for a patrol interval after the last look");
+});
+
+test("drift: repeated FAIL attempts on one input raise at once and again every 10 minutes while that attempt stands; a new attempt is a new fact", () => {
+  const stuck = { repeatedFail: { attemptId: "V8", count: 3, finishedAt: T0 + 5 * MIN } };
+  assert.equal(reasons(decide({}, found({ status: "working" }), T0 + 6 * MIN)).includes("drift"), false, "no repeated failure, no drift");
+  const first = decide(stuck, found({ status: "working" }), T0 + 6 * MIN);
+  assert.deepEqual(reasons(first), ["drift"]);
+  assert.match(detailOf(first, "drift"), /repeated-fail/);
+  const firstWake = accepted(first, T0 + 6 * MIN);
+  assert.deepEqual(reasons(decide(stuck, found({ status: "working" }), T0 + 14 * MIN, { lastWake: firstWake })), [], "inside the same 10 minutes it is answered");
+  const again = decide(stuck, found({ status: "working" }), T0 + 15 * MIN, { lastWake: firstWake });
+  assert.deepEqual(reasons(again), ["drift"], "10 minutes after the fact began it is raised again");
+  assert.notEqual(episodeKey(again.due), episodeKey(first.due));
+  const againWake = accepted(again, T0 + 15 * MIN);
+  assert.deepEqual(reasons(decide(stuck, found({ status: "working" }), T0 + 24 * MIN, { lastWake: againWake })), []);
+  assert.deepEqual(reasons(decide(stuck, found({ status: "working" }), T0 + 25 * MIN, { lastWake: againWake })), ["drift"]);
+  const newer = { repeatedFail: { attemptId: "V9", count: 4, finishedAt: T0 + 8 * MIN } };
+  assert.deepEqual(reasons(decide(newer, found({ status: "working" }), T0 + 9 * MIN, { lastWake: firstWake })), ["drift"], "another identical FAIL is a new fact");
+});
+
+test("drift: changed paths outside the delivery boundary raise drift naming them; a different set is a new fact; a persisting set re-raises", () => {
+  const leaked = work({ outsideBoundary: ["agents/runs/fixture/plan.md"], outsideSince: T0 + MIN });
+  const first = decide({}, found({ status: "working" }), T0 + 2 * MIN, { tree: leaked });
+  assert.deepEqual(reasons(first), ["drift"]);
+  assert.match(detailOf(first, "drift"), /outside-boundary/);
+  assert.match(detailOf(first, "drift"), /agents\/runs\/fixture\/plan\.md/);
+  const wake = accepted(first, T0 + 2 * MIN);
+  assert.deepEqual(reasons(decide({}, found({ status: "working" }), T0 + 3 * MIN, { lastWake: wake, tree: leaked })), []);
+  const wider = work({ outsideBoundary: ["agents/runs/fixture/plan.md", "agents/runs/fixture/state.json"], outsideSince: T0 + MIN });
+  assert.deepEqual(reasons(decide({}, found({ status: "working" }), T0 + 3 * MIN, { lastWake: wake, tree: wider })), ["drift"]);
+  assert.deepEqual(reasons(decide({}, found({ status: "working" }), T0 + 11 * MIN, { lastWake: wake, tree: leaked })), ["drift"], "the same set 10 minutes on");
+});
+
+test("drift: uncommitted changes whose newest is 20 minutes old raise drift only while the implementor is working", () => {
+  const piled = work({ uncommittedFiles: 2, newestChangeAt: T0 });
+  assert.equal(reasons(decide({}, found({ status: "working" }), T0 + 20 * MIN - 1, { tree: piled })).includes("drift"), false, "younger than 20 minutes");
+  assert.equal(reasons(decide({}, found({ status: "working" }), T0 + 20 * MIN, { tree: work({ newestChangeAt: T0 }) })).includes("drift"), false, "nothing uncommitted");
+  const first = decide({}, found({ status: "working" }), T0 + 20 * MIN, { tree: piled });
+  assert.deepEqual(reasons(first), ["drift"]);
+  assert.match(detailOf(first, "drift"), /uncommitted-age/);
+  const wake = accepted(first, T0 + 20 * MIN);
+  assert.deepEqual(reasons(decide({}, found({ status: "working" }), T0 + 29 * MIN, { lastWake: wake, tree: piled })), []);
+  assert.deepEqual(reasons(decide({}, found({ status: "working" }), T0 + 30 * MIN, { lastWake: wake, tree: piled })), ["drift"]);
+  assert.deepEqual(reasons(decide({}, found({ status: "idle", activityAt: T0 + 24 * MIN }), T0 + 25 * MIN, { tree: piled })), ["settled"], "an idle implementor is settled, not piling up");
+  assert.equal(reasons(decide({}, found({ status: "working" }), T0 + 31 * MIN, { lastWake: wake, tree: work({ uncommittedFiles: 3, newestChangeAt: T0 + 22 * MIN }) })).includes("drift"), false, "a newer change clears the fact");
+});
+
+test("drift rides along with settled, blocked, stall and a due patrol instead of being suppressed by them", () => {
+  const stuck = { repeatedFail: { attemptId: "V8", count: 2, finishedAt: T0 } };
+  const leaked = work({ outsideBoundary: ["agents/x.md"], outsideSince: T0 });
+  assert.deepEqual(reasons(decide(stuck, found({ status: "blocked" }), T0 + MIN)).sort(), ["blocked", "drift"]);
+  assert.deepEqual(reasons(decide({}, found({ status: "idle", activityAt: T0 }), T0 + MIN, { tree: leaked })).sort(), ["drift", "settled"]);
+  assert.deepEqual(reasons(decide({ lastEventAt: T0 - 11 * MIN }, found({ status: "unknown", activityAt: T0 - 11 * MIN }), T0, { tree: leaked })).sort(), ["drift", "stall"]);
+  const patrolDue = decide(stuck, found({ status: "working" }), T0 + 15 * MIN);
+  assert.equal(reasons(patrolDue).includes("drift"), true, "the patrol interval elapsing does not replace drift");
+  const both = decide(stuck, found({ status: "working" }), T0 + MIN, { tree: leaked });
+  assert.deepEqual(reasons(both), ["drift"], "two drift facts are one reason");
+  assert.match(detailOf(both, "drift"), /repeated-fail[\s\S]*outside-boundary|outside-boundary[\s\S]*repeated-fail/, "the detail names every fact present");
+});
+
+test("drift and commit: an unreadable git tree adds neither, and the state-derived reasons still decide", () => {
+  const unreadable = { kind: "unavailable", detail: "git unavailable" };
+  assert.deepEqual(reasons(decide({}, found({ status: "blocked" }), T0 + MIN, { tree: unreadable })), ["blocked"]);
+  assert.deepEqual(reasons(decide({ repeatedFail: { attemptId: "V8", count: 2, finishedAt: T0 } }, found({ status: "working" }), T0 + MIN, { tree: unreadable })), ["drift"]);
+});
+
 test("B8: an escalate event wakes once per event", () => {
   const first = decide({ lastEscalateId: 5 }, found({ status: "working" }), T0 + MIN);
   assert.deepEqual(reasons(first), ["escalate"]);
@@ -130,7 +220,7 @@ test("B6/B8: an idle or blocked implementor that is also ten minutes silent wake
 
 test("B12: with herdr unobservable the stall is judged from state.json alone, and the wake waits for the Observer to be verifiable", () => {
   const unavailable = { kind: "unavailable", detail: "socket down" };
-  const decision = decideRun(facts({ lastEventAt: T0 - 11 * MIN }), { implementor: unavailable, observer: unavailable }, null, T0);
+  const decision = decideRun(facts({ lastEventAt: T0 - 11 * MIN }), { implementor: unavailable, observer: unavailable, work: work() }, null, T0);
   assert.deepEqual(reasons(decision), ["stall"]);
   assert.match(decision.deferral, /observer unobservable/);
   assert.equal(decision.implementor.kind, "unobservable");

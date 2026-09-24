@@ -10,6 +10,7 @@ import { readIndex, enrollRun as enrollRunRaw, MISSING_TICKS_BEFORE_CLEANUP, rec
 import { MAX_RUN_STATE_BYTES } from "../../dist/supervisor/facts.js";
 import { WAKE_MARKER } from "../../dist/supervisor/wake.js";
 import { agent, fakeTickHerdr, implementorIdentity, IMPLEMENTOR_PANE, makeSupervisedRun, OBSERVER_PANE, OBSERVER_SESSION, observerIdentity, patchState } from "../helpers/supervised-run.mjs";
+import { attemptFixture } from "../helpers/implement-state.mjs";
 
 const T0 = Date.parse("2026-09-18T10:00:00.000Z");
 const MIN = 60_000;
@@ -973,4 +974,33 @@ test("a stale tick cannot acknowledge or remove a newer enrollment at the same s
   } });
   entry = readIndex(index).entries[0];
   assert.equal(entry.runInstanceId, "instance-3", "the old terminal decision cannot remove the new enrollment");
+});
+
+test("drift: identical-input FAIL attempts since dispatch reach the Observer as repeated-fail; an attempt before dispatch does not count", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  const failed = (id, finishedAt) => attemptFixture({ id, inputFingerprint: "b".repeat(64), phase: "complete", verdict: "FAIL", startedAt: finishedAt, finishedAt });
+  patchState(run.statePath, (state) => { state.verificationAttempts = [failed("V1", "2026-09-18T09:50:00.000Z"), failed("V2", "2026-09-18T10:02:00.000Z")]; });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "working" }) } });
+  assert.equal(tick(index, herdr, T0 + 3 * MIN).runs[0].action, "none", "one FAIL since dispatch is not a repetition");
+  patchState(run.statePath, (state) => { state.verificationAttempts.push(failed("V3", "2026-09-18T10:04:00.000Z")); });
+  const woke = tick(index, herdr, T0 + 5 * MIN);
+  assert.equal(woke.runs[0].action, "sent");
+  assert.deepEqual(woke.runs[0].decision.due.map((entry) => entry.reason), ["drift"]);
+  assert.match(herdr.prompts[0].text, /drift: .*repeated-fail/);
+  assert.equal(tick(index, herdr, T0 + 6 * MIN).runs[0].action, "none", "answered within its 10 minutes");
+});
+
+test("engineering 10: a git tree the tick cannot read is the run's current failure, and the state-derived reasons still decide", () => {
+  const index = indexFile();
+  const run = makeSupervisedRun();
+  enrollRun(index, { statePath: run.statePath, runInstanceId: "instance-1", recoveryOwner: "supervisor", at: "2026-09-18T10:00:00.000Z" });
+  patchState(run.statePath, (state) => { state.worktree = { path: path.join(run.root, "removed-worktree"), branch: "probe" }; });
+  const herdr = fakeTickHerdr({ agents: { obs: observer(), impl: implementor({ status: "working" }) } });
+  const quiet = tick(index, herdr, T0 + MIN);
+  assert.equal(quiet.runs[0].action, "none");
+  assert.match(readIndex(index).entries[0].lastFailure.detail, /worktree missing/);
+  herdr.state.agents.impl = implementor({ status: "blocked" });
+  assert.equal(tick(index, herdr, T0 + 2 * MIN).runs[0].action, "sent", "blocked still reaches the Observer");
 });

@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const INDEX_SCHEMA = "sasu.supervisor.index.v1" as const;
-export type WakeReason = "settled" | "blocked" | "escalate" | "plan" | "stall" | "implementor-gone" | "terminal" | "patrol";
+export const WAKE_REASONS = ["settled", "blocked", "escalate", "plan", "commit", "stall", "drift", "implementor-gone", "terminal", "patrol"] as const;
+export type WakeReason = typeof WAKE_REASONS[number];
 
 export interface WakeRecord {
   at: string;
@@ -102,7 +103,7 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
     const acknowledgements = record["acknowledgements"] !== null && typeof record["acknowledgements"] === "object" && !Array.isArray(record["acknowledgements"])
       ? record["acknowledgements"] as Partial<Record<WakeReason, string>> : {};
     for (const [reason, episode] of Object.entries(acknowledgements)) {
-      if (!(["settled", "blocked", "escalate", "plan", "stall", "implementor-gone", "terminal", "patrol"] as string[]).includes(reason) || typeof episode !== "string" || episode === "") throw new Error(`supervisor index entry ${record["statePath"]} has invalid acknowledgements: ${file}`);
+      if (!(WAKE_REASONS as readonly string[]).includes(reason) || typeof episode !== "string" || episode === "") throw new Error(`supervisor index entry ${record["statePath"]} has invalid acknowledgements: ${file}`);
     }
     let pendingWake: IndexEntry["pendingWake"] = null;
     if (record["pendingWake"] !== null && record["pendingWake"] !== undefined) {

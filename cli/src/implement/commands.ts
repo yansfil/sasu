@@ -14,6 +14,7 @@ import { provisionWorktree, type WorktreeProvision } from "./worktree";
 import { parseImplementContract, reviewProfile, suiteCommands } from "./contract";
 import { planRunUnits, runBatch, parseCommandArgv, type RunUnit, type RunUnitResult } from "./runner";
 import { suiteScore } from "./suite";
+import { effectiveVerdict, identicalInputFailures } from "./verdict";
 import { isIssuedCommand, recordVerb, resolveIssuer, VerbRejected } from "./verbs";
 import { recordEvent } from "./events";
 import { AmendmentRejected, applyAmendment } from "./amend";
@@ -1413,12 +1414,6 @@ function attemptSummary(attempt: UnifiedVerificationAttempt): Record<string, unk
   };
 }
 
-function effectiveVerdict(attempt: UnifiedVerificationAttempt): VerificationStatus {
-  if (attempt.error !== null) return attempt.verdict === "FAIL" ? "FAIL" : "ERROR";
-  if (attempt.mechanical.some((entry) => entry.status !== "PASS")) return "FAIL";
-  return attempt.verdict;
-}
-
 function nativeReviewNames(state: ImplementState): string {
   return state.prd.reviewProfile === "high-risk" ? "Fidelity, Code, and Security" : "Fidelity and Code";
 }
@@ -1435,25 +1430,6 @@ function failedRequiredCommands(state: ImplementState, attempt: UnifiedVerificat
     if (result?.status !== "RED") return [];
     return [`${command.id} \`${command.command}\` (${result.mutatedTree ? "changed the judged source" : `exit ${result.exitCode}`})`];
   });
-}
-
-/**
- * How many FAIL attempts in a row, ending with this one, ran on the same
- * recorded input. herdr-ide `web-shell-pivot-s4` (2026-09-24) ran attempts
- * 6-8 on one inputFingerprint, each a full suite of about 1-4 minutes, and
- * every one failed in the Rust suite. The count is disclosed, never enforced:
- * reproducing a failure on unchanged input is a legitimate diagnostic.
- */
-function identicalInputFailures(state: ImplementState, attempt: UnifiedVerificationAttempt): number {
-  let index = state.verificationAttempts.findIndex((entry) => entry.id === attempt.id);
-  if (index < 0) throw new Error(`verification attempt ${attempt.id} is missing from the run record`);
-  let count = 0;
-  for (; index >= 0; index -= 1) {
-    const held = state.verificationAttempts[index]!;
-    if (effectiveVerdict(held) !== "FAIL" || held.inputFingerprint !== attempt.inputFingerprint) break;
-    count += 1;
-  }
-  return count;
 }
 
 /**
@@ -1475,7 +1451,9 @@ function verificationNextActions(state: ImplementState, attempt: UnifiedVerifica
     if (failed.length > 0) cause = `Failed required commands: ${failed.join("; ")}. Reproduce each in isolation, fix, commit, rerun sasu implement verify.`;
     else if (attempt.error !== null) cause = `It stopped at ${attempt.error.stage} (${attempt.error.code}): ${attempt.error.message}. Fix that, commit, rerun sasu implement verify.`;
     else throw new Error(`verification attempt ${attempt.id} is ${verdict} with neither a failed command nor an error`);
-    const repeated = identicalInputFailures(state, attempt);
+    const index = state.verificationAttempts.findIndex((entry) => entry.id === attempt.id);
+    if (index < 0) throw new Error(`verification attempt ${attempt.id} is missing from the run record`);
+    const repeated = identicalInputFailures(state.verificationAttempts, index);
     return [
       `Next action: ship is blocked; verification ${verdict}. ${cause}`,
       ...(repeated > 1 ? [`Repeated input: ${repeated} consecutive FAIL attempts on identical verification input; a rerun without a change is a diagnostic reproduction, not a fix.`] : []),
