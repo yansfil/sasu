@@ -5,7 +5,7 @@ import { API_VERSION, HcoordError, LETTER_OPERATIONS, MAX_AGENTS, MAX_CONNECTION
 import { event } from "./model";
 import { execute, recordLetter, watchForRequest } from "./service";
 import { outboxCount, parseLetter, readOutbox, removeLetters, type Found, type RawLetter } from "./outbox";
-import { confirmSpawnPane, createSpawnPane, createSpawnWorktree, observedPlacement, discoverAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateBinding, waitForSpawnInitialization } from "./herdr";
+import { blockedSpawnError, confirmSpawnPane, createSpawnPane, createSpawnWorktree, observedPlacement, discoverAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateBinding, waitForSpawnInitialization } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
 import { notifyHuman, notifyText } from "./platform";
@@ -197,13 +197,20 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
       if (!createdNow) confirmSpawnPane(intent, intent.placement ?? parentPlacement(ledger.participants[intent.parent]!));
       requireEventSlots(intent.kind === "codex" ? SPAWN_EVENT_SLOTS.beforeExternalStart : SPAWN_EVENT_SLOTS.beforeRegistration, "agent_start");
       requireSpawnStorage(intent.kind === "codex" ? SPAWN_EVENT_SLOTS.beforeExternalStart : SPAWN_EVENT_SLOTS.beforeRegistration, "agent_start");
-      startSpawnedAgent(intent);
+      try { startSpawnedAgent(intent); }
+      catch (error) {
+        const started = inspectSpawnedAgent(intent);
+        if (started.state === "initializing" && started.blocked) throw blockedSpawnError(intent);
+        throw error;
+      }
       identity = inspectSpawnedAgent(intent);
       if (identity.state === "absent") throw new HcoordError("spawn_uncertain", "agent start returned but its named execution is unavailable", { intent: intent.key, pane: intent.pane });
     }
     if (identity.state === "initializing") {
       if (intent.observedInstance != null && identity.instance !== intent.observedInstance) throw new HcoordError("identity_conflict", "spawn terminal was replaced after its first observation", { intent: intent.key, pane: intent.pane });
-      if (intent.kind !== "codex" || intent.initialization !== "pending") throw new HcoordError("spawn_uncertain", "first-turn submission may already have occurred; inspect the saved pane without resubmitting it", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
+      if (identity.blocked) throw blockedSpawnError(intent);
+      if (intent.kind !== "codex") throw new HcoordError("spawn_uncertain", "the agent has not reported its session yet; inspect the saved pane and retry this intent", { intent: intent.key, pane: intent.pane, unfinishedStep: "inspect_agent" });
+      if (intent.initialization !== "pending") throw new HcoordError("spawn_uncertain", "first-turn submission may already have occurred; inspect the saved pane without resubmitting it", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
       if (identity.interactiveReady !== true || (identity.runtime !== "idle" && identity.runtime !== "done")) throw new HcoordError("spawn_uncertain", "named agent is not interactive-ready for its first turn", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
       requireEventSlots(SPAWN_EVENT_SLOTS.beforeFirstTurn, "initialize_agent");
       requireSpawnStorage(SPAWN_EVENT_SLOTS.beforeFirstTurn, "initialize_agent");
@@ -414,7 +421,8 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
           // A failed deletion is harmless: the next take returns recorded letters, which are only deleted again.
           if (removable.length) await remoteCallAsync(target, ["drop", ...removable], aborter.signal);
         } catch (error) {
-          process.stderr.write(`${JSON.stringify({ event: "hcoord.collect_failed", at: new Date().toISOString(), machine, code: error instanceof HcoordError ? error.code : "internal" })}\n`);
+          // The SSH or remote diagnostic belongs in the log: one live run saw a single transient auth refusal that the code alone could not explain.
+          process.stderr.write(`${JSON.stringify({ event: "hcoord.collect_failed", at: new Date().toISOString(), machine, code: error instanceof HcoordError ? error.code : "internal", detail: error instanceof Error ? error.message.slice(0, 300) : null })}\n`);
         } finally { state.inFlight = false; state.nextAt = Date.now() + retryAfter; }
       })();
       inFlight.add(job);

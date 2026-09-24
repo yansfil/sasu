@@ -198,3 +198,21 @@ test("spawn without --machine stays beside its parent, and another machine needs
   assert.equal(refused.error.code, "invalid_argument");
   assert.match(refused.error.message, /--repo <source repository on mini> and --branch/);
 });
+
+test("a spawned agent waiting on its own trust prompt is reported for a person, and the same intent resumes after it is answered", async (t) => {
+  const { fake, coordinator, parent } = await setup(t);
+  const repo = path.join(fake.home("mini"), "src", "product");
+  fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
+  const spawnArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "mini", "--session", "s-parent", "--name", "trusting", "--kind", "claude", "--repo", repo, "--branch", "trust", "--path", path.join(fake.home("mini"), "trees", "trust"), "--intent", "trust-1"];
+  fake.flag("mini", "start-blocked");
+  const blocked = coordinator.json(...spawnArgs);
+  assert.equal(blocked.error.code, "spawn_blocked");
+  assert.match(blocked.error.message, /pane trusting-pane on mini is waiting on its own prompt .*herdr --machine mini agent read trusting-pane/);
+  assert.equal(coordinator.json(...spawnArgs).error.code, "spawn_blocked", "a retry before the person answers repeats the reason, not a false first-turn warning");
+  fake.flag("mini", "start-blocked", false);
+  fake.setAgent("mini", "trusting-pane", { session: "trusting-session", status: "idle", ready: true });
+  const resumed = coordinator.ok(...spawnArgs);
+  assert.equal(resumed.participant.pane, "trusting-pane");
+  assert.equal(fake.worktrees("mini").length, 1);
+  assert.equal(fake.calls("mini").filter((argv) => argv[0] === "agent" && argv[1] === "start").length, 1, "the agent is started once");
+});

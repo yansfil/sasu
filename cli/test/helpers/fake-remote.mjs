@@ -43,6 +43,11 @@ else if (a0 === "agent" && a1 === "start") {
   const pane = flag("--pane");
   if (!panes[pane]) fail("pane_not_found", "no pane");
   if (fs.existsSync(path.join(dir, "start-fails"))) { process.stderr.write("start outcome unknown"); process.exit(8); }
+  if (fs.existsSync(path.join(dir, "start-blocked"))) {
+    // Like Claude's folder-trust prompt: the agent exists, shows its own question, and reports no session.
+    agents[pane] = { name: a2, kind: flag("--kind"), session: null, instance: a2 + "-instance", status: "blocked", ready: false };
+    save("agents.json", agents); process.stderr.write(JSON.stringify({ error: { code: "agent_not_ready", message: "agent did not become ready" } })); process.exit(1);
+  }
   agents[pane] = { name: a2, kind: flag("--kind"), session: a2 + "-session", instance: a2 + "-instance", status: "idle", ready: true };
   save("agents.json", agents); out({ agent: { name: a2, pane_id: pane } });
 }

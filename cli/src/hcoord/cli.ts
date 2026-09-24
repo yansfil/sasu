@@ -6,7 +6,7 @@ import { HcoordError, LETTER_OPERATIONS, LETTER_SCHEMA, MAX_OUTBOX_LETTERS, REMO
 import { outboxCount, readOutboxRaw, removeLetters, writeLetter } from "./outbox";
 import { readHq, writeHq } from "./remote";
 import { openWork } from "./service";
-import { platformSupport, startDaemon } from "./platform";
+import { platformSupport, REMOTE_SETUP, startDaemon } from "./platform";
 import { callDaemon, lastDaemonContact, runDaemon, staleRead, type WireResult } from "./transport";
 import { readAlert, reconcileAlert, warningLine } from "./health";
 import { notifyText } from "./platform";
@@ -180,7 +180,7 @@ export async function main(argv: string[]): Promise<number> {
       const { operation, data } = args.words[0] === "daemon" || args.words[0] === "sasu" ? { operation: `${args.words[0]}.${args.words[1]}`, data: {} } : route(args);
       if (!LETTER_OPERATIONS.has(operation)) throw new HcoordError("hq_only", `${operation} runs only at the coordinator HQ (${hq}); this machine keeps no conversation record`, { hq });
       const letter = writeLetter(operation, data);
-      print({ ok: true, delivery: "pending", value: { letter: letter.id, operation, reason: `HQ ${hq} collects it over its saved SSH machine`, hq }, observedAt: new Date().toISOString() }, json);
+      print({ ok: true, delivery: "pending", value: { letter: letter.id, operation, reason: `the coordinator at ${hq} applies it when it next collects this machine's letters; nothing else to do`, hq }, observedAt: new Date().toISOString() }, json);
       return 0;
     }
     if (args.words[0] === "sasu" && args.words[1] === "enable") {
@@ -218,7 +218,7 @@ export async function main(argv: string[]): Promise<number> {
         let result: WireResult;
         try { result = await callDaemon("status"); }
         catch (error) { if (!(error instanceof HcoordError) || error.code !== "daemon_down") throw error; result = staleRead("status"); }
-        result.value = { ...(result.value as object), platform: platformSupport() };
+        result.value = { ...(result.value as object), platform: platformSupport(), remote: { hq: readHq(), setup: REMOTE_SETUP, limits: "a new remote worktree may show the agent's own folder-trust prompt, which a person answers; remote letters arrive at the next collection (about 5 s)" } };
         print(result, json);
         return 0;
       }

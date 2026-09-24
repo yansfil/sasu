@@ -9,8 +9,12 @@ import { dataDir, stopMarkerPath } from "./store";
 const LABEL = "com.hcoord.daemon";
 const plistPath = (home: string): string => path.join(home, "Library", "LaunchAgents", `${LABEL}.plist`);
 const escapeXml = (text: string): string => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+// Each value states what was actually observed (PRD B18): "verified_isolated"
+// means a real run in an isolated HOME or test session, not a production login.
+// Remote rows rest on the 2026-09-24 laptop HQ <-> mini run (Herdr 0.9.1,
+// test-only remote session) and the isolated launchd KeepAlive check.
 export const platformSupport = () => ({
-  macos: { localSocket: "verified_isolated", loginStart: "unverified", manualStop: "verified_isolated", herdrNotification: "unverified", systemNotification: "unsupported", remoteHerdr: "unsupported" },
+  macos: { localSocket: "verified_isolated", loginStart: "unverified", crashRestart: "verified_isolated", manualStop: "verified_isolated", herdrNotification: "unverified", systemNotification: "unsupported", remoteHerdr: "verified_isolated", remoteOutbox: "verified_isolated", remoteWorktreeSpawn: "verified_isolated" },
   windows: { sharedCore: "implemented_unverified", namedPipe: "unsupported", loginStart: "unsupported", manualStop: "unsupported", desktopNotification: "unsupported", remoteHerdrHost: "unsupported" },
 });
 
@@ -21,6 +25,13 @@ export function notifyHuman(requestId: string): { ok: boolean; code: string } {
 }
 
 /** A Herdr notification with caller-chosen text; true only when Herdr accepted it. */
+/** What a person prepares once so a machine can host remote agents (PRD B18, D-13). */
+export const REMOTE_SETUP = [
+  "on the HQ: herdr machine add --label <name> <ssh-target> (hcoord reads only this saved machine; it stores no credentials)",
+  "on the remote: run scripts/install-local-skills.mjs from this repository, which writes ~/.hcoord/bin/hcoord for the HQ's SSH calls",
+  "on the remote: clone the source repository that agent spawn --repo names",
+] as const;
+
 export function notifyText(text: string): boolean {
   return runHerdrCommand(["notification", "show", text, "--sound", "request"], 2000).status === 0;
 }

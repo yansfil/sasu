@@ -160,7 +160,7 @@ export function confirmSpawnPane(record: SpawnIntent, placement: { workspace: st
   }
 }
 
-export type SpawnInspection = { state: "absent" } | { state: "initializing"; instance: string; interactiveReady: boolean | null; runtime: Participant["runtime"] } | { state: "ready"; session: string; instance: string; runtime: Participant["runtime"] };
+export type SpawnInspection = { state: "absent" } | { state: "initializing"; instance: string; interactiveReady: boolean | null; runtime: Participant["runtime"]; blocked: boolean } | { state: "ready"; session: string; instance: string; runtime: Participant["runtime"] };
 
 export function inspectSpawnedAgent(record: SpawnIntent): SpawnInspection {
   if (record.pane === null) return { state: "absent" };
@@ -170,7 +170,7 @@ export function inspectSpawnedAgent(record: SpawnIntent): SpawnInspection {
   if (found.agent.paneId !== record.pane || found.agent.name !== record.name || found.agent.kind !== record.kind) throw new HcoordError("identity_conflict", "spawn pane hosts a different execution; no binding was changed", { intent: record.key, pane: record.pane });
   if (found.agent.terminalId === null) throw new HcoordError("spawn_uncertain", "spawned agent has no terminal identity yet", { intent: record.key, pane: record.pane, unfinishedStep: "inspect_agent" });
   const runtime = found.agent.status === "blocked" ? "unknown" : found.agent.status;
-  if (found.agent.sessionId === null) return { state: "initializing", instance: found.agent.terminalId, interactiveReady: found.agent.interactiveReady, runtime };
+  if (found.agent.sessionId === null) return { state: "initializing", instance: found.agent.terminalId, interactiveReady: found.agent.interactiveReady, runtime, blocked: found.agent.status === "blocked" };
   return { state: "ready", session: found.agent.sessionId, instance: found.agent.terminalId, runtime };
 }
 
@@ -191,12 +191,22 @@ function codexLaunchArgs(nativeArgs: string[]): { startArgs: string[]; prompt: s
   return { startArgs: nativeArgs, prompt: CODEX_INITIALIZATION_PROMPT };
 }
 
+/**
+ * A started agent that shows its own question before reporting a session,
+ * such as Claude's folder-trust prompt in a new worktree (observed on mini,
+ * 2026-09-24). That consent belongs to a person; hcoord never answers it.
+ */
+export function blockedSpawnError(record: SpawnIntent): HcoordError {
+  const where = isLocalMachine(record.machine) ? "" : `--machine ${record.machine} `;
+  return new HcoordError("spawn_blocked", `the agent in pane ${record.pane} on ${record.machine} is waiting on its own prompt (for example a folder-trust or permission question); answer it there (herdr ${where}agent read ${record.pane}), then retry this intent`, { intent: record.key, pane: record.pane, unfinishedStep: "agent_prompt" });
+}
+
 export function startSpawnedAgent(record: SpawnIntent): void {
   if (record.pane === null) throw new HcoordError("invalid_state", "spawn intent has no pane");
   validateSpawnSpec(record.name, record.kind);
   const nativeArgs = record.kind === "codex" ? codexLaunchArgs(record.nativeArgs).startArgs : record.nativeArgs;
   const { result } = startAgentWhenPaneReady(["agent", "start", record.name, "--kind", record.kind, "--pane", record.pane, ...(nativeArgs.length ? ["--", ...nativeArgs] : [])], at(record));
-  if (result.status !== 0) throw new HcoordError("spawn_uncertain", "Herdr did not confirm agent start; inspect the saved pane before retry", { intent: record.key, pane: record.pane, unfinishedStep: "agent_start" });
+  if (result.status !== 0) throw new HcoordError("spawn_uncertain", `Herdr did not confirm agent start (${(result.stderr || result.stdout).trim().slice(0, 200) || "no diagnostic"}); inspect the saved pane before retry`, { intent: record.key, pane: record.pane, unfinishedStep: "agent_start" });
 }
 
 export function prepareSpawnInitialization(record: SpawnIntent, instance: string, advanceUpdate = true): void {
