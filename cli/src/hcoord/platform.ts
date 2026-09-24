@@ -20,6 +20,23 @@ export function notifyHuman(requestId: string): { ok: boolean; code: string } {
   return { ok: result.status === 0, code: result.status === 0 ? "herdr_accepted" : result.status === null ? "runtime_unavailable" : "notification_refused" };
 }
 
+/** A Herdr notification with caller-chosen text; true only when Herdr accepted it. */
+export function notifyText(text: string): boolean {
+  return runHerdrCommand(["notification", "show", text, "--sound", "request"], 2000).status === 0;
+}
+
+/**
+ * KeepAlive restarts only an unsuccessful exit: a crash or kill comes back,
+ * while `hcoord daemon stop` (and a start that finds the manual-stop marker)
+ * exits 0 and stays stopped (PRD D-11, B13).
+ */
+export function daemonPlist(home: string, args: string[], label = LABEL): string {
+  const environment: Array<[string, string]> = [["HOME", home], ["PATH", process.env["PATH"] ?? ""]];
+  if (process.env["HCOORD_HOME"]) environment.push(["HCOORD_HOME", process.env["HCOORD_HOME"]]);
+  if (process.env["HCOORD_REMOTE_HOME"]) environment.push(["HCOORD_REMOTE_HOME", process.env["HCOORD_REMOTE_HOME"]]);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${escapeXml(label)}</string><key>ProgramArguments</key><array>${args.map((a) => `<string>${escapeXml(a)}</string>`).join("")}</array><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>EnvironmentVariables</key><dict>${environment.map(([key, value]) => `<key>${key}</key><string>${escapeXml(value)}</string>`).join("")}</dict><key>StandardOutPath</key><string>${escapeXml(path.join(dataDir(home), "daemon.log"))}</string><key>StandardErrorPath</key><string>${escapeXml(path.join(dataDir(home), "daemon.err.log"))}</string></dict></plist>\n`;
+}
+
 export function startDaemon(home = os.homedir()): { label: string; path: string } {
   if (process.platform !== "darwin") throw new HcoordError("unsupported_platform", "automatic daemon start is implemented only for macOS; see hcoord daemon run on a supported host");
   const domain = `gui/${process.getuid!()}`;
@@ -29,7 +46,7 @@ export function startDaemon(home = os.homedir()): { label: string; path: string 
   fs.rmSync(stopMarkerPath(home), { force: true });
   const executable = path.resolve(__dirname, "cli.js");
   const args = [process.execPath, executable, "daemon", "run"];
-  const body = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${LABEL}</string><key>ProgramArguments</key><array>${args.map((a) => `<string>${escapeXml(a)}</string>`).join("")}</array><key>RunAtLoad</key><true/><key>EnvironmentVariables</key><dict><key>HOME</key><string>${escapeXml(home)}</string><key>PATH</key><string>${escapeXml(process.env["PATH"] ?? "")}</string></dict><key>StandardOutPath</key><string>${escapeXml(path.join(dataDir(home), "daemon.log"))}</string><key>StandardErrorPath</key><string>${escapeXml(path.join(dataDir(home), "daemon.err.log"))}</string></dict></plist>\n`;
+  const body = daemonPlist(home, args);
   fs.writeFileSync(file, body, { mode: 0o600 });
   const boot = spawnSync("launchctl", ["bootstrap", domain, file], { encoding: "utf8", timeout: 5000 });
   if (boot.status !== 0 && !/already bootstrapped|service already loaded/i.test(`${boot.stderr}${boot.stdout}`)) throw new HcoordError("start_failed", "launchd could not bootstrap coordinator; inspect its stderr log");

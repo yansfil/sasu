@@ -8,7 +8,11 @@ import { outboxCount, readOutbox, removeLetters, type Found } from "./outbox";
 import { confirmSpawnPane, createSpawnPane, discoverLocalAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateLocalBinding, waitForSpawnInitialization } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
-import { notifyHuman } from "./platform";
+import { notifyHuman, notifyText } from "./platform";
+import { reconcileAlert, recordClean, recordReady, recordStart } from "./health";
+
+/** Whether this process reached the daemon on its last call; the CLI derives its health warning from it. */
+export let lastDaemonContact: "answered" | "unreachable" | null = null;
 
 export interface WireRequest { version: number; operation: string; args: Record<string, unknown> }
 export interface WireResult { ok: boolean; value?: unknown; error?: { code: string; message: string; detail?: Record<string, unknown> }; observedAt: string; delivery?: "delivered" | "pending" }
@@ -25,7 +29,7 @@ export async function callDaemon(operation: string, args: Record<string, unknown
     const socket = net.createConnection(socketPath(home));
     let text = "";
     const timeoutMs = timeoutOverrideMs ?? (operation === "agent.spawn" ? 75_000 : 10_000);
-    const timer = setTimeout(() => { socket.destroy(); reject(new HcoordError("timeout", `coordinator did not answer within ${timeoutMs / 1000} seconds`)); }, timeoutMs);
+    const timer = setTimeout(() => { socket.destroy(); lastDaemonContact = "unreachable"; reject(new HcoordError("timeout", `coordinator did not answer within ${timeoutMs / 1000} seconds`)); }, timeoutMs);
     const finish = (error?: Error, value?: WireResult): void => { clearTimeout(timer); socket.destroy(); if (error) reject(error); else resolve(value!); };
     socket.on("connect", () => socket.write(request));
     socket.on("data", (chunk: Buffer) => {
@@ -33,11 +37,12 @@ export async function callDaemon(operation: string, args: Record<string, unknown
       if (Buffer.byteLength(text) > MAX_MESSAGE_BYTES) return finish(new HcoordError("capacity", "coordinator response exceeded message limit"));
       const newline = text.indexOf("\n");
       if (newline === -1) return;
-      try { finish(undefined, JSON.parse(text.slice(0, newline)) as WireResult); }
+      try { const parsed = JSON.parse(text.slice(0, newline)) as WireResult; lastDaemonContact = "answered"; finish(undefined, parsed); }
       catch { finish(new HcoordError("protocol", "coordinator returned invalid JSON")); }
     });
     socket.on("error", (error: NodeJS.ErrnoException) => {
       clearTimeout(timer);
+      lastDaemonContact = "unreachable";
       if (error.code === "ENOENT" || error.code === "ECONNREFUSED") reject(new HcoordError("daemon_down", "coordinator daemon is not running; start it with hcoord daemon start"));
       else if (error.code === "EACCES" || error.code === "EPERM") reject(new HcoordError("permission_denied", "coordinator socket access was denied; allow this session to connect to the local user socket, then retry"));
       else reject(new HcoordError("transport", "coordinator transport failed; inspect the local socket and daemon log before retrying"));
@@ -56,9 +61,14 @@ export function staleRead(operation: string, args: Record<string, unknown> = {},
   return { ok: true, value: { data, stale: true, lastObservedAt: saved ? state.updatedAt : null, warning: saved ? "daemon stopped: automatic watch, reminders, and delivery are inactive" : "daemon stopped and no saved observation exists" }, observedAt };
 }
 
-export async function runDaemon(home = os.homedir()): Promise<void> {
+/**
+ * Runs the daemon until a stop request or signal. Returns "manual_stop"
+ * without starting when the user stopped it, so a KeepAlive supervisor that
+ * restarts only failed exits leaves the manual stop in place (PRD B13).
+ */
+export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manual_stop"> {
   if (process.platform === "win32") throw new HcoordError("unsupported_platform", "Windows local IPC needs a verified user-restricted named pipe adapter");
-  if (fs.existsSync(stopMarkerPath(home))) throw new HcoordError("manual_stop", "daemon was manually stopped; use hcoord daemon start to resume");
+  if (fs.existsSync(stopMarkerPath(home))) return "manual_stop";
   fs.mkdirSync(dataDir(home), { recursive: true, mode: 0o700 });
   fs.chmodSync(dataDir(home), 0o700);
   let ledger = loadLedger(home);
@@ -458,10 +468,13 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
       }).finally(() => { queuedOperations -= 1; });
     });
   });
+  recordStart(process.pid, new Date().toISOString(), home);
   try {
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(socketFile, () => { server.off("error", reject); resolve(); }); });
     socketOwned = true;
     fs.chmodSync(socketFile, 0o600);
+    recordReady(process.pid, new Date().toISOString(), home);
+    reconcileAlert(home, Date.now(), true, notifyText);
     const onSignal = (): void => { if (!closing) { closing = true; server.close(); } };
     process.once("SIGTERM", onSignal);
     process.once("SIGINT", onSignal);
@@ -499,6 +512,8 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     process.off("SIGTERM", onSignal);
     process.off("SIGINT", onSignal);
     await processing;
+    recordClean(process.pid, new Date().toISOString(), home);
   } finally { try { if (socketOwned && fs.existsSync(socketFile)) fs.unlinkSync(socketFile); } catch { /* report only through original error */ } }
   } finally { try { if (lockOwned && fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch { /* report only through original error */ } }
+  return "stopped";
 }

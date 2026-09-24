@@ -1,49 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { createFakeRemote } from "../helpers/fake-remote.mjs";
+import { hq } from "../helpers/hcoord-hq.mjs";
 
 const CLI = path.resolve(import.meta.dirname, "../../dist/hcoord/cli.js");
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** One isolated HQ: a fake Herdr, a HOME, and a daemon this test owns. */
-export function hq(t, fake, host = "local") {
-  const env = fake.env(host);
-  const dir = path.join(env.HOME, ".hcoord");
-  let daemon = null;
-  const api = {
-    env, dir,
-    run: (...args) => spawnSync(process.execPath, [CLI, ...args, "--json"], { env, encoding: "utf8" }),
-    json(...args) { const result = api.run(...args); try { return JSON.parse(result.stdout); } catch { throw new Error(`${args.join(" ")}: ${result.status} ${result.stdout} ${result.stderr}`); } },
-    ok(...args) { const parsed = api.json(...args); assert.equal(parsed.ok, true, `${args.join(" ")}: ${JSON.stringify(parsed)}`); return parsed.value; },
-    async start() {
-      daemon = spawn(process.execPath, [CLI, "daemon", "run"], { env, stdio: ["ignore", "ignore", "pipe"] });
-      let stderr = "";
-      daemon.stderr.on("data", (chunk) => { stderr += chunk; });
-      for (let attempt = 0; attempt < 500; attempt += 1) {
-        if (fs.existsSync(path.join(dir, "api.sock"))) return;
-        if (daemon.exitCode !== null) throw new Error(`daemon exited: ${stderr}`);
-        await wait(20);
-      }
-      throw new Error(`daemon did not listen: ${stderr}`);
-    },
-    async stop(signal = "SIGTERM") {
-      if (!daemon) return;
-      const old = daemon; daemon = null;
-      if (old.exitCode === null && old.signalCode === null) { old.kill(signal); await new Promise((resolve) => old.once("exit", resolve)); }
-    },
-    ledger: () => JSON.parse(fs.readFileSync(path.join(dir, "ledger.json"), "utf8")),
-    outbox: () => fs.existsSync(path.join(dir, "outbox")) ? fs.readdirSync(path.join(dir, "outbox")).filter((name) => name.endsWith(".json")) : [],
-    async until(predicate, message) {
-      for (let attempt = 0; attempt < 150; attempt += 1) { if (predicate()) return; await wait(100); }
-      assert.fail(message);
-    },
-  };
-  t.after(() => api.stop());
-  return api;
-}
 
 function pair(fake, coordinator) {
   fake.addAgent("local", "parent-pane", { name: "parent", session: "s-parent", instance: "i-parent" });

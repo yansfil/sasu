@@ -463,8 +463,8 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   for (let attempt = 0; attempt < 250 && daemon.exitCode === null; attempt += 1) await wait(20);
   assert.notEqual(daemon.exitCode, null);
   const manuallyStopped = command("daemon", "run");
-  assert.equal(manuallyStopped.status, 1);
-  assert.equal(JSON.parse(manuallyStopped.stdout).error.code, "manual_stop");
+  assert.equal(manuallyStopped.status, 0, "a manual stop exits successfully so KeepAlive does not restart it");
+  assert.equal(JSON.parse(manuallyStopped.stdout).value.manualStop, true);
   fs.writeFileSync(path.join(home, ".hcoord", "ledger.json"), '{"answer":"PRIVATE_ANSWER", invalid');
   const corrupt = command("status");
   assert.equal(JSON.parse(corrupt.stdout).error.code, "corrupt_ledger");

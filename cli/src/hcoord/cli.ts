@@ -5,7 +5,9 @@ import { officialPromptSupport } from "./herdr";
 import { HcoordError, LETTER_OPERATIONS } from "./model";
 import { writeLetter } from "./outbox";
 import { platformSupport, startDaemon } from "./platform";
-import { callDaemon, runDaemon, staleRead, type WireResult } from "./transport";
+import { callDaemon, lastDaemonContact, runDaemon, staleRead, type WireResult } from "./transport";
+import { readAlert, reconcileAlert, warningLine } from "./health";
+import { notifyText } from "./platform";
 import { dataDir, legacyRetiredPath, sasuEnabledPath, stopMarkerPath } from "./store";
 
 interface Parsed { words: string[]; flags: Map<string, string | true>; tail: string[] }
@@ -58,7 +60,27 @@ function route(args: Parsed): { operation: string; data: Record<string, unknown>
   throw new HcoordError("invalid_argument", "usage: hcoord status | agent register/list/show | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status");
 }
 
+/**
+ * An unstable daemon is reported above every command's output, on stderr so
+ * JSON stdout stays parseable (PRD B14). A command that reached or failed to
+ * reach the daemon re-evaluates the alert; any other command shows the
+ * current one.
+ */
+let warned = false;
+function warnIfUnstable(): void {
+  if (warned) return;
+  warned = true;
+  try {
+    const home = os.homedir();
+    const alert = lastDaemonContact === null ? readAlert(home) : reconcileAlert(home, Date.now(), lastDaemonContact === "answered", notifyText);
+    if (alert) process.stderr.write(`${warningLine(alert, home)}\n`);
+  } catch (error) {
+    process.stderr.write(`${JSON.stringify({ event: "hcoord.health_unreadable", at: new Date().toISOString(), code: (error as NodeJS.ErrnoException).code ?? "internal" })}\n`);
+  }
+}
+
 function print(result: WireResult, json: boolean): void {
+  warnIfUnstable();
   if (json) { process.stdout.write(`${JSON.stringify(result)}\n`); return; }
   if (!result.ok) { process.stderr.write(`hcoord: ${result.error?.code}: ${result.error?.message}\n`); return; }
   if (result.delivery === "pending") { const value = result.value as { letter: string; reason: string }; process.stdout.write(`pending: letter ${value.letter} waits for the coordinator; ${value.reason}\n`); return; }
@@ -109,7 +131,10 @@ export async function main(argv: string[]): Promise<number> {
     }
     if (args.words[0] === "daemon") {
       const action = args.words[1];
-      if (action === "run") { await runDaemon(); return 0; }
+      if (action === "run") {
+        if (await runDaemon() === "manual_stop") print({ ok: true, value: { running: false, manualStop: true, next: "hcoord daemon start clears the manual stop" }, observedAt: new Date().toISOString() }, json);
+        return 0;
+      }
       if (action === "start") { const value = startDaemon(); print({ ok: true, value, observedAt: new Date().toISOString() }, json); return 0; }
       if (action === "stop") {
         const result = await callDaemon("daemon.stop");
