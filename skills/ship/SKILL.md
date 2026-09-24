@@ -3,7 +3,7 @@ name: ship
 description: |
   Deliver an implementation with a current deterministic verification report locally or through a GitHub pull request.
   Use when the user invokes "$ship" or asks to commit, open or update a PR, watch CI, or merge approved work.
-  Do not use before `sasu implement verify` has produced a current PASS report.
+  Do not use before `sasu implement verify` has produced a current PASS report on the final committed candidate and its review follow-up condition is settled.
 ---
 
 # ship
@@ -34,9 +34,10 @@ The script resolves that boundary from `state.json`.
 ## Flow
 
 ```text
-current deterministic PASS
+current deterministic PASS on the final committed candidate
+  -> last reviewed head equals the report head with unchanged evidence, or one follow-up review has run
   -> inspect native-agent Fix now and Follow-up findings
-  -> fix and commit valid current-scope bugs, then rerun verify/review if source changed
+  -> a valid current-scope fix: commit, focused check, follow-up review, full verify again
   -> preflight and generate PR body
   -> include tests, evidence, review availability, dispositions and follow-ups
   -> validate the committed implementation path boundary
@@ -123,10 +124,10 @@ Do not use `/Users/...`, `file://...`, or an unpushed run artifact as the only e
 When CI fails:
 
 1. inspect the actual failing check;
-2. fix the cause in the same branch when it belongs to the current scope;
+2. fix the cause in the same branch when it belongs to the current scope, and commit it;
 3. run the nearest focused check;
-4. rerun `sasu implement verify` because the head changed;
-5. request fresh native reviews for the new head;
+4. request the follow-up review for the new head with the prior review context, starting from the fix's closure and impact rather than a fresh full review;
+5. rerun `sasu implement verify` because the head changed;
 6. update the PR body and ship again.
 
 Outside-scope cleanup or product expansion goes under Follow-up improvements.

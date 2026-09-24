@@ -38,7 +38,7 @@ Delivery rejects a report whose head differs from the current Git HEAD or whose 
 It is current only while those inputs still match.
 A source, PRD, suite, or evidence change makes it stale and requires a new run.
 
-Agent review begins only after deterministic PASS.
+Agent review may start on any committed head before the full verification; it receives the current verification verdict, and delivery still requires a current PASS.
 It runs through the current runtime's native subagent facility and stays outside Sasu CLI state.
 A reviewer timeout or interruption is `REVIEW_UNAVAILABLE`, not a failed suite or product verdict.
 

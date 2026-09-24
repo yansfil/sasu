@@ -39,19 +39,20 @@ Apply these principles together:
     Request one review set per current head and report unresolved advice honestly.
 
 The approved [stateless verification change](docs/plans/2026-09-15-stateless-verification.md) replaces receipt-backed completion, in-CLI implementation judges, correction budgets, and reviewer finding state.
+The [verification convergence plan](docs/plans/2026-09-24-verification-convergence.md) moves native review ahead of the full verify of the final committed candidate.
 Full reasoning lives in [PRINCIPLES.md](PRINCIPLES.md).
 
 ## Current Verification Contract
 
 ```text
 approved PRD and committed Git head
-  -> sasu implement verify
+  -> native Fidelity and Code subagents, current verification verdict disclosed
+  -> fix current-scope defects, commit, follow-up review; record later improvements
+  -> sasu implement verify on the final committed candidate
      -> PRD prelint
      -> sealed required suites
      -> source and evidence integrity
      -> current verification-report.json and .md
-  -> native Fidelity and Code subagents
-  -> fix current-scope defects; record later improvements
   -> GitHub CI and human review
 ```
 

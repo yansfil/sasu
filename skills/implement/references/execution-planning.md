@@ -23,6 +23,7 @@ The plan is written inside the approved `Technical structure`; it never redesign
 4. Order the slices by dependency, riskiest first, so the likely failure happens while there is the least to undo.
 5. Give each slice its likely files and the check that shows it works.
    Do not restate acceptance criteria; the Behaviors rows already carry them.
+6. Name when the first full `sasu implement verify` runs: on the final committed candidate by default, earlier when a slice first connects an integration boundary.
 
 Write it to `agents/runs/<slug>/plan.md`, print it as ordinary text, and register it:
 

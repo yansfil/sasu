@@ -15,8 +15,9 @@ conversation
   -> gen-prd: write the approved product contract
   -> implement: build and observe the real behavior
      -> commit the current implementation head
-     -> sasu implement verify: deterministic checks and current report
-     -> native review subagents: visible advisory review
+     -> native review subagents: visible advisory review of the committed head
+     -> fix, commit, and follow-up review with the prior context
+     -> sasu implement verify: deterministic checks and current report on the final head
   -> ship: record local delivery or push a pull request, CI, and approved merge
 ```
 
@@ -93,12 +94,15 @@ Its normal response gives the calling agent the next action directly:
 
 ```text
 [implement:verify] ok - deterministic verification PASS; report agents/runs/example/verification-report.md
-Next action: spawn native Fidelity and Code review subagents in parallel from this runtime for this exact verified head.
+Next action: if the last native review covered exactly this verified head and the registered evidence is unchanged since that review, continue to ship.
+Otherwise spawn one set of native Fidelity and Code review subagents in parallel from this runtime for this exact verified head: a follow-up review with the prior review context on the diff, or the full-scope review when no prior review exists.
 Review output: Fix now, Follow-up improvements, and What was checked. Sasu sets no reviewer turn limit; if a reviewer fails, record REVIEW_UNAVAILABLE with the visible cause.
-Then fix valid current-scope findings. If source or material evidence changes, commit it and rerun verify and review; otherwise continue to ship.
+Then fix valid current-scope findings: commit the fix, run its focused checks, request the follow-up review on that commit, and run the full verify again on the final committed candidate.
 ```
 
-On FAIL or ERROR, the response tells the agent to fix the deterministic failure and rerun verification before review or delivery.
+On FAIL or ERROR, the response says ship is blocked and names the failed required commands, or the error that stopped the run, to reproduce in isolation before fixing, committing, and rerunning the full verification.
+When consecutive FAIL attempts ran on identical input, it says so: a rerun without a change is a diagnostic reproduction, not a fix.
+Review does not wait for a PASS; it starts on a committed head with the current verification verdict disclosed.
 
 Retired receipt, finalize, confirm, and implementation-risk commands fail explicitly.
 Old state and report shapes are rejected rather than silently migrated.

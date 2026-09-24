@@ -21,10 +21,14 @@ The deterministic report, GitHub CI, and human review carry the enforceable fact
 
 ## Run reviewers
 
-After `sasu implement verify` reports PASS, run Fidelity and Code concurrently using the current runtime's native subagent facility: the Agent tool in Claude Code, `spawn_agent` in Codex.
+Run Fidelity and Code concurrently on a committed head using the current runtime's native subagent facility: the Agent tool in Claude Code, `spawn_agent` in Codex.
+Commit before the request so the review targets a fixed SHA, and record that reviewed SHA in the handoff and the PR reviewer line.
+A full deterministic PASS is not required to start review; it is required for delivery.
 A Herdr pane is not a subagent; do not run reviewers with `herdr pane split` or `herdr agent start` even when the Implementor itself lives in a Herdr pane.
 Add Security for a `high-risk` PRD.
-Give every reviewer the approved PRD, current base/head, current source, deterministic verification report, and registered evidence.
+Give every reviewer the approved PRD, current base/head, current source, and registered evidence.
+Also give the current verification verdict from `sasu implement status` (`NOT_RUN`, `STALE`, `FAIL`, or `PASS`) with the report when one exists, and the focused checks actually run with their results.
+Behavior that no check or observation has reached is reported as unverified; a review before the full verify is never presented as final approval.
 Do not invoke a Sasu judge command or background model process.
 
 ## Reviewer scopes
@@ -41,7 +45,7 @@ Do not automatically repeat an unchanged review until it returns PASS.
 ## Review continuity
 
 The first review checks the complete approved contract.
-After a fix, fresh review means a judgment of the new verified input, not discarding the previous review context.
+After a fix, the follow-up review judges the new committed head without discarding the previous review context.
 Give each reviewer the previous review's actual reviewed HEAD, its ordinary Markdown findings and coverage, the diff from that HEAD to the current HEAD, and the parent's dispositions with fix or regression-test evidence.
 Include material evidence changes and any human-approved PRD amendments with their decision references and approval evidence.
 The previous deterministic verification HEAD is not necessarily a reviewed HEAD; never substitute it for missing review history.
@@ -53,6 +57,12 @@ If the previous review or its identity is unavailable, or its coverage no longer
 New evidence of a concrete contract violation or regression remains a Fix now item, including in unchanged code that the current change depends on.
 Do not reopen a resolved item without explaining the new evidence or changed assumption; nonessential expansion remains a Follow-up improvement.
 Review continuity changes where reviewers begin, not the required suites, source freshness, independent Security review, or human approval boundaries.
+
+When the full verify on the final candidate passes, compare the last reviewed HEAD with the report head, and the registered evidence given to that review with the report's evidence.
+If both are unchanged, the existing review stands and delivery proceeds without another reviewer call.
+If either differs, request one short follow-up review of that diff and evidence change with the prior context, then deliver.
+The implementor makes this comparison from the handoff and the report; it is not CLI state or a ledger.
+Continuing the same reviewer process is a convenience where the runtime allows it; the requirement is the context handoff, and a reviewer without that context performs the full-scope review.
 
 ## Review availability
 
@@ -96,7 +106,7 @@ Record the disposition of every Fix now item in the PR summary.
 A suggestion becomes a Follow-up improvement when it is nonessential for the current contract.
 A finding needs human input when the proposed fix changes product behavior, authorization, data policy, destructive effects, public scope, or another approved decision.
 
-After any source or material evidence change, rerun deterministic verification and request fresh reviews for the new head.
+After any source or material evidence change, commit it, run the focused checks, and request the follow-up review for the new head; the full deterministic verification runs on the final committed candidate.
 Carry the review context above into that request, including rejected findings and their reasons rather than only the fixes.
 Once valid current-scope findings are resolved and the current verification and review disposition are complete, proceed to the authorized delivery instead of requesting another unchanged review for reassurance.
 Unresolved concerns and unavailable reviews remain visible under the existing delivery and human review rules; they are never relabeled as PASS.

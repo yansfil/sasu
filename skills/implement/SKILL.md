@@ -13,13 +13,16 @@ Implement the complete approved PRD, prove the current Git state with determinis
 Match the user's language.
 
 ```text
-approved PRD -> implement and observe the real behavior
-  -> sasu implement verify: required suites + source/evidence integrity
-  -> native Fidelity and Code subagents in parallel
-  -> fix current-scope bugs; list later improvements
-  -> rerun verify and review when source changes
+approved PRD -> implement, focused checks, and real-behavior observation -> commit
+  -> native Fidelity and Code subagents in parallel on the committed head, verification verdict disclosed
+  -> fix current-scope bugs -> commit -> focused checks -> follow-up review with the prior context
+  -> sasu implement verify on the final committed candidate: required suites + source/evidence integrity
+       PASS: ship when the last reviewed head is the report head and evidence is unchanged; otherwise one follow-up review
+       FAIL: reproduce the failed command, fix, commit, verify again
   -> local delivery or GitHub PR with CI and human review
 ```
+
+An integration-risk change may run an earlier full verify; the execution plan names when.
 
 `state.json` stores run ownership, the sealed contract and suite, evidence registrations, and the current deterministic report identity.
 `verification-report.json` and `verification-report.md` describe the current verified input.
@@ -68,31 +71,15 @@ Do not silently add product behavior, change authorization or data policy, broad
 Those become a human decision or a Follow-up improvement.
 
 Commit coherent work during long implementations.
-Commit the final source and evidence changes before deterministic verification so the report can bind the exact Git HEAD that reviewers and delivery will use.
-
-## Deterministic Verification
-
-```sh
-sasu implement verify
-```
-
-This command:
-
-- checks the sealed PRD and current source identity;
-- runs every sealed required suite;
-- records the real command, exit code, duration, and log;
-- verifies registered evidence bytes and source stability;
-- writes the current `verification-report.json` and `verification-report.md`.
-
-It does not start reviewers, parse model output, count turns, retry a model, maintain findings, or decide whether a PR may merge.
-Fix deterministic failures and rerun it.
-Any source or evidence change makes the earlier report stale.
+Commit before every review request: reviews are requested only on committed heads, and the reviewed SHA goes into the review handoff.
+The final candidate is committed before its full verification, so the report binds the exact Git HEAD that delivery will use.
 
 ## Native Agent Review
 
-After deterministic verification, follow the CLI's `Next action:` response as the workflow continuation.
-On PASS it names the native review roles, parallel execution, response sections, failure recording, and rerun condition for the exact verified head.
-For a re-review, also hand off the actual previously reviewed HEAD, findings, coverage, dispositions, intervening diff, and approved contract or evidence changes.
+Request the first review once the implementation is committed and its focused checks and observations have run; a full deterministic PASS is not a precondition for review, only for delivery.
+Give reviewers the reviewed SHA, the focused checks actually run, and the current verification verdict from `sasu implement status` (`NOT_RUN`, `STALE`, `FAIL`, or `PASS`), stated honestly.
+The first review covers the complete contract; behavior no check or observation has reached stays unverified and is never inferred from code existence.
+For a follow-up review, also hand off the actual previously reviewed HEAD, findings, coverage, dispositions, intervening diff, and approved contract or evidence changes.
 Reviewers check closure and impact first while remaining responsible for the complete contract; a prior verification result alone is not prior review coverage.
 Use the runtime's native subagent facility directly: the Agent tool in Claude Code, `spawn_agent` in Codex.
 Never use a Sasu judge command, a hidden background model process, or a Herdr pane; `herdr agent start` creates a peer agent, not a subagent, and its output never returns to the Implementor as a review.
@@ -109,16 +96,41 @@ Place useful nonessential work under Follow-up improvements.
 When a fix changes source or material evidence:
 
 1. commit the coherent fix;
-2. rerun `sasu implement verify`;
-3. run fresh native reviews for the new head with the previous review context and fix evidence;
+2. run the focused check for it, then request the follow-up review on that commit with the previous review context and fix evidence;
+3. run the full `sasu implement verify` on the final committed candidate;
 4. replace the earlier PR summary with the current result.
 
 There is no correction budget or PASS-seeking loop.
 One review set is requested for each head the implementor presents as current.
 
+## Deterministic Verification
+
+Run the full verification on the final committed candidate.
+Run it earlier only when the execution plan names an integration boundary whose first connection needs it, or when project instructions require it.
+
+```sh
+sasu implement verify
+```
+
+This command:
+
+- checks the sealed PRD and current source identity;
+- runs every sealed required suite;
+- records the real command, exit code, duration, and log;
+- verifies registered evidence bytes and source stability;
+- writes the current `verification-report.json` and `verification-report.md`.
+
+It does not start reviewers, parse model output, count turns, retry a model, maintain findings, or decide whether a PR may merge.
+Any source or evidence change makes the earlier report stale.
+
+After deterministic verification, follow the CLI's `Next action:` response as the workflow continuation.
+On PASS it states the follow-up condition: when the last reviewed HEAD equals the report head and the registered evidence set is unchanged since that review, continue to ship; otherwise request one short follow-up review of the diff with the prior context.
+On FAIL or ERROR it names the failed required commands, or the error that stopped the run: reproduce only that failure in isolation, fix, commit, and run the full verify again.
+It also states when consecutive FAIL attempts ran on identical input; a rerun without a change is a diagnostic reproduction, not a fix.
+
 ## Delivery
 
-After the current deterministic report is PASS, use `$ship` for the already authorized local or PR delivery.
+After the current deterministic report is PASS and its follow-up condition is settled, use `$ship` for the already authorized local or PR delivery.
 The PR body includes:
 
 - current PRD, base, head, tests, and evidence;

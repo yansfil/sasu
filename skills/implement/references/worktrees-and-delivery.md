@@ -34,7 +34,7 @@ The Claude installation substitutes its own skill root.
 
 The PR body carries the deterministic report, visible agent review notes, Fix now dispositions, Follow-up improvements, actual evidence, and human review focus.
 A reviewer process does not grant or remove delivery eligibility.
-A source fix after review changes the head, so rerun deterministic verification and fresh native reviews before updating the PR.
+A source fix after review changes the head, so request the follow-up review with the prior context and rerun deterministic verification before updating the PR.
 
 Use reviewer-visible screenshot URLs or committed stable paths.
 Do not use a local absolute path as the only PR evidence.

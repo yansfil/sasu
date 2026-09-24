@@ -52,9 +52,9 @@ Outside Herdr, the current session may execute the same steps directly.
 Never recursively dispatch an Implementor.
 
 During implementation, preserve every requirement, run actual product observation, and register material evidence.
-Run `sasu implement verify` for deterministic checks.
+Review committed heads with native subagents before the full verification, then run `sasu implement verify` for deterministic checks on the final committed candidate.
 Follow the CLI's `Next action:` response after verification.
-On PASS it tells the current runtime which native review subagents to run, what they return, how to record unavailability, and when a changed head needs fresh verification and review.
+On PASS it states whether the last reviewed head already matches the report or one follow-up review is needed; on FAIL it names the failed commands to reproduce before the next full verify.
 The `implement` skill remains the authority for review scope and disposition.
 
 Use `$ship` for the configured delivery mode.

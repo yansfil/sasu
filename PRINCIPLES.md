@@ -56,7 +56,7 @@ Meaning and evidence sufficiency remain independent judgment.
 The current implementation flow fits in one diagram:
 
 ```text
-PRD and committed Git head -> deterministic verify -> native review -> PR -> CI and people
+PRD and committed Git head -> native review -> deterministic verify of the final head -> PR -> CI and people
 ```
 
 A design that needs a wall of lifecycle prose should be simplified before implementation.
