@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import os from "node:os";
-import { guardedPromptSupport, runHerdrCommand } from "../implement/herdr";
+import { officialPromptSupport } from "./herdr";
 import { HcoordError } from "./model";
 import { platformSupport, startDaemon } from "./platform";
 import { callDaemon, runDaemon, staleRead, type WireResult } from "./transport";
@@ -73,8 +73,8 @@ export async function main(argv: string[]): Promise<number> {
     if (args.words[0] === "sasu" && args.words[1] === "enable") {
       const status = await callDaemon("status");
       if (!status.ok) { print(status, json); return 1; }
-      const capability = guardedPromptSupport({ run: (command) => runHerdrCommand(command, 2000) });
-      if (capability.supported !== true) throw new HcoordError("unsupported_runtime", "Herdr guarded agent delivery is unsupported or unconfirmed; Sasu transition remains disabled");
+      const capability = officialPromptSupport();
+      if (!capability.ready) throw new HcoordError("unsupported_runtime", `Herdr agent delivery is unsupported or unconfirmed: ${capability.reason}; Sasu transition remains disabled`);
       fs.mkdirSync(dataDir(), { recursive: true, mode: 0o700 });
       fs.writeFileSync(sasuEnabledPath(), `${new Date().toISOString()}\n`, { mode: 0o600 });
       print({ ok: true, value: { enabled: true, newRunsOnly: true, existingRuns: "legacy supervisor retains ownership" }, observedAt: new Date().toISOString() }, json);

@@ -172,10 +172,26 @@ const AGENT_START_BUSY_TIMEOUT_MS = 30_000;
 const CODEX_INITIALIZATION_TIMEOUT_MS = 30_000;
 const CODEX_INITIALIZATION_POLL_MS = 250;
 
+/** Retry only Herdr's definite new-shell busy refusal, as dispatch already does. */
+export function startAgentWhenPaneReady(argv: string[], environment: HerdrEnvironment = {}, cwd?: string): { result: ReturnType<NonNullable<HerdrEnvironment["run"]>>; busyRetries: number; elapsedMs: number } {
+  const run = environmentRun(environment);
+  const clock = environment.clock ?? defaultClock;
+  const firstStartAt = clock.now();
+  let result = run(argv, cwd);
+  let busyRetries = 0;
+  while (result.status !== 0 && herdrErrorCode(result.stderr) === "agent_pane_busy"
+    && clock.now() - firstStartAt < AGENT_START_BUSY_TIMEOUT_MS) {
+    clock.sleep(AGENT_START_BUSY_RETRY_MS);
+    busyRetries += 1;
+    result = run(argv, cwd);
+  }
+  return { result, busyRetries, elapsedMs: clock.now() - firstStartAt };
+}
+
 // Codex 0.156.0 creates/reports its session at its first turn, not at the
 // empty composer (observed 2026-09-24). Initialize only the session at launch;
 // executable handoff still waits for durable identity and final revalidation.
-const CODEX_INITIALIZATION_PROMPT = "Session initialization only. Reply with READY and end this turn. Do not use tools, read or edit files, run commands, start implementation, or dispatch agents. The actual task will arrive separately after the coordinator verifies your session identity.";
+export const CODEX_INITIALIZATION_PROMPT = "Session initialization only. Reply with READY and end this turn. Do not use tools, read or edit files, run commands, start implementation, or dispatch agents. The actual task will arrive separately after the coordinator verifies your session identity.";
 
 export function environmentCapabilities(environment: HerdrEnvironment): HerdrCapabilities {
   const env = environment.env ?? process.env;
@@ -286,25 +302,46 @@ function nativeAgentArgs(kind: string, model?: string, effort?: string): string[
   return args.length === 0 ? [] : ["--", ...args];
 }
 
-function initializedCodex(prepared: PreparedSpawn, environment: HerdrEnvironment): AgentLookup {
+export function initializedCodex(prepared: Pick<PreparedSpawn, "paneId" | "name">, environment: HerdrEnvironment): AgentLookup {
   const clock = environment.clock ?? defaultClock;
   const deadline = clock.now() + CODEX_INITIALIZATION_TIMEOUT_MS;
   let terminalId: string | null = null;
   let sessionId: string | null = null;
+  const handledStartupScreens = new Set<string>();
   while (clock.now() < deadline) {
     const observed = getAgent(prepared.paneId, environment, deadline - clock.now());
     if (observed.kind !== "found") return observed;
     const agent = observed.agent;
-    if (agent.paneId !== prepared.paneId || agent.name !== prepared.name || agent.kind !== "codex" || agent.terminalId === null) {
+    if (agent.paneId !== prepared.paneId || agent.name !== prepared.name || agent.kind !== "codex") {
       return { kind: "unavailable", detail: "Codex initialization target is missing or no longer matches the created pane" };
     }
     terminalId ??= agent.terminalId;
-    if (agent.terminalId !== terminalId || (sessionId !== null && agent.sessionId !== sessionId)) {
+    if ((terminalId !== null && agent.terminalId !== terminalId) || (sessionId !== null && agent.sessionId !== sessionId)) {
       return { kind: "unavailable", detail: "Codex initialization identity changed; refusing the replacement" };
     }
     sessionId ??= agent.sessionId;
     if (agent.status === "blocked") return { kind: "unavailable", detail: "Codex initialization is blocked; inspect the retained pane" };
     if (sessionId !== null && (agent.status === "idle" || agent.status === "done")) return observed;
+    if (terminalId !== null && sessionId === null && agent.status === "idle") {
+      const run = environmentRun(environment);
+      const screen = run(["agent", "read", prepared.paneId, "--source", "visible"], undefined, Math.min(2000, deadline - clock.now()));
+      if (screen.status === 0) {
+        const choice = /Hooks need review[\s\S]*Continue without trusting \(hooks won't run\)/.test(screen.stdout) ? { key: "untrusted-hooks", option: "3" }
+          : /Update available[\s\S]*2\. Skip(?:\s|$)/.test(screen.stdout) ? { key: "defer-update", option: "2" } : null;
+        if (choice !== null && !handledStartupScreens.has(choice.key)) {
+          // Only a fresh pane owned by this spawn reaches here. Reconfirm its terminal before sending a menu choice.
+          const beforeChoice = getAgent(prepared.paneId, environment, Math.min(2000, deadline - clock.now()));
+          if (beforeChoice.kind !== "found" || beforeChoice.agent.name !== prepared.name || beforeChoice.agent.terminalId !== terminalId || beforeChoice.agent.sessionId !== null || beforeChoice.agent.status !== "idle") {
+            return { kind: "unavailable", detail: "Codex startup screen changed before the owned pane could be advanced" };
+          }
+          const currentScreen = run(["agent", "read", prepared.paneId, "--source", "visible"], undefined, Math.min(2000, deadline - clock.now()));
+          if (currentScreen.status !== 0 || currentScreen.stdout !== screen.stdout) return { kind: "unavailable", detail: "Codex startup screen changed before the owned pane could be advanced" };
+          const selected = run(["agent", "send-keys", prepared.paneId, choice.option, "enter"], undefined, Math.min(2000, deadline - clock.now()));
+          if (selected.status !== 0) return { kind: "unavailable", detail: "Codex startup screen could not be advanced; inspect the retained pane" };
+          handledStartupScreens.add(choice.key);
+        }
+      }
+    }
     const remaining = deadline - clock.now();
     if (remaining > 0) clock.sleep(Math.min(CODEX_INITIALIZATION_POLL_MS, remaining));
   }
@@ -521,23 +558,14 @@ export function spawnImplementor(
   }
 
   const startArgv = ["agent", "start", input.name, "--kind", kind, "--pane", created, ...nativeAgentArgs(kind, input.model, input.effort)];
-  const clock = environment.clock ?? defaultClock;
-  const firstStartAt = clock.now();
-  let started = run(startArgv, cwd);
-  let busyRetries = 0;
-  while (started.status !== 0 && herdrErrorCode(started.stderr) === "agent_pane_busy"
-    && clock.now() - firstStartAt < AGENT_START_BUSY_TIMEOUT_MS) {
-    clock.sleep(AGENT_START_BUSY_RETRY_MS);
-    busyRetries += 1;
-    started = run(startArgv, cwd);
-  }
+  const { result: started, busyRetries, elapsedMs } = startAgentWhenPaneReady(startArgv, { ...environment, run }, cwd);
   if (started.status !== 0) {
     // A nonzero startup may leave a live trust dialog (2026-09-07).
     // Only a positively observed shell-only foreground can be cleaned up;
     // an absent name alone does not prove the new pane is empty.
     const code = herdrErrorCode(started.stderr);
     const waited = code === "agent_pane_busy"
-      ? `; the pane never became an available shell in ${Math.round((clock.now() - firstStartAt) / 1000)} s (${busyRetries} retries)`
+      ? `; the pane never became an available shell in ${Math.round(elapsedMs / 1000)} s (${busyRetries} retries)`
       : "";
     let cleanup = `pane ${created} was retained for inspection; startup state is uncertain, and no handoff was sent`;
     if (code === "agent_not_ready") {
@@ -711,6 +739,7 @@ export interface AgentObservation {
   /** Epoch ms of the last lifecycle change herdr saw, or null when unreported. */
   activityAt: number | null;
   stateChangeSeq: number | null;
+  interactiveReady: boolean | null;
   inputGuard: string | null;
 }
 
@@ -765,6 +794,7 @@ export function getAgent(target: string, environment: HerdrEnvironment = {}, tim
       status: (AGENT_STATUSES.has(status) ? status : "unknown") as AgentObservation["status"],
       activityAt: Number.isFinite(activity) && activity > 0 ? activity : null,
       stateChangeSeq: typeof raw["state_change_seq"] === "number" ? raw["state_change_seq"] : null,
+      interactiveReady: typeof raw["interactive_ready"] === "boolean" ? raw["interactive_ready"] : null,
       inputGuard: text(raw["input_guard"]),
     },
   };

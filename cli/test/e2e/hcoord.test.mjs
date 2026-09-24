@@ -20,7 +20,7 @@ const target=process.argv[4];
 if(process.argv[2]==='agent' && process.argv[3]==='get') {
   const row=target==='parent-pane'?{name:'parent',session:'one',instance:'a'}:target==='child-pane'?{name:'child',session:'two',instance:'b'}:target?.endsWith('-pane') && fs.existsSync(path.join(process.env.HOME,target+'.started'))?{name:target.slice(0,-5),session:target+'-session',instance:target+'-instance'}:null;
   if(!row){process.stderr.write(JSON.stringify({error:{code:'agent_not_found'}}));process.exitCode=1;}
-  else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:row.name,agent:process.env.HCOORD_FAKE_WRONG_KIND==='1'&&target==='kind-check-pane'?'claude':'codex',agent_session:{value:row.session},terminal_id:row.instance,agent_status:status,input_guard:process.env.HCOORD_FAKE_GUARD==='1'&&process.env.HCOORD_FAKE_INPUT_GUARD!=='0'?'test-guard':undefined}}}));}
+  else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';const initial=target==='optioned-pane'&&!fs.existsSync(path.join(process.env.HOME,'optioned.initialized'));if(initial)fs.writeFileSync(path.join(process.env.HOME,'optioned.initialized'),'1');process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:process.env.HCOORD_FAKE_OBSERVER_REPLACED==='1'&&target==='parent-pane'?'replacement':row.name,agent:process.env.HCOORD_FAKE_WRONG_KIND==='1'&&target==='kind-check-pane'?'claude':'codex',agent_session:initial?undefined:{value:row.session},terminal_id:row.instance,agent_status:status,interactive_ready:process.env.HCOORD_FAKE_NOT_READY!=='1'}}}));}
 } else if(process.argv[2]==='pane' && process.argv[3]==='get') {
   if(target?.endsWith('-pane') && !['parent-pane','child-pane'].includes(target) && !fs.existsSync(path.join(process.env.HOME,target.slice(0,-5)+'.tab'))){process.stderr.write('pane missing');process.exitCode=1;}
   else {const cwdFile=path.join(process.env.HOME,target==='parent-pane'?'parent.cwd':target.slice(0,-5)+'.cwd');const cwd=fs.existsSync(cwdFile)?fs.readFileSync(cwdFile,'utf8'):process.env.HOME;process.stdout.write(JSON.stringify({result:{type:'pane_info',pane:{pane_id:process.env.HCOORD_FAKE_PANE_ID_MISSING==='1'&&target==='partial-pane'?undefined:target,workspace_id:'test-workspace',cwd}}}));}
@@ -31,13 +31,13 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
 } else if(process.argv[2]==='agent' && process.argv[3]==='start') {
   const name=process.argv[4], pane=process.argv[process.argv.indexOf('--pane')+1];
   if(process.env.HCOORD_FAKE_START_FAIL==='1'){process.stderr.write('start outcome unknown');process.exitCode=8;}
-  else {fs.writeFileSync(path.join(process.env.HOME,pane+'.started'),'1');process.stdout.write(JSON.stringify({result:{agent:{name,pane_id:pane}}}));}
+  else {fs.writeFileSync(path.join(process.env.HOME,pane+'.started'),'1');if(name==='optioned')fs.writeFileSync(path.join(process.env.HOME,'optioned.start-args.json'),JSON.stringify(process.argv.slice(2)));process.stdout.write(JSON.stringify({result:{agent:{name,pane_id:pane}}}));}
 } else if(process.argv[2]==='agent' && process.argv[3]==='prompt') {
-  if(process.argv[4]==='--help') process.stdout.write('Usage: herdr agent prompt <TARGET> <TEXT>'+(process.env.HCOORD_FAKE_GUARD==='1'?' --expected-input-guard <GUARD>':''));
-  else if(process.env.HCOORD_FAKE_GUARD==='1' && process.argv[process.argv.indexOf('--expected-input-guard')+1]==='test-guard') {
-    fs.appendFileSync(path.join(process.env.HOME,'guarded-prompts.jsonl'),JSON.stringify({target:process.argv[4],text:process.argv[5]})+'\\n');
+  if(process.argv[4]==='--help') process.stdout.write(process.env.HCOORD_FAKE_PROMPT_API==='0'?'Usage: herdr agent prompt --unsupported':'Usage: herdr agent prompt <TARGET> <TEXT>');
+  else if(!process.argv.includes('--expected-input-guard')) {
+    fs.appendFileSync(path.join(process.env.HOME,'official-prompts.jsonl'),JSON.stringify({target:process.argv[4],text:process.argv[5]})+'\\n');
     process.stdout.write(JSON.stringify({result:{outcome:'submitted'}}));
-  } else {fs.writeFileSync(path.join(process.env.HOME,'UNSAFE_PROMPT'),'1');process.stderr.write('unexpected unguarded prompt');process.exitCode=9;}
+  } else {fs.writeFileSync(path.join(process.env.HOME,'UNSUPPORTED_GUARD'),'1');process.stderr.write('unexpected guarded prompt');process.exitCode=9;}
 } else if(process.argv[2]==='notification' && process.argv[3]==='show') {
   fs.writeFileSync(path.join(process.env.HOME,'notification-args.json'),JSON.stringify(process.argv.slice(2)));
   process.stdout.write(JSON.stringify({result:{outcome:'shown'}}));
@@ -45,8 +45,8 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
 `, { mode: 0o755 });
   const env = { ...process.env, HOME: home, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
   delete env.HERDR_SOCKET_PATH;
-  delete env.HCOORD_FAKE_INPUT_GUARD;
-  env.HCOORD_FAKE_GUARD = "1";
+  delete env.HCOORD_FAKE_PROMPT_API;
+  delete env.HCOORD_FAKE_OBSERVER_REPLACED;
   let daemon = null;
   let daemonErrors = "";
   const start = async () => {
@@ -99,23 +99,23 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   const child = ok("agent", "register", "--machine", "local", "--session", "two", "--instance", "b", "--name", "child", "--parent", parent.id, "--pane", "child-pane");
   assert.equal(JSON.parse(command("agent", "register", "--machine", "remote", "--session", "one", "--instance", "a", "--name", "remote", "--pane", "parent-pane").stdout).error.code, "unsupported_remote");
   assert.equal(command("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "wrong", "--pane", "parent-pane").status, 1);
-  env.HCOORD_FAKE_GUARD = "0";
+  env.HCOORD_FAKE_PROMPT_API = "0";
   assert.equal(command("sasu", "enable").status, 1, "Sasu cannot opt into an unsupported wake path");
   assert.equal(fs.existsSync(path.join(home, ".hcoord", "sasu-enabled")), false);
-  env.HCOORD_FAKE_GUARD = "1";
+  delete env.HCOORD_FAKE_PROMPT_API;
   ok("sasu", "enable");
   const sasuArgs = ["sasu", "register", "--run", "run-one", "--project", home, "--observer-name", "parent", "--observer-pane", "parent-pane", "--observer-session", "one", "--observer-instance", "a", "--implementor-name", "child", "--implementor-pane", "child-pane", "--implementor-session", "two", "--implementor-instance", "b"];
   await stop();
-  env.HCOORD_FAKE_INPUT_GUARD = "0";
+  env.HCOORD_FAKE_OBSERVER_REPLACED = "1";
   fs.writeFileSync(path.join(home, ".hcoord", "api.sock.lock"), "99999999\n");
   fs.mkdirSync(path.join(home, ".hcoord", "api.sock.lock.recovery"));
   fs.writeFileSync(path.join(home, ".hcoord", "api.sock.lock.recovery", "owner"), "99999999\n");
   await start();
   assert.equal(ok("daemon", "status").stale, undefined, "abandoned lock recovery does not block restart");
-  assert.equal(command(...sasuArgs).status, 1, "exact Observer guard is required even when the prompt flag exists");
+  assert.equal(command(...sasuArgs).status, 1, "exact Observer identity is required before ownership transfer");
   assert.equal(ok("status").counts.sasuRuns, 0);
   await stop();
-  delete env.HCOORD_FAKE_INPUT_GUARD;
+  delete env.HCOORD_FAKE_OBSERVER_REPLACED;
   await start();
   const registeredRun = ok(...sasuArgs);
   assert.equal(registeredRun.owner, "hcoord");
@@ -144,13 +144,18 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   ok("config", "set", "--key", "remindMs", "--value", "15m");
   ok("config", "set", "--key", "escalateMs", "--value", "30m");
   await stop();
-  delete env.HCOORD_FAKE_GUARD;
   await start();
   const spawned = ok("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "worker", "--intent", "spawn-1");
   assert.equal(spawned.participant.parent, parent.id);
   assert.equal(spawned.watch.observer, parent.id);
   assert.equal(ok("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "worker", "--intent", "spawn-1").participant.id, spawned.participant.id);
   assert.equal(fs.readFileSync(path.join(home, "worker.tab"), "utf8"), "1");
+  const optionedResult = spawnSync(process.execPath, [CLI, "agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "optioned", "--intent", "spawn-optioned", "--json", "--", "-m", "gpt-6-sol", "-c", "model_reasoning_effort=xhigh"], { env, encoding: "utf8" });
+  assert.equal(optionedResult.status, 0, optionedResult.stdout);
+  assert.equal(JSON.parse(optionedResult.stdout).value.participant.name, "optioned");
+  const startArgs = JSON.parse(fs.readFileSync(path.join(home, "optioned.start-args.json"), "utf8"));
+  assert.deepEqual(startArgs.slice(-5, -1), ["-m", "gpt-6-sol", "-c", "model_reasoning_effort=xhigh"]);
+  assert.match(startArgs.at(-1), /Session initialization only/);
   assert.equal(JSON.parse(command("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "Bad Name", "--intent", "invalid-spawn").stdout).error.code, "invalid_argument");
   assert.equal(fs.existsSync(path.join(home, "Bad Name.tab")), false, "invalid spawn does not create a pane");
   const unobserved = ok("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "solo", "--intent", "spawn-2", "--no-watch");
@@ -252,6 +257,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   ok("watch", "start", child.id, "--observer", parent.id, "--actor", "human", "--interval", "1s");
   assert.equal(ok("graph").watch.filter((item) => item.target === child.id).length, 2);
   fs.writeFileSync(path.join(home, "child-pane.status"), "done");
+  fs.writeFileSync(path.join(home, "parent-pane.status"), "working");
   let watch;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     watch = ok("watch", "list").find((item) => item.target === child.id);
@@ -268,8 +274,19 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
     await wait(100);
   }
   assert.equal(cycleRequest.deliveries[0].status, "deferred");
-  assert.match(cycleRequest.deliveries[0].reason, /input guard is absent/);
-  assert.equal(fs.existsSync(path.join(home, "UNSAFE_PROMPT")), false);
+  assert.match(cycleRequest.deliveries[0].reason, /recipient is working/);
+  fs.writeFileSync(path.join(home, "parent-pane.status"), "idle");
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    cycleRequest = ok("request", "show", cycleRequestId);
+    if (cycleRequest.deliveries[0].status === "accepted") break;
+    await wait(100);
+  }
+  assert.equal(cycleRequest.deliveries[0].status, "accepted");
+  const watchPrompt = fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)).find((entry) => entry.text.includes(cycleRequestId));
+  assert.match(watchPrompt.text, new RegExp(`HCOORD_WATCH_CHECK[\\s\\S]*target: ${child.id}[\\s\\S]*cycle: ${watch.cycle}`));
+  assert.match(watchPrompt.text, /Inspect the target's current exact Herdr execution before confirming this cycle/);
+  assert.match(watchPrompt.text, /Do not use request reply for a watch cycle/);
+  assert.equal(fs.existsSync(path.join(home, "UNSUPPORTED_GUARD")), false);
   ok("watch", "check", child.id, "--cycle", watch.cycle, "--actor", parent.id);
   assert.equal(ok("watch", "list").find((item) => item.target === child.id).cycle, null);
   assert.equal(command("watch", "assign", child.id, "--observer", spawned.participant.id, "--actor", "human").status, 1);
@@ -280,11 +297,10 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(stale.stale, true);
   assert.equal(stale.data.answer, "A, not B");
   assert.equal(command("request", "send", "--from", child.id, "--to", "human", "--body", "No service", "--intent", "choice-3").status, 1);
-  env.HCOORD_FAKE_GUARD = "1";
   await start();
   assert.equal(ok("request", "show", sent.id).answer, "A, not B");
   assert.equal(ok("graph").creation.find((edge) => edge.child === child.id).parent, parent.id);
-  const guarded = ok("request", "send", "--from", child.id, "--to", parent.id, "--body", "Guarded question", "--intent", "guarded-1");
+  const guarded = ok("request", "send", "--from", child.id, "--to", parent.id, "--body", "Official question", "--intent", "official-1");
   let accepted;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     accepted = ok("request", "show", guarded.id);
@@ -296,7 +312,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   const acknowledged = ok("request", "ack", guarded.id, "--actor", parent.id);
   assert.equal(acknowledged.deliveries[0].status, "acknowledged");
   assert.equal(ok("request", "ack", guarded.id, "--actor", parent.id).deliveries[0].status, "acknowledged");
-  const promptCount = () => fs.readFileSync(path.join(home, "guarded-prompts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((entry) => entry.text.includes(guarded.id)).length;
+  const promptCount = () => fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)).filter((entry) => entry.text.includes(guarded.id)).length;
   assert.equal(promptCount(), 1);
   await stop();
   await start();

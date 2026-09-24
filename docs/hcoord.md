@@ -22,6 +22,8 @@ If tab creation returned a pane ID but saving it failed, repair the reported sto
 `hcoord agent list --json`, `hcoord watch list --json`, `hcoord graph --json`, and `hcoord events --follow` provide discovery and IDE data.
 `--project` filters a list and does not confer watch authority.
 Only the assigned observer can confirm a watch cycle with `watch check`; `request reply` cannot close a watch request or prompt the watched child.
+The watch notification names the target and cycle.
+The observer inspects the target's current Herdr execution, runs the named `hcoord watch check <target> --cycle <cycle> --actor <observer>` only after inspection, and ends its turn if the target cannot be inspected so the cycle remains open for a reminder.
 A human can assign an unowned or stopped watch, while the recorded parent may start its own child's first watch.
 After a watch stops, the retained check request can be canceled by its sender or a human, or a human can restart the watch so the outstanding cycle reaches a new observer.
 
@@ -32,6 +34,8 @@ The notification carries only the request ID; the human opens `hcoord inbox` and
 `hcoord request reply <id> --as human --body 'A로 진행'` records the literal answer with respondent and recorder separated.
 An agent that records a human reply supplies `--recorded-by <agent-id>` and must use the ID of the request the human actually answered.
 The parent uses `hcoord request relay <id> --actor <parent-id> --body 'A로 진행'`, and the child uses `hcoord request ack <id> --actor <child-id> --delivery <delivery-id>` after accepting delivery.
+After escalating a question to a human, the parent ends its turn.
+It does not poll: the coordinator wakes the idle parent with `HCOORD_ANSWER` when the answer is recorded.
 When one recipient receives several phases of a request, `--delivery` identifies the exact receipt; without it the command considers only the newest delivery and rejects acknowledgement until that delivery was accepted.
 Answer, relay, delivery acceptance, acknowledgment, and task success remain separate facts.
 `request cancel` stops future reminders and unsent delivery; a late reply remains in history without reopening the request.
@@ -46,8 +50,8 @@ Duplicate answers fail without overwriting the first, a canceled request records
 
 ## Sasu transition and support
 
-`hcoord sasu enable` opts new Sasu dispatches into coordinator registration only when the daemon is running and Herdr advertises guarded prompt support.
-Each dispatch also checks the exact Observer's input guard before a child is created; an unavailable guard refuses the hcoord-owned run.
+`hcoord sasu enable` opts new Sasu dispatches into coordinator registration only when the daemon is running and the official Herdr prompt API is available.
+Each dispatch also checks the exact Observer pane, session, and terminal before a child is created; an unavailable or changed execution refuses the hcoord-owned run.
 An existing run keeps its legacy supervisor owner; Sasu dispatch pins each new run's owner before creating the child and refuses fallback if the selected coordinator is unavailable.
 This work does not enable the marker or touch the live supervisor automatically.
 The legacy supervisor must remain installed while any legacy run is active.
@@ -60,12 +64,15 @@ Do not run that command while an older implementation run is still active.
 | User-local IPC and restart recovery | Verified in an isolated macOS run | Unsupported until user-limited named pipe is implemented and tested |
 | Login start and native process ownership | Implemented; launchd session unverified | Unsupported |
 | Manual stop | Verified in an isolated macOS run | Unsupported |
-| Herdr request notification | Fake Herdr verified; live desktop delivery unverified | Unsupported |
+| Herdr request notification | Official 0.9.1 isolated parent and child roundtrip verified; live desktop delivery unverified | Unverified |
 | System notification without Herdr | Unsupported; CLI inbox remains | Unsupported; CLI inbox remains |
-| Guarded prompt delivery | Unsupported on installed Herdr 0.9.1; requests remain deferred | Unverified |
+| Official prompt delivery | Isolated exact identity and readiness preflight verified; submission is non-atomic | Unverified |
 | Remote Herdr and SSH API bridge | Unsupported until both paths pass independent checks | Unsupported |
 
 The macOS daemon's local socket and ledger are restricted to the user; remote hosts are refused instead of exposing an unauthenticated network API.
-The installed Herdr 0.9.1 has no confirmed atomic input guard, so agent delivery is deferred and no ordinary prompt is substituted.
+The installed Herdr 0.9.1 has no confirmed atomic input guard.
+The coordinator checks the exact recipient session, terminal, lifecycle, and interactive readiness immediately before submitting through official `agent prompt`.
+Known working, blocked, unknown, or changed executions are deferred; an uncertain submission is never blindly retried.
+Herdr cannot atomically bind submission to that preflight or protect human typing between the check and the prompt, so a residual race remains.
 `hcoord request show <id>` gives the exact reason and next action.
 Any future remote adapter must use the existing authenticated SSH path for coordinator API access and verify Herdr's remote target path separately.

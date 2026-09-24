@@ -69,7 +69,7 @@ if (key === "agent start") {
   answer({ result: { type: "agent_started" } });
 }
 if (key === "agent prompt") {
-  if (argv[2] === "--help") { process.stdout.write("Submit a prompt to an agent\\n" + (process.env.HERDR_FAKE_GUARD_SUPPORT === "1" ? "  --expected-input-guard <GUARD>\\n" : "")); process.exit(0); }
+  if (argv[2] === "--help") { process.stdout.write("Submit a prompt to an agent\\nUsage: herdr agent prompt <TARGET> <TEXT> [OPTIONS]\\n" + (process.env.HERDR_FAKE_GUARD_SUPPORT === "1" ? "  --expected-input-guard <GUARD>\\n" : "")); process.exit(0); }
   const target = argv[2];
   const guardIndex = argv.indexOf("--expected-input-guard");
   if (guardIndex !== -1 && process.env.HERDR_FAKE_GUARD_SUPPORT !== "1") { process.stderr.write("unknown option: --expected-input-guard\\n"); process.exit(2); }

@@ -1,6 +1,6 @@
 import os from "node:os";
 import path from "node:path";
-import { getAgent, guardedPromptSupport, promptAgent, runHerdrCommand } from "../implement/herdr";
+import { CODEX_INITIALIZATION_PROMPT, getAgent, initializedCodex, promptAgent, runHerdrCommand, startAgentWhenPaneReady } from "../implement/herdr";
 import { HcoordError, validateSpawnSpec, type Delivery, type Participant, type Request, type SpawnIntent } from "./model";
 
 function scopeEnv(hostScope: string): NodeJS.ProcessEnv {
@@ -20,49 +20,63 @@ export function validateLocalBinding(machine: string, session: string, instance:
   return { pane, runtime: found.agent.status === "blocked" ? "unknown" : found.agent.status };
 }
 
-type LocalBinding = Pick<Participant, "machine" | "hostScope" | "session" | "instance" | "pane">;
-export function inspectParticipant(participant: LocalBinding): { runtime: Participant["runtime"]; connection: Participant["connection"]; reason: string; guard: string | null } {
-  if (participant.machine !== "local" && participant.machine !== os.hostname()) return { runtime: "unknown", connection: "unverified", reason: "remote Herdr routing is not verified", guard: null };
-  if (participant.pane === null) return { runtime: "unknown", connection: "unverified", reason: "participant has no exact pane binding", guard: null };
+type LocalBinding = Pick<Participant, "machine" | "hostScope" | "session" | "instance" | "pane"> & { name?: string };
+type ParticipantInspection = { runtime: Participant["runtime"]; connection: Participant["connection"]; reason: string; interactiveReady: boolean | null };
+export const OFFICIAL_PROMPT_BOUNDARY = {
+  transport: "Herdr 0.9.1 agent.prompt",
+  preflight: "exact pane, session, terminal, lifecycle and interactive readiness",
+  atomicInputProtection: false,
+  limitation: "Herdr 0.9.1 does not atomically bind prompt submission to the preflight identity or protect human typing between inspection and submission",
+} as const;
+
+export function inspectParticipant(participant: LocalBinding): ParticipantInspection {
+  if (participant.machine !== "local" && participant.machine !== os.hostname()) return { runtime: "unknown", connection: "unverified", reason: "remote Herdr routing is not verified", interactiveReady: null };
+  if (participant.pane === null) return { runtime: "unknown", connection: "unverified", reason: "participant has no exact pane binding", interactiveReady: null };
   const found = getAgent(participant.pane, { env: scopeEnv(participant.hostScope) }, 1000);
-  if (found.kind !== "found") return { runtime: "unknown", connection: "unavailable", reason: found.detail, guard: null };
+  if (found.kind !== "found") return { runtime: "unknown", connection: "unavailable", reason: found.detail, interactiveReady: null };
   const agent = found.agent;
-  if (agent.sessionId !== participant.session || agent.terminalId !== participant.instance || agent.paneId !== participant.pane) return { runtime: "unknown", connection: "unavailable", reason: "execution identity changed", guard: null };
-  return { runtime: agent.status === "blocked" ? "unknown" : agent.status, connection: "connected", reason: "exact Herdr execution observed", guard: agent.inputGuard };
+  if (agent.sessionId !== participant.session || agent.terminalId !== participant.instance || agent.paneId !== participant.pane || (participant.name !== undefined && agent.name !== participant.name)) return { runtime: "unknown", connection: "unavailable", reason: "execution identity changed", interactiveReady: null };
+  return { runtime: agent.status === "blocked" ? "unknown" : agent.status, connection: "connected", reason: agent.status === "blocked" ? "recipient is blocked" : "exact Herdr execution observed", interactiveReady: agent.interactiveReady };
 }
 
-export function inspectDelivery(recipient: Participant): { ready: boolean; reason: string; guard: string | null; runtime: Participant["runtime"]; connection: Participant["connection"] } {
+export function inspectDelivery(recipient: Participant): { ready: boolean; reason: string; runtime: Participant["runtime"]; connection: Participant["connection"] } {
   const observed = inspectParticipant(recipient);
-  const { runtime, connection, guard } = observed;
+  const { runtime, connection } = observed;
   if (connection !== "connected") return { ready: false, ...observed };
-  if (runtime !== "idle" && runtime !== "done") return { ready: false, reason: `recipient is ${runtime}; safe submission deferred`, guard: null, runtime, connection };
-  if (guard === null) return { ready: false, reason: "Herdr input guard is absent; unguarded prompt is forbidden", guard: null, runtime, connection };
-  const support = guardedPromptSupport({ run: (args) => runHerdrCommand(args, 2000, scopeEnv(recipient.hostScope)) });
-  if (support.supported !== true) return { ready: false, reason: support.supported === false ? "Herdr guarded prompt command is unsupported" : "Herdr guarded prompt capability could not be confirmed", guard: null, runtime, connection: "connected" };
-  return { ready: true, reason: "guarded input available", guard, runtime, connection };
+  if (runtime !== "idle" && runtime !== "done") return { ready: false, reason: observed.reason === "recipient is blocked" ? observed.reason : `recipient is ${runtime}; submission deferred`, runtime, connection };
+  if (observed.interactiveReady !== true) return { ready: false, reason: "Herdr has not confirmed interactive readiness; submission deferred", runtime, connection };
+  return { ready: true, reason: "exact idle or done execution is interactive-ready", runtime, connection };
 }
 
-export function guardedDeliveryAvailable(participant: LocalBinding): { ready: boolean; reason: string } {
+export function officialDeliveryAvailable(participant: LocalBinding): { ready: boolean; reason: string } {
   const observed = inspectParticipant(participant);
   if (observed.connection !== "connected") return { ready: false, reason: observed.reason };
-  if (observed.guard === null) return { ready: false, reason: "exact Observer has no Herdr input guard" };
-  const support = guardedPromptSupport({ run: (args) => runHerdrCommand(args, 2000, scopeEnv(participant.hostScope)) });
-  return support.supported === true ? { ready: true, reason: "guarded delivery available" } : { ready: false, reason: "Herdr guarded prompt command is unsupported or unconfirmed" };
+  const support = officialPromptSupport(participant.hostScope);
+  return support.ready ? { ready: true, reason: "exact Observer binding and official agent.prompt API confirmed; delivery remains non-atomic" } : support;
+}
+
+export function officialPromptSupport(hostScope?: string): { ready: boolean; reason: string } {
+  const help = runHerdrCommand(["agent", "prompt", "--help"], 2000, hostScope === undefined ? process.env : scopeEnv(hostScope));
+  if (help.status !== 0 || !/herdr agent prompt <TARGET> <TEXT>/.test(`${help.stdout}${help.stderr}`)) return { ready: false, reason: "official Herdr agent.prompt API could not be confirmed" };
+  return { ready: true, reason: "official Herdr agent.prompt API confirmed; delivery remains non-atomic" };
 }
 
 export function messageForDelivery(item: Request, delivery: Delivery): string {
-  if (delivery.phase === "watch_check") return `HCOORD_WATCH_CHECK\nrequest: ${item.id}\nThe watch cycle still needs confirmation after handover. Inspect the target, then run hcoord watch check ${item.from} --cycle ${item.intent.split(":").at(-1)} --actor ${delivery.recipient}`;
+  const watch = item.intent.split(":");
+  if (watch.length === 4 && watch[0] === "watch" && watch[1] === item.from && watch[3]) {
+    return `HCOORD_WATCH_CHECK\nrequest: ${item.id}\ntarget: ${item.from}\ncycle: ${watch[3]}\nRecorded observation: ${item.context ?? "none"}\nInspect the target's current exact Herdr execution before confirming this cycle. Then run hcoord watch check ${item.from} --cycle ${watch[3]} --actor ${delivery.recipient}. Do not use request reply for a watch cycle. If inspection is unavailable, leave the cycle unchecked and end this turn; hcoord will remind you.`;
+  }
   if (delivery.phase === "relay_problem") return `HCOORD_RELAY_PROBLEM\nrequest: ${item.id}\nThe recorded answer still needs relay. Inspect hcoord request show ${item.id}, then relay within its scope.`;
   if (delivery.phase === "delivery_problem") return `HCOORD_DELIVERY_PROBLEM\nrequest: ${item.id}\nInspect the recorded answer and unresolved child delivery with hcoord request show ${item.id}`;
   if (delivery.phase === "relay") return `HCOORD_RELAY\nrequest: ${item.id}\n${item.relayBody}\nAcknowledge with hcoord request ack ${item.id} --actor ${delivery.recipient} --delivery ${delivery.id}`;
   if (delivery.phase === "answer") return `HCOORD_ANSWER\nrequest: ${item.id}\nanswer: ${item.answer}\n${item.intermediary === delivery.recipient ? `Relay within the answer's scope with hcoord request relay ${item.id} --body <text> --actor ${delivery.recipient}` : `Acknowledge with hcoord request ack ${item.id} --actor ${delivery.recipient} --delivery ${delivery.id}`}`;
-  return `HCOORD_REQUEST\nrequest: ${item.id}\n${item.body}\nInspect with hcoord request show ${item.id}`;
+  return `HCOORD_REQUEST\nrequest: ${item.id}\n${item.body}\nInspect with hcoord request show ${item.id}. If you can answer, use hcoord request reply ${item.id} --as ${delivery.recipient} --body <answer>. If a human must decide, use hcoord request escalate ${item.id} --actor ${delivery.recipient}, then end this turn. Do not poll: hcoord will wake you with HCOORD_ANSWER when the human reply is ready. Relay only the recorded answer.`;
 }
 
-export function submitGuarded(item: Request, delivery: Delivery, recipient: Participant, guard: string): { status: Delivery["status"]; code: string; reason: string } {
+export function submitOfficial(item: Request, delivery: Delivery, recipient: Participant): { status: Delivery["status"]; code: string; reason: string } {
   if (recipient.pane === null) throw new HcoordError("invalid_state", "recipient pane missing at submission");
-  const result = promptAgent({ target: recipient.pane, text: messageForDelivery(item, delivery), expectedInputGuard: guard }, { env: scopeEnv(recipient.hostScope) }, 2000);
-  if (result.path !== "guarded") throw new HcoordError("unsafe_delivery", "Herdr adapter returned an unguarded path; no success recorded");
+  const result = promptAgent({ target: recipient.pane, text: messageForDelivery(item, delivery), expectedInputGuard: null }, { env: scopeEnv(recipient.hostScope) }, 2000);
+  if (result.path !== "session-match") throw new HcoordError("runtime_unavailable", "Herdr adapter returned an unexpected prompt path; inspect the delivery outcome");
   return { status: result.outcome === "accepted" ? "accepted" : result.outcome === "rejected" ? "deferred" : "unknown", code: result.code, reason: result.detail };
 }
 
@@ -115,11 +129,35 @@ export function inspectSpawnedAgent(record: SpawnIntent): { session: string; ins
   return { session: found.agent.sessionId, instance: found.agent.terminalId, runtime: found.agent.status === "blocked" ? "unknown" : found.agent.status };
 }
 
+/** Preserve an explicit user task; initialize sessions launched with Codex options only. */
+function codexLaunchArgs(nativeArgs: string[]): string[] {
+  const valueFlags = new Set(["-c", "--config", "-i", "--image", "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir", "-a", "--ask-for-approval", "--remote", "--remote-auth-token-env", "--local-provider", "--enable", "--disable"]);
+  let hasTask = false;
+  for (let index = 0; index < nativeArgs.length; index += 1) {
+    const arg = nativeArgs[index]!;
+    if (arg === "--") { hasTask = index + 1 < nativeArgs.length; break; }
+    if (valueFlags.has(arg)) { index += 1; continue; }
+    if (arg.startsWith("-")) continue;
+    hasTask = true;
+    break;
+  }
+  return hasTask ? nativeArgs : [...nativeArgs, CODEX_INITIALIZATION_PROMPT];
+}
+
 export function startSpawnedAgent(record: SpawnIntent): void {
   if (record.pane === null) throw new HcoordError("invalid_state", "spawn intent has no pane");
   validateSpawnSpec(record.name, record.kind);
-  const result = runHerdrCommand(["agent", "start", record.name, "--kind", record.kind, "--pane", record.pane, "--timeout", "10000", ...(record.nativeArgs.length ? ["--", ...record.nativeArgs] : [])], 12_000, scopeEnv(record.hostScope));
+  const nativeArgs = record.kind === "codex" ? codexLaunchArgs(record.nativeArgs) : record.nativeArgs;
+  const { result } = startAgentWhenPaneReady(["agent", "start", record.name, "--kind", record.kind, "--pane", record.pane, "--timeout", "10000", ...(nativeArgs.length ? ["--", ...nativeArgs] : [])], { env: scopeEnv(record.hostScope) });
   if (result.status !== 0) throw new HcoordError("spawn_uncertain", "Herdr did not confirm agent start; inspect the saved pane before retry", { intent: record.key, pane: record.pane, unfinishedStep: "agent_start" });
+  if (record.kind === "codex") {
+    const observed = initializedCodex({ paneId: record.pane, name: record.name }, { env: scopeEnv(record.hostScope) });
+    if (observed.kind !== "found" || observed.agent.sessionId === null || observed.agent.terminalId === null) {
+      // A mismatched execution is a conflict even if the startup wait ended first.
+      inspectSpawnedAgent(record);
+      throw new HcoordError("spawn_uncertain", "Codex initialization did not confirm a settled execution identity; retry this intent after inspecting the saved pane", { intent: record.key, pane: record.pane, unfinishedStep: "inspect_agent" });
+    }
+  }
 }
 
 export function discoverLocalAgents(registered: Participant[], project: string | null, hostScope = "default"): { items: Array<Record<string, unknown>>; partialFailures: string[] } {

@@ -26,7 +26,7 @@ import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest } from "../supervisor/digest";
 import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
 import { sasuEnabledPath } from "../hcoord/store";
-import { guardedDeliveryAvailable } from "../hcoord/herdr";
+import { officialDeliveryAvailable } from "../hcoord/herdr";
 import { DispatchRejected, assertDispatchablePrd, assertNotImplementor, dispatchImplementor, parseEnvPairs, placementFor } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
@@ -53,8 +53,8 @@ function hcoordCommand(argv: string[]): Record<string, unknown> {
 function assertHcoordReady(observer: NonNullable<ReturnType<typeof currentObserverIdentity>["identity"]>): void {
   const status = hcoordCommand(["daemon", "status"]);
   if (status["ok"] !== true || (status["value"] as Record<string, unknown> | undefined)?.["stale"] === true) throw new DispatchRejected("hcoord is enabled but its daemon is stopped; start it before dispatch; no legacy wake fallback was selected");
-  const capability = guardedDeliveryAvailable({ machine: "local", hostScope: observer.hostScope, session: observer.sessionId, instance: observer.terminalId, pane: observer.paneId });
-  if (!capability.ready) throw new DispatchRejected(`hcoord cannot safely wake the exact Observer: ${capability.reason}; no legacy wake fallback was selected`);
+  const capability = officialDeliveryAvailable({ machine: "local", hostScope: observer.hostScope, session: observer.sessionId, instance: observer.terminalId, pane: observer.paneId });
+  if (!capability.ready) throw new DispatchRejected(`hcoord cannot confirm the exact Observer for official wake: ${capability.reason}; no legacy wake fallback was selected`);
 }
 
 function registerHcoordRun(run: string, project: string, observer: NonNullable<ReturnType<typeof currentObserverIdentity>["identity"]>, observerName: string, implementor: { paneId: string; name: string; sessionId: string; terminalId: string; hostScope: string }): void {

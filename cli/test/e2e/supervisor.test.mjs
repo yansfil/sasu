@@ -67,9 +67,9 @@ test("hcoord transition registers a new run without legacy enrollment or wake", 
   const launchctl = installFakeLaunchctl(outside);
   const home = path.join(outside, "home");
   fs.mkdirSync(home, { recursive: true });
-  const base = { HOME: home, ...herdr.env, PATH: herdr.env.PATH, HERDR_FAKE_REQUIRED_SOCKET_PATH: "/tmp/fake.sock", HERDR_FAKE_GUARD_SUPPORT: "1", LAUNCHCTL_FAKE_LOG: launchctl.env.LAUNCHCTL_FAKE_LOG, LAUNCHCTL_FAKE_STATE: launchctl.env.LAUNCHCTL_FAKE_STATE };
+  const base = { HOME: home, ...herdr.env, PATH: herdr.env.PATH, HERDR_FAKE_REQUIRED_SOCKET_PATH: "/tmp/fake.sock", LAUNCHCTL_FAKE_LOG: launchctl.env.LAUNCHCTL_FAKE_LOG, LAUNCHCTL_FAKE_STATE: launchctl.env.LAUNCHCTL_FAKE_STATE };
   const observerEnv = { ...base, HERDR_ENV: "1", HERDR_PANE_ID: OBSERVER_PANE, HERDR_WORKSPACE_ID: "w4G", HERDR_SOCKET_PATH: "/tmp/fake.sock", CLAUDE_SESSION_ID: OBSERVER };
-  herdr.setAgents({ [OBSERVER_PANE]: observerAgent({ name: "observer", agent_status: "working", input_guard: "test-guard" }) });
+  herdr.setAgents({ [OBSERVER_PANE]: observerAgent({ name: "observer", agent_status: "working", interactive_ready: true }) });
   const daemon = spawn(process.execPath, [HCOORD, "daemon", "run"], { cwd: root, env: isolatedEnv(base), stdio: ["ignore", "ignore", "pipe"] });
   let daemonError = "";
   daemon.stderr.on("data", (chunk) => { daemonError += chunk; });

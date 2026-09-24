@@ -4,7 +4,7 @@ import os from "node:os";
 import { API_VERSION, HcoordError, MAX_CONNECTIONS, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, own, put, type Ledger } from "./model";
 import { event } from "./model";
 import { execute } from "./service";
-import { confirmSpawnPane, createSpawnPane, discoverLocalAgents, guardedDeliveryAvailable, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, startSpawnedAgent, submitGuarded, validateLocalBinding } from "./herdr";
+import { confirmSpawnPane, createSpawnPane, discoverLocalAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, startSpawnedAgent, submitOfficial, validateLocalBinding } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
 import { notifyHuman } from "./platform";
@@ -20,7 +20,7 @@ export async function callDaemon(operation: string, args: Record<string, unknown
   return await new Promise<WireResult>((resolve, reject) => {
     const socket = net.createConnection(socketPath(home));
     let text = "";
-    const timeoutMs = operation === "agent.spawn" ? 30_000 : 10_000;
+    const timeoutMs = operation === "agent.spawn" ? 75_000 : 10_000;
     const timer = setTimeout(() => { socket.destroy(); reject(new HcoordError("timeout", `coordinator did not answer within ${timeoutMs / 1000} seconds`)); }, timeoutMs);
     const finish = (error?: Error, value?: WireResult): void => { clearTimeout(timer); socket.destroy(); if (error) reject(error); else resolve(value!); };
     socket.on("connect", () => socket.write(request));
@@ -42,7 +42,8 @@ export function staleRead(operation: string, args: Record<string, unknown> = {},
   const state = loadLedger(home);
   const observedAt = new Date().toISOString();
   const outcome = execute(state, operation, args, observedAt);
-  const data = operation === "agent.list" ? { items: (outcome.value as Array<Record<string, unknown>>).map((item) => ({ registered: true, ...item })), partialFailures: ["daemon stopped; Herdr discovery unavailable"], observedAt: state.updatedAt } : outcome.value;
+  const data = operation === "agent.list" ? { items: (outcome.value as Array<Record<string, unknown>>).map((item) => ({ registered: true, ...item })), partialFailures: ["daemon stopped; Herdr discovery unavailable"], observedAt: state.updatedAt }
+    : operation === "status" ? { ...(outcome.value as object), deliverySafety: OFFICIAL_PROMPT_BOUNDARY } : outcome.value;
   return { ok: true, value: { data, stale: true, lastObservedAt: saved ? state.updatedAt : null, warning: saved ? "daemon stopped: automatic watch, reminders, and delivery are inactive" : "daemon stopped and no saved observation exists" }, observedAt };
 }
 
@@ -152,8 +153,8 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     if (run === "" || project === "") throw new HcoordError("invalid_argument", "run and project are required");
     const observerBinding = validateLocalBinding("local", String(args["observerSession"] ?? ""), String(args["observerInstance"] ?? ""), String(args["observerPane"] ?? ""), String(args["observerHostScope"] ?? "default"), String(args["observerName"] ?? ""));
     const implementorBinding = validateLocalBinding("local", String(args["implementorSession"] ?? ""), String(args["implementorInstance"] ?? ""), String(args["implementorPane"] ?? ""), String(args["implementorHostScope"] ?? "default"), String(args["implementorName"] ?? ""));
-    const observerCapability = guardedDeliveryAvailable({ machine: "local", hostScope: String(args["observerHostScope"] ?? "default"), session: String(args["observerSession"] ?? ""), instance: String(args["observerInstance"] ?? ""), pane: String(args["observerPane"] ?? "") });
-    if (!observerCapability.ready) throw new HcoordError("unsupported_runtime", `Sasu Observer wake cannot use guarded delivery: ${observerCapability.reason}`);
+    const observerCapability = officialDeliveryAvailable({ machine: "local", hostScope: String(args["observerHostScope"] ?? "default"), session: String(args["observerSession"] ?? ""), instance: String(args["observerInstance"] ?? ""), pane: String(args["observerPane"] ?? ""), name: String(args["observerName"] ?? "") });
+    if (!observerCapability.ready) throw new HcoordError("unsupported_runtime", `Sasu Observer wake cannot use official delivery: ${observerCapability.reason}`);
     const next = structuredClone(ledger);
     const observer = execute(next, "agent.register", { machine: "local", hostScope: args["observerHostScope"], session: args["observerSession"], instance: args["observerInstance"], name: args["observerName"], pane: args["observerPane"], project, runtime: observerBinding.runtime }, at).value as { id: string };
     const implementor = execute(next, "agent.register", { machine: "local", hostScope: args["implementorHostScope"], session: args["implementorSession"], instance: args["implementorInstance"], name: args["implementorName"], pane: args["implementorPane"], project, parent: observer.id, runtime: implementorBinding.runtime }, at).value as { id: string };
@@ -219,7 +220,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
         target.runtime = inspection.runtime;
         target.connection = inspection.connection;
         target.observedAt = at;
-        if (!inspection.ready || inspection.guard === null) {
+        if (!inspection.ready) {
           current.status = "deferred";
           current.reason = inspection.reason;
           saveLedger(next, home); ledger = next;
@@ -227,9 +228,21 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
         }
         // Persist uncertainty before the external effect. A crash or timeout never causes a blind resend.
         current.status = "unknown";
-        current.reason = "guarded submission reserved; outcome not yet confirmed";
+        current.reason = "official prompt submission reserved; outcome not yet confirmed";
         saveLedger(next, home); ledger = next;
-        const outcome = submitGuarded(item, delivery, recipient, inspection.guard);
+        // The disk reservation is required for retry safety. Reobserve directly
+        // afterward so known identity, lifecycle and readiness changes defer.
+        // Official 0.9.1 still cannot make this check atomic with agent.prompt.
+        const finalInspection = inspectDelivery(recipient);
+        if (!finalInspection.ready) {
+          const deferred = structuredClone(ledger);
+          const record = deferred.requests[item.id]!.deliveries.find((entry) => entry.id === delivery.id)!;
+          record.status = "deferred";
+          record.reason = finalInspection.reason;
+          saveLedger(deferred, home); ledger = deferred;
+          continue;
+        }
+        const outcome = submitOfficial(item, delivery, recipient);
         const finished = structuredClone(ledger);
         const recorded = finished.requests[item.id]!.deliveries.find((entry) => entry.id === delivery.id)!;
         recorded.status = outcome.status;
@@ -244,7 +257,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
   const server = net.createServer((socket) => {
     connections += 1;
     if (connections > MAX_CONNECTIONS) { socket.end(`${JSON.stringify({ ok: false, error: { code: "capacity", message: `connection limit ${MAX_CONNECTIONS} reached` }, observedAt: new Date().toISOString() })}\n`); connections -= 1; return; }
-    socket.setTimeout(35_000, () => socket.destroy());
+    socket.setTimeout(80_000, () => socket.destroy());
     let input = "";
     let received = false;
     socket.on("close", () => { connections -= 1; });
@@ -281,7 +294,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
             }
             let value = decoded.operation === "agent.spawn" ? spawnAgent(decoded.args, at) : decoded.operation === "sasu.register" ? registerSasuRun(decoded.args, at) : commit(decoded.operation, decoded.args, at);
             if (decoded.operation === "status") {
-              value = { ...(value as object), usage: { ledgerBytes: fs.existsSync(ledgerPath(home)) ? fs.statSync(ledgerPath(home)).size : 0,
+              value = { ...(value as object), deliverySafety: OFFICIAL_PROMPT_BOUNDARY, usage: { ledgerBytes: fs.existsSync(ledgerPath(home)) ? fs.statSync(ledgerPath(home)).size : 0,
                 connections, queuedOperations, queuedDeliveries: Object.values(ledger.requests).reduce((sum, item) => sum + item.deliveries.filter((delivery) => delivery.status === "pending" || delivery.status === "deferred").length, 0),
                 uncertainSpawns: Object.values(ledger.spawnIntents).filter((intent) => intent.status === "unknown").length } };
             }
