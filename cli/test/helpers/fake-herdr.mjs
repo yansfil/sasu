@@ -56,12 +56,17 @@ if (key === "agent start") {
   const kind = argv[argv.indexOf("--kind") + 1];
   const file = process.env.HERDR_FAKE_AGENTS_FILE;
   const current = file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
-  current[pane] = { name, agent: kind, agent_status: "working", pane_id: pane, terminal_id: "term_impl", agent_session: { value: "impl-session" }, tokens: { activity: String(Date.now()) }, state_change_seq: 1 };
+  current[pane] = { name, agent: kind, agent_status: "working", interactive_ready: true, pane_id: pane, terminal_id: "term_impl", agent_session: { value: "impl-session" }, tokens: { activity: String(Date.now()) }, state_change_seq: 1 };
+  // Codex reports its session only after the first official prompt.
+  if (kind === "codex") {
+    current[pane].agent_status = "idle";
+    delete current[pane].agent_session;
+  }
   if (file) fs.writeFileSync(file, JSON.stringify(current));
   answer({ result: { type: "agent_started" } });
 }
 if (key === "agent prompt") {
-  if (argv[2] === "--help") { process.stdout.write("Submit a prompt to an agent\\n" + (process.env.HERDR_FAKE_GUARD_SUPPORT === "1" ? "  --expected-input-guard <GUARD>\\n" : "")); process.exit(0); }
+  if (argv[2] === "--help") { process.stdout.write("Submit a prompt to an agent\\nUsage: herdr agent prompt <TARGET> <TEXT> [OPTIONS]\\n" + (process.env.HERDR_FAKE_GUARD_SUPPORT === "1" ? "  --expected-input-guard <GUARD>\\n" : "")); process.exit(0); }
   const target = argv[2];
   const guardIndex = argv.indexOf("--expected-input-guard");
   if (guardIndex !== -1 && process.env.HERDR_FAKE_GUARD_SUPPORT !== "1") { process.stderr.write("unknown option: --expected-input-guard\\n"); process.exit(2); }
@@ -73,6 +78,12 @@ if (key === "agent prompt") {
   if (found && guardIndex !== -1 && argv[guardIndex + 1] !== found.input_guard) refuse("agent_input_guard_mismatch", "input guard mismatch");
   if (process.env.HERDR_FAKE_PROMPT_FAIL === "1") { process.stderr.write("scripted prompt failure\\n"); process.exit(1); }
   if (process.env.HERDR_FAKE_PROMPT_LOG) fs.appendFileSync(process.env.HERDR_FAKE_PROMPT_LOG, JSON.stringify({ target, text: argv[3], guard: guardIndex === -1 ? null : argv[guardIndex + 1] }) + "\\n");
+  if (found && found.agent === "codex" && argv[3]?.includes("Session initialization only.")) {
+    const file = process.env.HERDR_FAKE_AGENTS_FILE;
+    const current = agents();
+    current[found.pane_id].agent_session = { value: "impl-session" };
+    if (file) fs.writeFileSync(file, JSON.stringify(current));
+  }
   // E2E kill tests stop the whole spawned process group after the observable
   // prompt effect but before the wrapper can report success. The barrier
   // makes that failure boundary exact instead of relying on scheduler timing.
@@ -83,6 +94,7 @@ if (key === "agent prompt") {
   }
   answer({ result: { type: "agent_prompt", outcome: "submitted" } });
 }
+if (key === "agent read" && argv.includes("--source") && argv.includes("visible")) { process.stdout.write("› Ask Codex to do anything\\n"); process.exit(0); }
 if (key === "workspace create") answer({ result: { type: "workspace_created", workspace: { workspace_id: "w7Z" }, tab: { tab_id: "w7Z:t1" }, root_pane: { pane_id: "w7Z:p1" } } });
 if (key === "tab create") answer({ result: { type: "tab_created", tab: { tab_id: "w4G:t9" }, root_pane: { pane_id: "w4G:p13" } } });
 answer({ result: {} });

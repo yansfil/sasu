@@ -20,6 +20,7 @@ const OBSERVER_PANE = "w4G:p12";
 const IMPL_PANE = "w4G:p13";
 const PACKET = "ROLE: Implementor.\nPIPELINE: implement\nSOURCE: fixture\nRETURN CONTRACT: status";
 const STOP_HOOK = path.resolve(import.meta.dirname, "../../../scripts/supervisor_stop.mjs");
+const HCOORD = path.resolve(import.meta.dirname, "../../dist/hcoord/cli.js");
 
 function sasu(cwd, args, { env = {}, input } = {}) {
   const result = spawnSync(process.execPath, [CLI, ...args, "--json"], { cwd, encoding: "utf8", env: isolatedEnv(env), input, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
@@ -57,6 +58,59 @@ function dispatchedRun(extraDispatchArgs = []) {
   const wakes = () => herdr.prompts().filter((prompt) => prompt.text.startsWith("SASU_WAKE"));
   return { root, home, herdr, launchctl, base, observerEnv, indexFile, tick, wakes, statePath: path.join(root, STATE_PATH), runInstanceId: dispatched.json.detail.runInstanceId, index: () => readIndex(indexFile) };
 }
+
+test("hcoord transition registers a new run without legacy enrollment or wake", async (t) => {
+  const root = fs.realpathSync(makeProject());
+  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
+  const outside = fs.mkdtempSync(`${root}-hcoord-fakes-`);
+  const herdr = installFakeHerdr(outside);
+  const launchctl = installFakeLaunchctl(outside);
+  const home = path.join(outside, "home");
+  fs.mkdirSync(home, { recursive: true });
+  const base = { HOME: home, ...herdr.env, PATH: herdr.env.PATH, HERDR_FAKE_REQUIRED_SOCKET_PATH: "/tmp/fake.sock", LAUNCHCTL_FAKE_LOG: launchctl.env.LAUNCHCTL_FAKE_LOG, LAUNCHCTL_FAKE_STATE: launchctl.env.LAUNCHCTL_FAKE_STATE };
+  const observerEnv = { ...base, HERDR_ENV: "1", HERDR_PANE_ID: OBSERVER_PANE, HERDR_WORKSPACE_ID: "w4G", HERDR_SOCKET_PATH: "/tmp/fake.sock", CLAUDE_SESSION_ID: OBSERVER };
+  herdr.setAgents({ [OBSERVER_PANE]: observerAgent({ name: "observer", agent_status: "working", interactive_ready: true }) });
+  const daemon = spawn(process.execPath, [HCOORD, "daemon", "run"], { cwd: root, env: isolatedEnv(base), stdio: ["ignore", "ignore", "pipe"] });
+  let daemonError = "";
+  daemon.stderr.on("data", (chunk) => { daemonError += chunk; });
+  t.after(async () => {
+    if (daemon.exitCode === null) { daemon.kill("SIGTERM"); await new Promise((resolve) => daemon.once("exit", resolve)); }
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+  const socket = path.join(home, ".hcoord", "api.sock");
+  for (let attempt = 0; attempt < 100 && !fs.existsSync(socket); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(fs.existsSync(socket), true, daemonError);
+  const hcoord = (...args) => spawnSync(process.execPath, [HCOORD, ...args, "--json"], { cwd: root, env: isolatedEnv(observerEnv), encoding: "utf8" });
+  assert.equal(hcoord("sasu", "enable").status, 0);
+  const started = sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env: observerEnv });
+  assert.equal(started.status, 0, started.text);
+  const dispatched = sasu(root, ["implement", "dispatch", "--name", "impl", "--prd", PRD_PATH], { env: observerEnv, input: PACKET });
+  assert.equal(dispatched.status, 0, dispatched.text);
+  assert.equal(state(root).supervision.coordinationOwner, "hcoord");
+  assert.equal(readIndex(path.join(home, ".sasu", "supervisor", "index.json")).entries.length, 0);
+  assert.equal(JSON.parse(hcoord("status").stdout).value.counts.sasuRuns, 1);
+  const graph = JSON.parse(hcoord("graph").stdout).value;
+  assert.equal(graph.watch.length, 1);
+  assert.equal(graph.creation.length, 1);
+  const tick = sasu(home, ["supervisor", "tick"], { env: base });
+  assert.equal(tick.json.detail.runs.length, 0);
+  assert.equal(herdr.prompts().filter((prompt) => prompt.text.startsWith("SASU_WAKE")).length, 0);
+});
+
+test("legacy retirement refuses an active run and prevents later installer resurrection", () => {
+  const run = dispatchedRun();
+  assert.equal(sasu(run.home, ["supervisor", "install"], { env: run.base }).status, 0);
+  fs.mkdirSync(path.join(run.home, ".hcoord"), { recursive: true });
+  fs.writeFileSync(path.join(run.home, ".hcoord", "sasu-enabled"), "test\n");
+  const active = sasu(run.home, ["supervisor", "retire-legacy"], { env: run.base });
+  assert.equal(active.status, 1);
+  assert.equal(run.index().entries.length, 1);
+  updateIndex(run.indexFile, (index) => { index.entries = []; });
+  const retired = sasu(run.home, ["supervisor", "retire-legacy"], { env: run.base });
+  assert.equal(retired.status, 0, retired.text);
+  assert.equal(fs.existsSync(path.join(run.home, ".hcoord", "legacy-supervisor-retired")), true);
+  assert.equal(sasu(run.home, ["supervisor", "install"], { env: run.base }).status, 1);
+});
 
 test("B1/B5/B8/B17: a dispatched run is indexed at once, a working implementor wakes nobody, a settled one wakes the Observer exactly once, and status shows it", () => {
   const run = dispatchedRun();

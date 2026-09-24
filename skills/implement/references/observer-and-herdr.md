@@ -220,8 +220,15 @@ A live verify execution lease refuses all domain mutations, including amendment,
 Wait for completion or verified process-group cleanup; a settled pane or lost target alone is not proof that its children have stopped.
 
 If the block changes scope, an acceptance criterion, major structure, or product behavior, the Observer must not authorize divergence or edit the sealed PRD while implementation continues.
-Ask the user for the explicit change required by the gate-reopen contract.
+Ask the user for the explicit change required by the gate-reopen contract only when the existing human authorization does not cover it.
 Only after receiving it may the main session pause implementation, return to the Spec Owner phase, reopen and reseal the affected gate with the user's words as evidence, and resume the same Implementor or a replacement from the updated ready PRD.
+
+Receiving approval does not finish the Observer's work: it owns applying that decision to the contract and handing it back to the Implementor.
+Match the user's answer to the exact pending decision and preserve the verbatim approval in the existing amendment evidence; it does not authorize unrelated changes.
+Coordinate a safe implementation boundary and wait for any live verification lease to clear before reopening the gate or amending the sealed PRD.
+Then complete the required gate and `amend` steps, send the canonical updated ready PRD and changed decision references to the same Implementor, and confirm it has received them before dependent implementation, review, or delivery resumes.
+Until that handoff is complete, report the decision as approved but not yet applied, not as awaiting another user answer or already implemented.
+Do not ask again for the same already authorized decision merely because the contract update is pending.
 
 Ask the user only when no defensible reversible default exists or the choice needs new authority: credentials, billing or external spend, production data, destructive or irreversible action, auth or security policy, an external-service commitment, an expensive persistent data shape, unauthorized delivery, or a conflict that requires dropping an approved requirement.
 Never use an Observer decision to lower verification or override a Sasu gate.

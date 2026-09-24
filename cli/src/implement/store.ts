@@ -292,6 +292,7 @@ export function parseImplementState(text: string): ImplementState {
     assertNullableString(supervision["dispatchHead"], "supervision.dispatchHead");
     positiveInteger(supervision["patrolIntervalMs"], "supervision.patrolIntervalMs");
     enumValue(supervision["recoveryOwner"], ["supervisor", "task-factory"], "supervision.recoveryOwner");
+    if (supervision["coordinationOwner"] !== undefined) enumValue(supervision["coordinationOwner"], ["legacy", "hcoord"], "supervision.coordinationOwner");
     const identity = (value: unknown, label: string): void => {
       assertRecord(value, label);
       for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(value[field], `${label}.${field}`);
@@ -319,6 +320,7 @@ export function parseImplementState(text: string): ImplementState {
     assertNullableString(pending["dispatchHead"], "pendingDispatch.dispatchHead");
     positiveInteger(pending["patrolIntervalMs"], "pendingDispatch.patrolIntervalMs");
     enumValue(pending["recoveryOwner"], ["supervisor", "task-factory"], "pendingDispatch.recoveryOwner");
+    if (pending["coordinationOwner"] !== undefined) enumValue(pending["coordinationOwner"], ["legacy", "hcoord"], "pendingDispatch.coordinationOwner");
     const observer = pending["observer"] as Record<string, unknown>;
     assertRecord(observer, "pendingDispatch.observer");
     for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(observer[field], `pendingDispatch.observer.${field}`);

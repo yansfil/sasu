@@ -68,6 +68,28 @@ function herdrEnv(root, extra = {}) {
 
 const dispatch = (root, env, extra = []) => sasu(root, ["implement", "dispatch", "--name", "impl", "--prd", PRD_PATH, ...extra], { env, input: PACKET });
 
+test("Codex initialization precedes durable handoff and supervisor enrollment", () => {
+  const root = fs.realpathSync(makeProject());
+  const { env, fake, home } = herdrEnv(root);
+  const started = sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env });
+  assert.equal(started.status, 0, started.text);
+  const result = dispatch(root, env, ["--kind", "codex", "--model", "gpt-6-sol", "--effort", "xhigh"]);
+  assert.equal(result.status, 0, result.text);
+  const recorded = state(root);
+  assert.equal(recorded.pendingDispatch, null);
+  assert.equal(recorded.supervision.implementor.sessionId, "impl-session");
+  assert.equal(recorded.dispatches.length, 1);
+  assert.equal(fake.prompts().length, 2, "initialization and executable work are separate official prompts");
+  assert.match(fake.prompts()[0].text, /Session initialization only/);
+  assert.equal(fake.prompts()[1].text, PACKET);
+  const launch = fake.argv().find((args) => args[0] === "agent" && args[1] === "start");
+  assert.equal(launch.includes(PACKET), false, "launch-time arguments contain no task authority");
+  assert.equal(launch.some((arg) => arg.includes("Session initialization only")), false, "Herdr readiness does not include a model turn");
+  assert.ok(launch.includes("gpt-6-sol"));
+  assert.ok(launch.includes('model_reasoning_effort="xhigh"'));
+  assert.equal(readIndex(path.join(home, ".sasu", "supervisor", "index.json")).entries.length, 1);
+});
+
 // Hide lists a pane under the Herdr workspace that owns it, so an implementor
 // split beside the Observer was listed under the root checkout however far
 // away its worktree was, and sat in the operator's own layout (2026-09-18).

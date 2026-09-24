@@ -16,7 +16,7 @@ const dispatcher = { agent: "claude", agent_status: "working", pane_id: "w4G:p12
 /** herdr 0.9.0-preview's creation shape: the workspace, its first tab and the root pane the agent starts in. */
 const workspaceOk = JSON.stringify({ result: { workspace: { workspace_id: "w7Z" }, tab: { tab_id: "w7Z:t1" }, root_pane: { pane_id: "w7Z:p1" }, type: "workspace_created" } });
 const tabOk = JSON.stringify({ result: { tab: { tab_id: "w4G:t9" }, root_pane: { pane_id: "w4G:p13" }, type: "tab_created" } });
-const implementorInfo = (paneId, fields = {}) => JSON.stringify({ result: { type: "agent_info", agent: { name: "impl", agent: "claude", agent_status: "working", pane_id: paneId, terminal_id: "term_impl", agent_session: { value: "impl-session" }, tokens: { activity: "1000" }, state_change_seq: 1, ...fields } } });
+const implementorInfo = (paneId, fields = {}) => JSON.stringify({ result: { type: "agent_info", agent: { name: "impl", agent: "claude", agent_status: "working", interactive_ready: true, pane_id: paneId, terminal_id: "term_impl", agent_session: { value: "impl-session" }, tokens: { activity: "1000" }, state_change_seq: 1, ...fields } } });
 /** A run isolated into a worktree: the implementor gets a workspace of its own on it. */
 const WS = { kind: "workspace", cwd: "/repo.worktrees/fixture", label: "fixture" };
 /** An in-place run: the implementor gets a tab in the workspace the Observer sits in. */
@@ -28,6 +28,7 @@ const TAB = { kind: "tab", workspaceId: "w4G", cwd: "/repo", label: "fixture" };
  */
 function recorder(overrides = {}) {
   const argv = [];
+  let startedKind = "claude";
   const run = (args) => {
     argv.push(args);
     const key = args.slice(0, 2).join(" ");
@@ -35,7 +36,9 @@ function recorder(overrides = {}) {
     if (key === "agent list") return { status: 0, stdout: listing(dispatcher), stderr: "" };
     if (key === "workspace create") return { status: 0, stdout: workspaceOk, stderr: "" };
     if (key === "tab create") return { status: 0, stdout: tabOk, stderr: "" };
-    if (key === "agent get") return { status: 0, stdout: implementorInfo(args[2]), stderr: "" };
+    if (key === "agent start") startedKind = args[4];
+    if (key === "agent get") return { status: 0, stdout: implementorInfo(args[2], { agent: startedKind, agent_status: "idle" }), stderr: "" };
+    if (key === "agent read") return { status: 0, stdout: "› Ask Codex to do anything", stderr: "" };
     return { status: 0, stdout: "{}", stderr: "" };
   };
   const matching = (key) => argv.filter((args) => args.slice(0, 2).join(" ") === key);
@@ -382,11 +385,72 @@ test("model and effort are forwarded as the started agent's own native arguments
 
   const codex = recorder();
   spawnImplementor({ name: "impl", placement: WS, prompt: "p", kind: "codex", effort: "xhigh" }, { env: LIVE, run: codex.run });
-  assert.deepEqual(codex.of("agent start").slice(7), ["--", "--config", 'model_reasoning_effort="xhigh"']);
+  assert.deepEqual(codex.of("agent start").slice(7, 10), ["--", "--config", 'model_reasoning_effort="xhigh"']);
+  assert.equal(codex.of("agent start").length, 10, "Codex launch options contain no model turn inside Herdr readiness");
 
   const plain = recorder();
   spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run: plain.run });
   assert.equal(plain.of("agent start").length, 7, "no launch settings means no trailing separator");
+});
+
+test("Codex initializes its session before the exact-identity handoff", () => {
+  let time = 0;
+  let initialized = false;
+  let reads = 0;
+  let persisted = false;
+  const recorded = recorder({
+    "agent start": (args) => {
+      assert.equal(args.includes("PRIVATE IMPLEMENTATION HANDOFF"), false);
+      assert.equal(args.some((arg) => arg.includes("Session initialization only.")), false);
+      return { status: 0, stdout: "{}", stderr: "" };
+    },
+    "agent get": (args) => {
+      reads += 1;
+      return { status: 0, stderr: "", stdout: implementorInfo(args[2], {
+        agent: "codex", agent_status: "idle",
+        agent_session: initialized && reads >= 2 ? { value: "fresh-session" } : undefined,
+      }) };
+    },
+    "agent prompt": (args) => {
+      if (args[3].includes("Session initialization only.")) {
+        assert.equal(persisted, false, "initialization precedes executable handoff persistence");
+        initialized = true;
+        return { status: 0, stdout: "{}", stderr: "" };
+      }
+      assert.equal(persisted, true, "identity must be durable before executable work is sent");
+      return { status: 0, stdout: "{}", stderr: "" };
+    },
+  });
+  const outcome = spawnImplementor({
+    name: "impl", kind: "codex", placement: WS, prompt: "PRIVATE IMPLEMENTATION HANDOFF",
+    beforePrompt: (identity) => { assert.equal(identity.sessionId, "fresh-session"); persisted = true; },
+  }, { env: LIVE, run: recorded.run, clock: { now: () => time, sleep: (ms) => { time += ms; } } });
+  assert.equal(outcome.ok, true, outcome.problem);
+  assert.equal(recorded.count("agent start"), 1);
+  assert.equal(recorded.count("agent prompt"), 2);
+  assert.equal(recorded.argv.filter((args) => args.slice(0, 2).join(" ") === "agent prompt")[1][3], "PRIVATE IMPLEMENTATION HANDOFF");
+});
+
+test("Codex initialization cannot hand work to a replacement, blocked, or perpetually unready session", () => {
+  for (const scenario of ["terminal-replaced", "session-replaced", "blocked", "timeout"]) {
+    let time = 0;
+    let reads = 0;
+    const recorded = recorder({
+      "agent get": (args) => {
+        reads += 1;
+        return { status: 0, stderr: "", stdout: implementorInfo(args[2], {
+          agent: "codex", agent_status: scenario === "blocked" ? "blocked" : "working",
+          terminal_id: scenario === "terminal-replaced" && reads > 1 ? "replacement-terminal" : "term_impl",
+          agent_session: scenario === "timeout" ? undefined : { value: scenario === "session-replaced" && reads > 1 ? "replacement-session" : "original-session" },
+        }) };
+      },
+    });
+    const outcome = spawnImplementor({ name: "impl", kind: "codex", placement: WS, prompt: "PRIVATE IMPLEMENTATION HANDOFF" },
+      { env: LIVE, run: recorded.run, clock: { now: () => time, sleep: (ms) => { time += ms; } } });
+    assert.equal(outcome.ok, false, scenario);
+    assert.equal(recorded.count("agent prompt"), 0, scenario);
+    assert.ok(time <= 30_000, "initialization has a finite deadline");
+  }
 });
 
 // The pane is created before the agent starts, so a failure in between would

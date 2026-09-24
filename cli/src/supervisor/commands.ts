@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
+import { legacyRetiredPath, sasuEnabledPath } from "../hcoord/store";
 import { getAgent, guardedPromptSupport, type HerdrEnvironment } from "../implement/herdr";
 import { recordEvent } from "../implement/events";
 import { loadState, nowIso, persistState, resolveStatePath } from "../implement/store";
@@ -127,6 +129,8 @@ function status(env: NodeJS.ProcessEnv): ImplementCommandResult {
 }
 
 function install(env: NodeJS.ProcessEnv): ImplementCommandResult {
+  const home = env["HOME"]?.trim() || require("node:os").homedir();
+  if (fs.existsSync(legacyRetiredPath(home))) return result("install", false, "legacy supervisor was retired after its final indexed run; hcoord owns new dispatches");
   const spec = launchAgentSpec(env);
   const installed = installLaunchAgent(spec, { env });
   const ok = installed.problem === null;
@@ -141,6 +145,18 @@ function uninstall(env: NodeJS.ProcessEnv): ImplementCommandResult {
   const hooks = { codex: removeHooks(files.codex, marker), claude: removeHooks(files.claude, marker) };
   const ok = removed.problem === null;
   return result("uninstall", ok, ok ? `LaunchAgent ${removed.plist}; Stop hook ${hooks.claude.changed || hooks.codex.changed ? "removed" : "was not registered"}` : `LaunchAgent not removed: ${removed.problem}`, { launchAgent: removed, hooks });
+}
+
+function retireLegacy(env: NodeJS.ProcessEnv): ImplementCommandResult {
+  const home = env["HOME"]?.trim() || require("node:os").homedir();
+  if (!fs.existsSync(sasuEnabledPath(home))) return result("retire-legacy", false, "hcoord transition is not enabled; legacy supervisor remains required");
+  const index = readIndex(indexPath(env));
+  if (index.entries.length > 0 || index.tickExecutor !== null) return result("retire-legacy", false, "legacy supervisor still owns indexed runs or a tick is active", { indexedRuns: index.entries.map((entry) => entry.statePath), tickActive: index.tickExecutor !== null });
+  const removed = uninstall(env);
+  if (!removed.ok) return result("retire-legacy", false, removed.message, removed.detail);
+  fs.mkdirSync(path.dirname(legacyRetiredPath(home)), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(legacyRetiredPath(home), `${new Date().toISOString()}\n`, { mode: 0o600 });
+  return result("retire-legacy", true, "legacy supervisor and Stop hook retired after the final indexed run; future installs retain this retirement", { indexedRuns: 0, marker: legacyRetiredPath(home) });
 }
 
 /**
@@ -219,8 +235,9 @@ export async function runSupervisorCommand(projectRoot: string, args: Supervisor
     if (subcommand === "status") return status(env);
     if (subcommand === "install") return install(env);
     if (subcommand === "uninstall") return uninstall(env);
+    if (subcommand === "retire-legacy") return retireLegacy(env);
     if (subcommand === "handover") return handover(projectRoot, args, env, hooks);
-    return { ok: false, action: `supervisor:${subcommand ?? "unknown"}`, exitCode: 2, message: "unknown supervisor subcommand; use tick, status, install, uninstall, or handover" };
+    return { ok: false, action: `supervisor:${subcommand ?? "unknown"}`, exitCode: 2, message: "unknown supervisor subcommand; use tick, status, install, uninstall, retire-legacy, or handover" };
   } catch (error) {
     return { ok: false, action: `supervisor:${subcommand ?? "unknown"}`, exitCode: 2, message: error instanceof Error ? error.message : String(error) };
   }
