@@ -1,5 +1,6 @@
 # Impact-scoped re-review and same-input lane repair
 
+Superseded by: [2026-09-24 verification convergence](2026-09-24-verification-convergence.md) for review order and follow-up review scope, which keeps impact-first follow-up review as agent guidance without CLI round planning.
 Status: superseded by the [2026-09-15 stateless verification decision](2026-09-15-stateless-verification.md); the measurements below remain historical evidence.
 Issue: [yansfil/sasu#3](https://github.com/yansfil/sasu/issues/3).
 

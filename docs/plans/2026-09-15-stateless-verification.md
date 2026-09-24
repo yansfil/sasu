@@ -1,6 +1,8 @@
 # Stateless verification with native agent review
 
 Status: approved by the user on 2026-09-15.
+Changed on 2026-09-24: the ordering "review after a deterministic PASS" is replaced by the [verification convergence plan](2026-09-24-verification-convergence.md); review starts on a committed head with the verification verdict disclosed, and the full verify runs on the final committed candidate.
+The rest of this decision stands.
 
 ## Decision
 
@@ -55,7 +57,7 @@ The skill keeps the reviewer role definitions and judgment boundaries instead of
 The installed `implement` workflow owns native agent review:
 
 - Codex uses Codex subagents and Claude Code uses Claude Code subagents;
-- Fidelity and Code reviews run concurrently after deterministic verification succeeds;
+- Fidelity and Code reviews run concurrently after deterministic verification succeeds (ordering changed on 2026-09-24, see the status note);
 - high-risk work adds an independent Security review;
 - Sasu adds no reviewer turn limit beyond the runtime's own limits;
 - the parent agent can inspect progress, tool use, errors, and the final response;
