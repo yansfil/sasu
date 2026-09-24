@@ -60,7 +60,7 @@ export function runIntegritySection(projectRoot: string, sessionId: string | nul
         if (state.status === "active") {
           const owner = state.ownerSessionId ?? null;
           const adoption = owner !== null && owner !== sessionId
-            ? " --adopt \"<verbatim user approval>\""
+            ? " --adopt"
             : "";
           retire.push(
             `retire candidate: ${entry.name} owner=${owner ?? "unowned"} command=sasu implement retire --slug ${entry.name}${adoption}`,

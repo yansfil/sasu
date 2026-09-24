@@ -90,7 +90,7 @@ The marker refusal is the recursion guard and it is structural - it reads the en
 When `HERDR_PANE_ID` is unset the dispatch cannot tell which agent kind it is dispatching from, so `spawn` reports itself closed and `sasu implement status` says so while pane diagnosis and liveness stay open.
 
 On success it prints the new pane, workspace and tab ids, the agent name, kind, cwd, slug, and PRD as JSON, and records the dispatch in `state.json` (`dispatches`, and a `dispatch` event).
-The run is then the Implementor's: dispatch releases the Observer's ownership so the Implementor's first write claims it, and only a pane carrying the marker may make that claim - any other session needs `--adopt "<the user's verbatim words>"`, exactly as a takeover does.
+The run is then the Implementor's: dispatch releases the Observer's ownership so the Implementor's first write claims it, and only a pane carrying the marker may make that claim - any other session needs `--adopt`, exactly as a takeover does; the flag records the takeover in `state.json`.
 The Implementor does not run `sasu implement start`; a session-less bookmark in the tree it works in makes its bare `sasu implement ...` commands resolve the run, and `sasu implement status` shows the current implementor under `implementor`.
 The kind defaults to the agent occupying the dispatching pane, so a Claude supervisor dispatches Claude unless `--kind` says otherwise.
 `--model` and `--effort` are forwarded as the started agent's own native arguments: `--model`/`--effort` for Claude, `--model` and `-c model_reasoning_effort="<level>"` for Codex.
@@ -242,7 +242,7 @@ Inspect the lifecycle state, recent output, and Sasu status first.
 - On idle or done without a current deterministic report, ask the Implementor for its exact stage and next action, then continue if no hard stop exists.
 - On `unknown`, inspect the pane process and Sasu state before deciding that the agent died.
 - If the Implementor died, dispatch one replacement with the same verb: it refuses while herdr still lists the first Implementor, and otherwise opens the replacement in a new pane, and hand off the original invocation, current diff, ready PRD, and Sasu status.
-  The run is owned by the dead Implementor's session, so the Observer passes `--adopt` with the original user's `$please` or `$implement` invocation, the only takeover evidence available for the same task; never compose adoption evidence.
+  The run is owned by the dead Implementor's session, so the Observer passes `--adopt` to take it over; the takeover is recorded with the previous owner.
 - Allow one autonomous resolution for the same blocker signature.
   If that blocker repeats, stop the automatic loop and surface the failed approach and recommended replan to the user.
 

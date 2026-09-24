@@ -406,19 +406,20 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
  * bans a second copy). An unowned run is claimed by the first mutating
  * session - the claim rides the command's own persist, so a command that
  * fails leaves no trace. A run owned by another session is refused unless
- * the user's approval arrives verbatim via --adopt, the same shape as every
- * other user-granted waiver (--grant-budget, --allow-unapproved-prd). These
- * strings are durable audit evidence supplied by the trusted orchestrating
- * session, not an authentication factor: the CLI has no authoritative chat
- * identity to validate. Adding transcript attestation or a nonce would change
- * that trust contract rather than strengthen this local ownership guard.
+ * the caller passes `--adopt`, which records the takeover (from which
+ * session, when, and an optional note). The flag guards against the
+ * accidental bystander command of 2026-08-12; it is not an authentication
+ * factor, and it used to demand the user's words verbatim, a string the CLI
+ * could not check and that only made cleanup of one's own scratch run a
+ * copy-paste exercise (2026-09-24).
  */
 function assertRunOwnership(statePath: string, state: ImplementState, args: ImplementArgs): void {
   if (assertNoActiveVerification(state)) persistState(statePath, state);
   const sessionId = currentSessionId();
   const owner = state.ownerSessionId ?? null;
   if (owner === sessionId) return;
-  const evidence = flag(args, "adopt")?.trim() ?? "";
+  const adopt = args.flags.has("adopt");
+  const note = flag(args, "adopt")?.trim() ?? "";
   const dispatched = lastDispatch(state);
   if (owner === null) {
     // `dispatch` releases the run so the implementor it started can claim it
@@ -427,10 +428,10 @@ function assertRunOwnership(statePath: string, state: ImplementState, args: Impl
     // bare command claiming it. The marker the dispatch injected is what
     // tells the implementor apart, so only a marked pane claims a dispatched
     // run silently; anyone else needs the same approval a takeover needs.
-    if (dispatched !== null && currentHerdrRole() !== "implementor" && evidence === "") {
+    if (dispatched !== null && currentHerdrRole() !== "implementor" && !adopt) {
       throw new Error(
         `run '${state.topicSlug}' was dispatched to implementor ${dispatched.agent} (${dispatched.paneId}) and is its to claim; ` +
-          `if the user approved taking it over, re-run with --adopt "<the user's verbatim words>"`,
+          `to take it over deliberately, re-run with --adopt`,
       );
     }
     // The dispatched pane carries the run instance the dispatch minted, so a
@@ -447,12 +448,12 @@ function assertRunOwnership(statePath: string, state: ImplementState, args: Impl
     state.ownerSessionId = sessionId;
     return;
   }
-  if (evidence === "") {
+  if (!adopt) {
     throw new Error(
-      `run '${state.topicSlug}' is owned by another session (${owner}); if the user approved taking it over, re-run with --adopt "<the user's verbatim words>"`,
+      `run '${state.topicSlug}' is owned by another session (${owner}); to take it over deliberately, re-run with --adopt`,
     );
   }
-  state.adoptions = [...(state.adoptions ?? []), { at: nowIso(), fromSessionId: owner, evidence }];
+  state.adoptions = [...(state.adoptions ?? []), { at: nowIso(), fromSessionId: owner, ...(note === "" ? {} : { note }) }];
   state.ownerSessionId = sessionId;
   persistState(statePath, state);
 }
@@ -527,14 +528,14 @@ function retire(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   }
   const previousOwner = state.ownerSessionId ?? null;
   const sessionId = currentSessionId();
-  const adoptionEvidence = flag(args, "adopt")?.trim() ?? "";
+  const adoptionNote = flag(args, "adopt")?.trim() ?? "";
   assertRunOwnership(statePath, state, args);
   state.status = "retired";
   state.retirement = {
     retiredAt: nowIso(),
     retiredBySessionId: sessionId,
     ...(previousOwner !== null && previousOwner !== sessionId
-      ? { adoptedFromSessionId: previousOwner, adoptionEvidence }
+      ? { adoptedFromSessionId: previousOwner, ...(adoptionNote === "" ? {} : { adoptionNote }) }
       : {}),
   };
   state.verificationReport = null;

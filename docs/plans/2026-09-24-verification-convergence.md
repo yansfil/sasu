@@ -60,6 +60,9 @@ The identical-input reruns of attempts 6-8 do not happen; if the implementor rer
 - PASS guidance states the deterministic follow-up condition in place of "rerun verify and review".
 - `sasu implement status` no longer tells agents to wait for PASS before review; it discloses the current verdict and keeps delivery behind a current PASS.
 - The implement, ship, and please skills, the implement references, `README.md`, `AGENTS.md`, and `PRINCIPLES.md` describe the same order.
+- The CLI response states recorded facts and one move; how to review lives in the implement skill alone, and tests assert the facts rather than sentences.
+- The `--issuer` label is recorded in the verb history and gates nothing; a pane marked implementor is refused from `escalate` by the same structural marker `dispatch` uses, and `amend` needs the recorded approval text.
+- `--adopt` is a deliberate flag with an optional note that records a takeover; it no longer demands the user's words verbatim, which the CLI could not check.
 
 ## Deliberately not built
 

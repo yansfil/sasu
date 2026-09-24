@@ -62,9 +62,9 @@ Usage:
   sasu implement verify   [--slug <topic> | --state <path>] [--json]
     (executes the sealed required suite, validates current source and evidence, and writes a fresh verification-report.json and verification-report.md.
      Native Fidelity, Code, and optional Security subagents run visibly through the workflow skill and never change this deterministic result.)
-  sasu implement retire   [--slug <topic> | --state <path>] [--adopt "<verbatim user approval>"] [--json]
+  sasu implement retire   [--slug <topic> | --state <path>] [--adopt [note]] [--json]
     (state-changing commands record an optional --issuer <implementor|observer|human> label, default implementor, for the audit trail; nothing is gated on it.
-     Mutating another session's run requires --adopt "<verbatim user approval>"; all domain mutations are refused during a live verify lease.)
+     Mutating another session's run requires --adopt, which records the takeover; all domain mutations are refused during a live verify lease.)
   sasu prd readiness       --prd <path> [--json]
   sasu prd ready           --prd <path> [--json]   (flips status to ready; refused while readiness has blocking gaps)
   sasu prd approve         --prd <path> --evidence "<verbatim user approval>" [--json]   (records human approval; requires status ready)

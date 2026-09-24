@@ -360,7 +360,7 @@ export interface ImplementState {
   initialSource: SourceSnapshot;
   baselineAttribution: BaselineAttribution;
   ownerSessionId?: string | null;
-  adoptions?: { at: string; fromSessionId: string; evidence: string }[];
+  adoptions?: { at: string; fromSessionId: string; note?: string }[];
   /** Absent on records written before dispatch recorded itself; read as none. */
   dispatches?: DispatchRecord[];
   /** Absent until a Herdr dispatch enrolls the run for supervision; read as none. */
@@ -382,7 +382,7 @@ export interface ImplementState {
     retiredAt: string;
     retiredBySessionId: string | null;
     adoptedFromSessionId?: string;
-    adoptionEvidence?: string;
+    adoptionNote?: string;
   } | null;
   verificationReport: VerificationReportIdentity | null;
   createdAt: string;

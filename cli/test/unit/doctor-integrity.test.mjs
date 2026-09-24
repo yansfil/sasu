@@ -35,7 +35,7 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
 
   const section = runIntegritySection(root, null);
   assert.equal(section.ok, false);
-  assert.ok(section.lines.includes("retire candidate: active-run owner=session-a command=sasu implement retire --slug active-run --adopt \"<verbatim user approval>\""), section.lines.join("\n"));
+  assert.ok(section.lines.includes("retire candidate: active-run owner=session-a command=sasu implement retire --slug active-run --adopt"), section.lines.join("\n"));
   assert.ok(section.lines.includes(`orphan worktree: ended-run status=retired path=${worktree} branch=sasu/ended-run`));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: unknown-status") && line.includes("status must be one of active")));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: missing-snapshot") && line.includes("prd.snapshotPath")));
