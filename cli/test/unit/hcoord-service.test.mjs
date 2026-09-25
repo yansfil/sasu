@@ -485,3 +485,44 @@ test("completed spawn progress clears old pending guidance and same-intent retry
   assert.equal(repaired.value.initialization, "complete");
   assert.equal(repaired.value.participant, complete.participant.id);
 });
+
+/** A ledger with one Sasu run: Observer, implementor, a second Observer, and an active watch. */
+function sasuLedger(at) {
+  const state = emptyLedger(at);
+  const register = (name, session, parent = null) => execute(state, "agent.register", { machine: "local", hostScope: "default", session, instance: `${session}-term`, name, pane: `${session}-pane`, parent }, at).value.id;
+  const observer = register("observer", "s-obs");
+  const implementor = register("impl", "s-impl", observer);
+  const next = register("observer", "s-obs-2");
+  execute(state, "watch.start", { target: implementor, observer, actor: "human", intervalMs: 60_000 }, at);
+  state.sasuRuns["run-1"] = { observer, implementor, project: "/p", registeredAt: at, slug: "fixture", statePath: "/p/state.json", recoveryOwner: "supervisor", replaces: null, endedAt: null, endReason: null };
+  return { state, observer, implementor, next };
+}
+
+test("a Sasu handover moves a person's recorded but unrelayed answer to the new Observer", () => {
+  const at = "2026-09-26T00:00:00.000Z";
+  const { state, observer, implementor, next } = sasuLedger(at);
+  const asked = execute(state, "request.send", { from: implementor, to: observer, body: "which?", intent: "sasu:run-1:block:x", waiting: true }, at).value;
+  execute(state, "request.escalate", { id: asked.id, actor: observer }, at);
+  execute(state, "request.reply", { id: asked.id, body: "A", respondent: "human", recordedBy: observer }, at);
+  assert.equal(state.requests[asked.id].intermediary, observer);
+  execute(state, "sasu.handover.apply", { run: "run-1", observer: next }, at);
+  const moved = state.requests[asked.id];
+  assert.equal(moved.intermediary, next, "the new Observer relays it");
+  assert.ok(moved.deliveries.some((delivery) => delivery.phase === "answer" && delivery.recipient === next && delivery.status === "pending"));
+  assert.equal(moved.deliveries.some((delivery) => delivery.phase === "answer" && delivery.recipient === observer && delivery.status === "pending"), false, "nothing is still owed to the old Observer");
+  assert.throws(() => execute(state, "request.relay", { id: asked.id, actor: observer, body: "A" }, at), /authority/);
+  execute(state, "request.relay", { id: asked.id, actor: next, body: "A" }, at);
+  assert.equal(state.requests[asked.id].relayBody, "A");
+});
+
+test("ending a Sasu run whose watch was stopped mid-cycle leaves no open cycle behind", () => {
+  const at = "2026-09-26T00:00:00.000Z";
+  const { state, implementor } = sasuLedger(at);
+  execute(state, "tick", { runRetention: false }, "2026-09-26T00:02:00.000Z");
+  const cycle = state.watches[implementor].cycle;
+  assert.notEqual(cycle, null);
+  execute(state, "watch.stop", { target: implementor, actor: "human" }, at);
+  const ended = execute(state, "sasu.end", { run: "run-1", reason: "retired" }, at).value;
+  assert.equal(ended.watch.openCycle, null);
+  assert.equal(state.requests[Object.keys(state.requests)[0]].status, "canceled");
+});

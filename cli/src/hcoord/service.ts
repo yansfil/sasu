@@ -120,9 +120,11 @@ export function endSasuRun(state: Ledger, binding: SasuRun, at: string): void {
   const watch = own(state.watches, binding.implementor);
   if (watch?.status === "active") {
     watch.status = "stopped"; watch.stoppedAt = at;
-    watch.cycle = null; watch.requestId = null;
     event(state, at, "watch.stopped", watch.target, null, { generation: watch.generation });
   }
+  // A watch stopped earlier keeps its unchecked cycle for a restart; the run
+  // is over, so that cycle is canceled below and must not stay referenced.
+  if (watch) { watch.cycle = null; watch.requestId = null; }
   // A question the ended run's implementor still waits on has nobody left to answer it.
   for (const item of Object.values(state.requests)) {
     if (item.from !== binding.implementor || item.status !== "open") continue;
@@ -394,10 +396,19 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (watch?.status === "active") execute(state, "watch.assign", { target: binding.implementor, observer, actor: "human", expectedGeneration: String(watch.generation) }, at);
     else execute(state, "watch.start", { target: binding.implementor, observer, actor: "human", intervalMs: watch?.intervalMs }, at);
     for (const item of Object.values(state.requests)) {
-      if (item.from !== binding.implementor || item.to !== previous || item.status !== "open" || uncheckedWatchRequest(state, item)) continue;
-      retireUnsent(item, "Observer handed over before submission");
-      item.to = observer;
-      queueDelivery(item, observer, at);
+      if (item.from !== binding.implementor || uncheckedWatchRequest(state, item)) continue;
+      if (item.status === "open" && item.to === previous) {
+        retireUnsent(item, "Observer handed over before submission");
+        item.to = observer;
+        queueDelivery(item, observer, at);
+      } else if (pendingRelay(item) && item.intermediary === previous) {
+        // A person answered through the old Observer, which has not relayed
+        // it yet; the new Observer relays the same recorded answer.
+        retireUnsent(item, "Observer handed over before the answer was relayed", "answer");
+        retireUnsent(item, "Observer handed over before the answer was relayed", "relay_problem");
+        item.intermediary = observer;
+        queueDelivery(item, observer, at, "answer");
+      }
     }
     binding.observer = observer;
     event(state, at, "sasu.handover", run, null, { from: previous, to: observer });
