@@ -6,6 +6,9 @@
 - [Resolve The Current Role](#resolve-the-current-role)
 - [Dispatch One Implementor](#dispatch-one-implementor)
 - [Handoff Packet](#handoff-packet)
+- [hcoord Supervision](#hcoord-supervision)
+- [The Supervisor Tick](#the-supervisor-tick)
+- [Handling A Wake](#handling-a-wake)
 - [Looking And Acting](#looking-and-acting)
 - [Recovery And Completion](#recovery-and-completion)
 
@@ -131,15 +134,64 @@ Do not replace the PRD with a vague summary such as "implement what we discussed
 The ready PRD is the canonical implementation contract; accepted and rejected product decisions belong there rather than in a second handoff narrative.
 The Implementor cannot read the Observer's chat history.
 The handoff must state a routing contract that forbids the Implementor from invoking `AskUserQuestion`, `request_user_input`, or any interactive question UI.
-The Implementor has no direct user channel: when blocked, it emits `OBSERVER_BLOCK` as final text and ends the turn so the Observer can decide or escalate.
+The Implementor has no direct user channel: when blocked on an hcoord run it runs `sasu implement block` and ends the turn, and on a legacy run it emits `OBSERVER_BLOCK` as final text and ends the turn, so the Observer can decide or escalate.
+On an hcoord run dispatch appends a fixed HCOORD NOTICES paragraph to the packet: it tells the Implementor that `HCOORD_` text in its composer comes from this run's Observer through the local coordinator, how to acknowledge an answer, and to run `sasu implement report` before its final report.
+An agent that received hcoord notices without that forewarning treated them as an injection (2026-09-25), so the Observer need not write it.
 
 Dispatch does not focus the new pane.
-It records this pane's session UUID, terminal and pane as the run's Observer, mints a run instance id the new pane carries as `SASU_RUN_INSTANCE_ID`, and enrolls the run's `state.json` with the supervisor tick.
+It records this pane's session UUID, terminal and pane as the run's Observer, mints a run instance id the new pane carries as `SASU_RUN_INSTANCE_ID`, and either registers the run with hcoord or enrolls its `state.json` with the legacy supervisor tick, as the next section decides.
 From that moment the run is watched; the Observer arms nothing and simply ends its turn.
 Do not run a background command to wait on the run: a finished background command does not create an agent turn by itself, and the one-shot waiter this replaced left runs silently unwatched whenever the re-arm was forgotten (2026-09-18).
 
+## hcoord Supervision
+
+Dispatch pins each run's supervision owner before a pane exists, and a run never has two.
+While `~/.hcoord/sasu-enabled` exists, a new run belongs to hcoord.
+Without it, and for every run first dispatched under the legacy supervisor, [The Supervisor Tick](#the-supervisor-tick) keeps the run until it ends.
+
+An hcoord dispatch checks the coordinator before it creates anything, with `hcoord sasu preflight`.
+The daemon must answer, the Observer pane must carry a Herdr agent name, and hcoord must be able to deliver to the Observer's exact execution.
+An unnamed pane is named with `herdr agent rename <pane> <name>`.
+A refusal there creates nothing and never falls back to the legacy supervisor.
+After the Implementor starts, dispatch records its exact identity first and then registers both participants, a watch whose interval is `--patrol` (default 15 minutes), and the recovery owner.
+A registration refused after start leaves a started record: fix the reported cause and run `sasu implement dispatch --resume-handoff` with the packet on stdin, which registers and then hands off.
+
+What reaches the Observer:
+
+| Notice | Sent when | The Observer |
+| --- | --- | --- |
+| `HCOORD_WATCH_CHECK` | every watch interval | reads `sasu implement status --slug <slug> --digest` and the Implementor's pane, applies [Looking And Acting](#looking-and-acting) to the commits and drift facts there, then closes the cycle with the `hcoord watch check` command the notice names; when it cannot inspect, it leaves the cycle open and ends the turn |
+| `HCOORD_NOTICE` with `SASU_PLAN` | `sasu implement plan` | reads the plan; answers only a "What I decide and go with" item it disagrees with, or a structure that differs from the PRD |
+| `HCOORD_REQUEST` with `SASU_BLOCK` | `sasu implement block` | decides from the handoff or asks the user, as below |
+| `HCOORD_NOTICE` with `SASU_REPORT` | `sasu implement report` | reads the current status and report; the notice alone completes nothing |
+
+A cycle left unchecked is reminded once after 15 minutes and reaches `hcoord inbox` after 30 minutes (hcoord's `remindMs` and `escalateMs`).
+Commits and drift facts wake nobody on their own: the Observer reads them in the digest at the next cycle, and a drift fact found there still needs one move.
+The plan, block and report commands record their Sasu event first and send once per content; a stopped daemon keeps the notice in the outbox, and a refusal fails the command with the retry to run.
+
+Answering a block:
+
+- The Observer decides: `hcoord request reply <request> --as <observer participant> --body "<answer>"`.
+  The Implementor receives `HCOORD_ANSWER` and acknowledges it.
+- A person decides: `hcoord request escalate <request> --actor <observer participant>`, ask the user in chat, and record their words verbatim with `hcoord request reply <request> --as human --recorded-by <observer participant> --body "<their words>"`.
+  hcoord returns the recorded answer as `HCOORD_ANSWER`; relay it within its scope with `hcoord request relay <request> --actor <observer participant> --body "<text>"`, and the Implementor acknowledges `HCOORD_RELAY`.
+  A summary is never recorded as the human answer.
+  A person may also answer in `hcoord inbox`; the same request continues.
+- After escalating, end the turn; hcoord wakes the Observer with the answer, so nothing polls.
+
+Recovery on an hcoord run:
+
+- A gone Implementor is found at the next watch cycle; dispatch one replacement with `--adopt`, as in [Recovery And Completion](#recovery-and-completion).
+  The replacement joins the same run and hcoord stops watching the gone one.
+- A changed Observer session receives nothing until `sasu supervisor handover --slug <slug> --approval "<verbatim user words>"` from the new Observer's pane moves the watch and any question still waiting.
+- `--recovery-owner task-factory` is recorded with the registration and shown by status; hcoord still wakes only the recorded Observer.
+- `sasu implement retire` and a completed `/ship` delivery end the watch.
+
+Where to look: `sasu implement status` names the owner, participants and interval; `--digest` adds the coordinator's open and last closed cycle; `hcoord watch list` shows each watch with its run; `hcoord inbox` shows what waits on a person; `sasu supervisor status` lists hcoord-owned runs by slug.
+
 ## The Supervisor Tick
 
+This section applies to legacy runs, those dispatched without `~/.hcoord/sasu-enabled`.
 One user LaunchAgent runs `sasu supervisor tick` every 30 seconds for every run on the machine.
 It is level-triggered: each tick re-reads the index of watched `state.json` paths, each run's record and git tree, and herdr's `agent get` for the Implementor and the Observer, and reaches its verdict from those facts alone.
 It writes no run state and holds no cursor, so a tick killed at any point, or a machine rebooted, reaches the same verdict on the next tick; the only cost is one interval of delay.
@@ -227,7 +279,7 @@ Choose one:
 The second `drift` wake for the same fact kind on the same run, one whose detail says `raised again` because the fact persisted through a 10-minute interval, requires the escalation: one line of direction has already not cleared it.
 The budget of three escalations per run stands and is the cap; once it is spent, surface the persisting drift to the user instead of looping (Sasu 13).
 
-Before waiting for an answer, the Implementor must emit this packet as final text and end its turn instead of opening an interactive question UI:
+Before waiting for an answer on a legacy run, the Implementor must emit this packet as final text and end its turn instead of opening an interactive question UI; on an hcoord run the same fields are the flags of `sasu implement block`:
 
 ```text
 OBSERVER_BLOCK

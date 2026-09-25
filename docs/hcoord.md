@@ -87,8 +87,18 @@ Duplicate answers fail without overwriting the first, a canceled request records
 ## Sasu transition and support
 
 `hcoord sasu enable` opts new Sasu dispatches into coordinator registration only when the daemon is running and the official Herdr prompt API is available.
-Each dispatch also checks the exact Observer pane, session, and terminal before a child is created; an unavailable or changed execution refuses the hcoord-owned run.
 An existing run keeps its legacy supervisor owner; Sasu dispatch pins each new run's owner before creating the child and refuses fallback if the selected coordinator is unavailable.
+Sasu reaches the coordinator only through these subcommands, and the coordinator never reads a Sasu `state.json`:
+
+- `hcoord sasu preflight` checks, before Sasu creates any pane, that the daemon answers, the Observer pane has a Herdr agent name, and the Observer's exact execution takes official delivery; it saves nothing.
+- `hcoord sasu register` binds the run key (the dispatch's run instance id) to the Observer and the implementor, starts the watch with the run's patrol interval, and records its slug, state path, recovery owner, and the dispatch it replaces, whose watch it stops in the same save.
+  The Observer is registered without a project, since one Observer supervises runs in several trees.
+- `hcoord sasu show --run` and `hcoord sasu list` read the binding with its watch, open cycle, and last checked cycle; a stopped daemon answers from the saved ledger, marked stale.
+- `hcoord sasu handover` registers a new Observer's exact execution, reassigns the watch, and moves the implementor's open questions to it.
+- `hcoord sasu end --run --reason` is a letter that stops the run's watch and cancels what the implementor still has open; Sasu sends it on retire and ship after delivery.
+
+Sasu's `plan`, `block`, and `report` commands send `request send` letters from the implementor to the Observer with an intent fixed by the run, event kind, and body.
+A request that needs no reply reaches its recipient as `HCOORD_NOTICE`, without the reply instructions of `HCOORD_REQUEST`, and a watch check for a Sasu run names the run's digest command.
 This work does not enable the marker or touch the live supervisor automatically.
 The legacy supervisor must remain installed while any legacy run is active.
 After the final legacy run leaves the supervisor index, `sasu supervisor retire-legacy` checks that no indexed run or tick remains, uninstalls its LaunchAgent and Stop hook, and writes a marker that prevents the installer from restoring them.

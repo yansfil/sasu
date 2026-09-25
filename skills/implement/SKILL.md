@@ -128,6 +128,13 @@ On PASS it states the follow-up condition: when the last reviewed HEAD equals th
 On FAIL or ERROR it names the failed required commands, or the error that stopped the run: reproduce only that failure in isolation, fix, commit, and run the full verify again.
 It also states when consecutive FAIL attempts ran on identical input; a rerun without a change is a diagnostic reproduction, not a fix.
 
+## Blocks And The Completion Notice
+
+`sasu implement status` names the run's supervision: hcoord or the legacy supervisor.
+On an hcoord run, a blocked Implementor runs `sasu implement block` with the question, recommendation, reversibility and scope impact, then ends its turn; the answer arrives as `HCOORD_ANSWER` or `HCOORD_RELAY`, and it acknowledges it with the `hcoord request ack` command the notice names.
+On a legacy run it emits the `OBSERVER_BLOCK` packet as final text instead.
+Right before the final report on an hcoord run, it runs `sasu implement report`; the notice tells the Observer to check the current verification and completes nothing by itself.
+
 ## Delivery
 
 After the current deterministic report is PASS and its follow-up condition is settled, use `$ship` for the already authorized local or PR delivery.
