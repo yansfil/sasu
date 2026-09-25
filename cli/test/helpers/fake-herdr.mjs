@@ -140,7 +140,9 @@ if (argv[0] === "print") {
   if (state.loaded[label(argv[1])]) { process.stdout.write("service loaded"); process.exit(0); }
   process.stderr.write("Could not find service \\"" + label(argv[1]) + "\\" in domain for user gui\\n"); process.exit(113);
 }
-if (argv[0] === "bootstrap") { const plist = argv[2]; if (!fs.existsSync(plist)) { process.stderr.write("Bootstrap failed: 5: Input/output error\\n"); process.exit(5); } state.loaded[require("node:path").basename(plist, ".plist")] = plist; save(); process.exit(0); }
+// launchd refuses a missing plist and a label it already has loaded with the
+// same "5: Input/output error" (measured 2026-09-26 on hcoord daemon start after stop).
+if (argv[0] === "bootstrap") { const plist = argv[2]; const name = require("node:path").basename(plist, ".plist"); if (!fs.existsSync(plist) || state.loaded[name]) { process.stderr.write("Bootstrap failed: 5: Input/output error\\n"); process.exit(5); } state.loaded[name] = plist; save(); process.exit(0); }
 if (argv[0] === "bootout") { delete state.loaded[label(argv[1])]; save(); process.exit(0); }
 if (argv[0] === "kickstart") { if (!state.loaded[label(argv[1])]) { process.stderr.write("Could not find service\\n"); process.exit(113); } state.kicked = (state.kicked ?? 0) + 1; save(); process.exit(0); }
 process.stderr.write("Usage: launchctl <subcommand>\\n"); process.exit(64);
