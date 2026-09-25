@@ -46,6 +46,10 @@ test("installer installs canonical skills with correct substitutions and no alia
   assert.equal(report.installed.codex.length, 9);
   assert.equal(report.installed.claude.length, 9);
   assert.match(fs.readFileSync(path.join(home, "bin", "hcoord"), "utf8"), /dist\/hcoord\/cli\.js/);
+  const remoteShim = fs.readFileSync(path.join(home, ".hcoord", "bin", "hcoord"), "utf8");
+  assert.ok(remoteShim.includes(`exec "${process.execPath}" `), "the SSH-reachable hcoord names node by absolute path");
+  const hello = spawnSync("/bin/sh", ["-c", `HCOORD_HOME="$HOME/.hcoord" exec "$HOME/.hcoord/bin/hcoord" remote hello --hq test-hq --json`], { env: { PATH: "/usr/bin:/bin", HOME: home }, encoding: "utf8" });
+  assert.equal(JSON.parse(hello.stdout).value.protocol, 1, "it answers the HQ from a bare non-login PATH");
 
   const codexInterview = path.join(home, ".codex", "skills", "interview-me", "SKILL.md");
   const codexInterviewText = fs.readFileSync(codexInterview, "utf8");

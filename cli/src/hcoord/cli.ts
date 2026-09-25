@@ -2,10 +2,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import { officialPromptSupport } from "./herdr";
-import { HcoordError } from "./model";
-import { platformSupport, startDaemon } from "./platform";
-import { callDaemon, runDaemon, staleRead, type WireResult } from "./transport";
-import { dataDir, legacyRetiredPath, sasuEnabledPath, stopMarkerPath } from "./store";
+import { HcoordError, LETTER_OPERATIONS, LETTER_SCHEMA, MAX_OUTBOX_LETTERS, REMOTE_PROTOCOL } from "./model";
+import { outboxCount, readOutboxRaw, removeLetters, writeLetter } from "./outbox";
+import { readHq, writeHq } from "./remote";
+import { openWork } from "./service";
+import { platformSupport, REMOTE_SETUP, startDaemon } from "./platform";
+import { callDaemon, lastDaemonContact, runDaemon, staleRead, type WireResult } from "./transport";
+import { readAlert, reconcileAlert, warningLine } from "./health";
+import { notifyText } from "./platform";
+import { dataDir, legacyRetiredPath, loadLedger, sasuEnabledPath, stopMarkerPath } from "./store";
 
 interface Parsed { words: string[]; flags: Map<string, string | true>; tail: string[] }
 function parse(argv: string[]): Parsed {
@@ -35,7 +40,7 @@ function route(args: Parsed): { operation: string; data: Record<string, unknown>
   if (topic === "config" && action === "show") return { operation: "status", data: {} };
   if (topic === "config" && action === "set") return { operation: "config.set", data: { key: needed(args, "key"), value: duration(needed(args, "value")) } };
   if (topic === "agent" && action === "register") return { operation: "agent.register", data: { machine: needed(args, "machine"), hostScope: flag(args, "host-scope") ?? process.env["HERDR_SOCKET_PATH"] ?? "default", session: needed(args, "session"), instance: needed(args, "instance"), name: needed(args, "name"), project: flag(args, "project"), parent: flag(args, "parent"), pane: flag(args, "pane") } };
-  if (topic === "agent" && action === "spawn") return { operation: "agent.spawn", data: { parent: needed(args, "parent"), machine: needed(args, "machine"), session: needed(args, "session"), name: needed(args, "name"), kind: flag(args, "kind") ?? "codex", intent: needed(args, "intent"), noWatch: args.flags.has("no-watch"), reconcilePane: flag(args, "reconcile-pane"), resumeStart: args.flags.has("resume-start"), nativeArgs: args.tail } };
+  if (topic === "agent" && action === "spawn") return { operation: "agent.spawn", data: { parent: needed(args, "parent"), machine: flag(args, "machine"), repo: flag(args, "repo"), branch: flag(args, "branch"), path: flag(args, "path"), session: needed(args, "session"), name: needed(args, "name"), kind: flag(args, "kind") ?? "codex", intent: needed(args, "intent"), noWatch: args.flags.has("no-watch"), reconcilePane: flag(args, "reconcile-pane"), resumeStart: args.flags.has("resume-start"), nativeArgs: args.tail } };
   if (topic === "agent" && action === "list") return { operation: "agent.list", data: { project: flag(args, "project") } };
   if (topic === "agent" && action === "show") return { operation: "agent.show", data: { id: target } };
   if (topic === "watch" && action === "start") return { operation: "watch.start", data: { target, observer: needed(args, "observer"), actor: flag(args, "actor") ?? needed(args, "observer"), intervalMs: flag(args, "interval") ? duration(needed(args, "interval")) : undefined } };
@@ -57,9 +62,31 @@ function route(args: Parsed): { operation: string; data: Record<string, unknown>
   throw new HcoordError("invalid_argument", "usage: hcoord status | agent register/list/show | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status");
 }
 
+/**
+ * An unstable daemon is reported above every command's output, on stderr so
+ * JSON stdout stays parseable (PRD B14). A command that reached or failed to
+ * reach the daemon re-evaluates the alert; any other command shows the
+ * current one.
+ */
+let warned = false;
+function warnIfUnstable(): void {
+  if (warned) return;
+  warned = true;
+  try {
+    const home = os.homedir();
+    const alert = lastDaemonContact === null ? readAlert(home) : reconcileAlert(home, Date.now(), lastDaemonContact === "answered", notifyText);
+    if (alert) process.stderr.write(`${warningLine(alert, home)}\n`);
+  } catch (error) {
+    // Unreadable health evidence is itself a warning, never a silent "healthy".
+    process.stderr.write(`hcoord warning: daemon health is unknown: ${error instanceof HcoordError ? error.message : "health records could not be read"}\n`);
+  }
+}
+
 function print(result: WireResult, json: boolean): void {
+  warnIfUnstable();
   if (json) { process.stdout.write(`${JSON.stringify(result)}\n`); return; }
   if (!result.ok) { process.stderr.write(`hcoord: ${result.error?.code}: ${result.error?.message}\n`); return; }
+  if (result.delivery === "pending") { const value = result.value as { letter: string; reason: string }; process.stdout.write(`pending: letter ${value.letter} waits for the coordinator; ${value.reason}\n`); return; }
   const data = result.value;
   if (Array.isArray(data)) {
     if (data.length === 0) process.stdout.write("No items.\n");
@@ -67,9 +94,95 @@ function print(result: WireResult, json: boolean): void {
   } else process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
 }
 
+/**
+ * Every write is saved in this machine's outbox before anything else, so a
+ * stopped or busy coordinator delays it instead of losing it (PRD B6, B12).
+ * A running local coordinator applies it at once and returns the same result
+ * a direct call returned before letters existed (PRD B1).
+ */
+async function sendLetter(operation: string, data: Record<string, unknown>): Promise<WireResult> {
+  const letter = writeLetter(operation, data);
+  const pending = (reason: string): WireResult => ({ ok: true, delivery: "pending", value: { letter: letter.id, operation, reason }, observedAt: new Date().toISOString() });
+  try {
+    return await callDaemon("outbox.collect", { letter: letter.id }, undefined, operation === "agent.spawn" ? 240_000 : 30_000);
+  } catch (error) {
+    if (!(error instanceof HcoordError)) throw error;
+    if (error.code === "daemon_down") return pending("the coordinator daemon is not running; it applies this letter after hcoord daemon start");
+    if (error.code === "timeout") return pending("the coordinator did not answer in time; it applies this letter in order, so do not resend it");
+    if (error.code === "permission_denied" || error.code === "transport") return pending(`${error.message}; the running coordinator still collects this letter from the outbox`);
+    throw error;
+  }
+}
+
+const ok = (value: unknown): WireResult => ({ ok: true, value, observedAt: new Date().toISOString() });
+
+/** This machine still coordinates work, so it cannot become another HQ's remote (PRD D-15). */
+async function refuseWhileCoordinating(action: string): Promise<void> {
+  const work = openWork(loadLedger());
+  if (work.requests.length || work.watches.length) {
+    throw new HcoordError("hq_busy", `${action} is refused while this HQ has ${work.requests.length} unresolved request(s) and ${work.watches.length} active watch(es); finish, cancel, or stop them first`, work);
+  }
+}
+
+/**
+ * The HQ reaches a remote only through these subcommands over the saved
+ * machine's SSH target. They touch only the outbox and the HQ marker; the
+ * remote keeps no conversation record (PRD D-10).
+ */
+async function remoteSide(args: Parsed): Promise<WireResult> {
+  const action = args.words[1];
+  const base = { protocol: REMOTE_PROTOCOL, letterSchema: LETTER_SCHEMA, host: os.hostname() };
+  if (action === "hello") {
+    const hq = needed(args, "hq"), current = readHq();
+    if (current !== "local" && current !== hq) throw new HcoordError("hq_conflict", `this machine reports to HQ ${current}; run hcoord config set hq local here before ${hq} can use it`);
+    if (current === "local") {
+      let running = false;
+      try { running = (await callDaemon("status")).ok; } catch (error) { if (!(error instanceof HcoordError) || error.code !== "daemon_down") throw error; }
+      if (running) throw new HcoordError("hq_conflict", `this machine runs its own coordinator daemon; stop it or move its HQ before ${hq} can use it`);
+      await refuseWhileCoordinating(`joining HQ ${hq}`);
+      writeHq(hq);
+    }
+    return ok({ ...base, hq, outbox: outboxCount() });
+  }
+  if (action === "take") {
+    const limit = Math.min(Number(flag(args, "limit") ?? "64"), MAX_OUTBOX_LETTERS);
+    return ok({ ...base, letters: readOutboxRaw(Number.isSafeInteger(limit) && limit > 0 ? limit : 64, undefined, 4 * 1024 * 1024) });
+  }
+  if (action === "drop") return ok({ ...base, removed: removeLetters(args.words.slice(2)) });
+  throw new HcoordError("invalid_argument", "remote subcommands are hello, take, and drop");
+}
+
+/** `hcoord config set hq <local|machine>` (PRD B17). */
+async function setHq(value: string | undefined): Promise<WireResult> {
+  if (value === undefined || value.trim() === "") throw new HcoordError("invalid_argument", "usage: hcoord config set hq <local|machine name>");
+  const current = readHq();
+  if (value === current) return ok({ hq: current, changed: false });
+  const waiting = outboxCount();
+  if (current !== "local" && waiting > 0) throw new HcoordError("hq_busy", `${waiting} letter(s) still wait for HQ ${current}; let it collect them before moving`, { letters: waiting });
+  if (current === "local") {
+    await refuseWhileCoordinating(`moving the HQ to ${value}`);
+    try {
+      const stopped = await callDaemon("daemon.stop");
+      if (stopped.ok) fs.writeFileSync(stopMarkerPath(), `${new Date().toISOString()}\n`, { mode: 0o600 });
+    } catch (error) { if (!(error instanceof HcoordError) || error.code !== "daemon_down") throw error; }
+  }
+  writeHq(value);
+  return ok({ hq: value, changed: true, previous: current });
+}
+
 export async function main(argv: string[]): Promise<number> {
   const args = parse(argv), json = args.flags.has("json");
   try {
+    if (args.words[0] === "remote") { const result = await remoteSide(args); process.stdout.write(`${JSON.stringify(result)}\n`); return 0; }
+    if (args.words[0] === "config" && args.words[1] === "set" && args.words[2] === "hq") { const result = await setHq(args.words[3]); print(result, json); return 0; }
+    const hq = readHq();
+    if (hq !== "local") {
+      const { operation, data } = args.words[0] === "daemon" || args.words[0] === "sasu" ? { operation: `${args.words[0]}.${args.words[1]}`, data: {} } : route(args);
+      if (!LETTER_OPERATIONS.has(operation)) throw new HcoordError("hq_only", `${operation} runs only at the coordinator HQ (${hq}); this machine keeps no conversation record`, { hq });
+      const letter = writeLetter(operation, data);
+      print({ ok: true, delivery: "pending", value: { letter: letter.id, operation, reason: `the coordinator at ${hq} applies it when it next collects this machine's letters; nothing else to do`, hq }, observedAt: new Date().toISOString() }, json);
+      return 0;
+    }
     if (args.words[0] === "sasu" && args.words[1] === "enable") {
       const status = await callDaemon("status");
       if (!status.ok) { print(status, json); return 1; }
@@ -87,7 +200,10 @@ export async function main(argv: string[]): Promise<number> {
     }
     if (args.words[0] === "daemon") {
       const action = args.words[1];
-      if (action === "run") { await runDaemon(); return 0; }
+      if (action === "run") {
+        if (await runDaemon() === "manual_stop") print({ ok: true, value: { running: false, manualStop: true, next: "hcoord daemon start clears the manual stop" }, observedAt: new Date().toISOString() }, json);
+        return 0;
+      }
       if (action === "start") { const value = startDaemon(); print({ ok: true, value, observedAt: new Date().toISOString() }, json); return 0; }
       if (action === "stop") {
         const result = await callDaemon("daemon.stop");
@@ -102,7 +218,7 @@ export async function main(argv: string[]): Promise<number> {
         let result: WireResult;
         try { result = await callDaemon("status"); }
         catch (error) { if (!(error instanceof HcoordError) || error.code !== "daemon_down") throw error; result = staleRead("status"); }
-        result.value = { ...(result.value as object), platform: platformSupport() };
+        result.value = { ...(result.value as object), platform: platformSupport(), remote: { hq: readHq(), setup: REMOTE_SETUP, limits: "a new remote worktree may show the agent's own folder-trust prompt, which a person answers; remote letters arrive at the next collection (about 5 s)" } };
         print(result, json);
         return 0;
       }
@@ -119,6 +235,11 @@ export async function main(argv: string[]): Promise<number> {
         cursor = stream.cursor;
         if (!stream.hasMore) await new Promise((resolve) => setTimeout(resolve, 1000));
       }
+    }
+    if (LETTER_OPERATIONS.has(operation)) {
+      const result = await sendLetter(operation, data);
+      print(result, json);
+      return result.ok ? 0 : 1;
     }
     let result: WireResult;
     try { result = await callDaemon(operation, data); }

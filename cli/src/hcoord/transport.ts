@@ -1,27 +1,42 @@
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
-import { API_VERSION, HcoordError, MAX_AGENTS, MAX_CONNECTIONS, MAX_EVENTS, MAX_LEDGER_BYTES, MAX_MESSAGE_BYTES, MAX_QUEUE, SPAWN_EVENT_SLOTS, own, put, type Ledger } from "./model";
+import { API_VERSION, HcoordError, LETTER_OPERATIONS, MAX_AGENTS, MAX_CONNECTIONS, MAX_EVENTS, MAX_LEDGER_BYTES, MAX_MESSAGE_BYTES, MAX_OUTBOX_LETTERS, MAX_QUEUE, REMOTE_PROTOCOL, SPAWN_EVENT_SLOTS, own, put, type Ledger, type LetterRecord } from "./model";
 import { event } from "./model";
-import { execute, watchForRequest } from "./service";
-import { confirmSpawnPane, createSpawnPane, discoverLocalAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateLocalBinding, waitForSpawnInitialization } from "./herdr";
+import { execute, recordLetter, watchForRequest } from "./service";
+import { outboxCount, parseLetter, readOutbox, removeLetters, type Found, type RawLetter } from "./outbox";
+import { blockedSpawnError, confirmSpawnPane, createSpawnPane, createSpawnWorktree, observedPlacement, discoverAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateBinding, waitForSpawnInitialization } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
-import { notifyHuman } from "./platform";
+import { notifyHuman, notifyText } from "./platform";
+import { isLocalMachine, remoteCall, remoteCallAsync, requireRemoteHerdr, remoteOutcome, savedMachine, type Raw } from "./remote";
+import { reconcileAlert, recordClean, recordReady, recordStart } from "./health";
+
+/** Whether this process reached the daemon on its last call; the CLI derives its health warning from it. */
+export let lastDaemonContact: "answered" | "unreachable" | null = null;
 
 export interface WireRequest { version: number; operation: string; args: Record<string, unknown> }
-export interface WireResult { ok: boolean; value?: unknown; error?: { code: string; message: string; detail?: Record<string, unknown> }; observedAt: string }
+export interface WireResult { ok: boolean; value?: unknown; error?: { code: string; message: string; detail?: Record<string, unknown> }; observedAt: string; delivery?: "delivered" | "pending" }
+/** A local letter younger than this waits for its writer's own collect call before the sweep takes it. */
+const LOCAL_SWEEP_GRACE_MS = 2000;
+const SWEEP_LETTERS_PER_TICK = 16;
+// Remote letters reach the HQ only when it collects them (PRD risk: delivery
+// lags by this interval). Chosen for a ~3 s SSH round trip measured to mini on
+// 2026-09-24; after a refusal the machine waits the longer backoff.
+const COLLECT_INTERVAL_MS = 5000;
+const COLLECT_BACKOFF_MS = 30_000;
+const COLLECT_LETTERS = 64;
 const mutation = (operation: string): boolean => !["status", "agent.list", "agent.show", "watch.list", "request.show", "inbox", "graph", "events"].includes(operation);
 
-export async function callDaemon(operation: string, args: Record<string, unknown> = {}, home = os.homedir()): Promise<WireResult> {
+export async function callDaemon(operation: string, args: Record<string, unknown> = {}, home = os.homedir(), timeoutOverrideMs?: number): Promise<WireResult> {
   if (process.platform === "win32") throw new HcoordError("unsupported_platform", "Windows named-pipe ACL support is unverified; no local daemon connection was attempted");
   const request = `${JSON.stringify({ version: API_VERSION, operation, args })}\n`;
   if (Buffer.byteLength(request) > MAX_MESSAGE_BYTES) throw new HcoordError("capacity", `request exceeds ${MAX_MESSAGE_BYTES} bytes; shorten context or native arguments before retrying`);
   return await new Promise<WireResult>((resolve, reject) => {
     const socket = net.createConnection(socketPath(home));
     let text = "";
-    const timeoutMs = operation === "agent.spawn" ? 75_000 : 10_000;
-    const timer = setTimeout(() => { socket.destroy(); reject(new HcoordError("timeout", `coordinator did not answer within ${timeoutMs / 1000} seconds`)); }, timeoutMs);
+    const timeoutMs = timeoutOverrideMs ?? (operation === "agent.spawn" ? 75_000 : 10_000);
+    const timer = setTimeout(() => { socket.destroy(); lastDaemonContact = "unreachable"; reject(new HcoordError("timeout", `coordinator did not answer within ${timeoutMs / 1000} seconds`)); }, timeoutMs);
     const finish = (error?: Error, value?: WireResult): void => { clearTimeout(timer); socket.destroy(); if (error) reject(error); else resolve(value!); };
     socket.on("connect", () => socket.write(request));
     socket.on("data", (chunk: Buffer) => {
@@ -29,11 +44,12 @@ export async function callDaemon(operation: string, args: Record<string, unknown
       if (Buffer.byteLength(text) > MAX_MESSAGE_BYTES) return finish(new HcoordError("capacity", "coordinator response exceeded message limit"));
       const newline = text.indexOf("\n");
       if (newline === -1) return;
-      try { finish(undefined, JSON.parse(text.slice(0, newline)) as WireResult); }
+      try { const parsed = JSON.parse(text.slice(0, newline)) as WireResult; lastDaemonContact = "answered"; finish(undefined, parsed); }
       catch { finish(new HcoordError("protocol", "coordinator returned invalid JSON")); }
     });
     socket.on("error", (error: NodeJS.ErrnoException) => {
       clearTimeout(timer);
+      lastDaemonContact = "unreachable";
       if (error.code === "ENOENT" || error.code === "ECONNREFUSED") reject(new HcoordError("daemon_down", "coordinator daemon is not running; start it with hcoord daemon start"));
       else if (error.code === "EACCES" || error.code === "EPERM") reject(new HcoordError("permission_denied", "coordinator socket access was denied; allow this session to connect to the local user socket, then retry"));
       else reject(new HcoordError("transport", "coordinator transport failed; inspect the local socket and daemon log before retrying"));
@@ -52,9 +68,14 @@ export function staleRead(operation: string, args: Record<string, unknown> = {},
   return { ok: true, value: { data, stale: true, lastObservedAt: saved ? state.updatedAt : null, warning: saved ? "daemon stopped: automatic watch, reminders, and delivery are inactive" : "daemon stopped and no saved observation exists" }, observedAt };
 }
 
-export async function runDaemon(home = os.homedir()): Promise<void> {
+/**
+ * Runs the daemon until a stop request or signal. Returns "manual_stop"
+ * without starting when the user stopped it, so a KeepAlive supervisor that
+ * restarts only failed exits leaves the manual stop in place (PRD B13).
+ */
+export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manual_stop"> {
   if (process.platform === "win32") throw new HcoordError("unsupported_platform", "Windows local IPC needs a verified user-restricted named pipe adapter");
-  if (fs.existsSync(stopMarkerPath(home))) throw new HcoordError("manual_stop", "daemon was manually stopped; use hcoord daemon start to resume");
+  if (fs.existsSync(stopMarkerPath(home))) return "manual_stop";
   fs.mkdirSync(dataDir(home), { recursive: true, mode: 0o700 });
   fs.chmodSync(dataDir(home), 0o700);
   let ledger = loadLedger(home);
@@ -107,10 +128,11 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
   let tickPending = false;
   let closing = false;
   let lastRetentionAt = 0;
-  const commit = (operation: string, args: Record<string, unknown>, at: string): unknown => {
+  const commit = (operation: string, args: Record<string, unknown>, at: string, letter?: LetterRecord): unknown => {
     const next = structuredClone(ledger);
     const outcome = execute(next, operation, args, at);
-    if (outcome.changed) { saveLedger(next, home); ledger = next; }
+    if (letter) recordLetter(next, letter);
+    if (outcome.changed || letter) { saveLedger(next, home); ledger = next; }
     return outcome.value;
   };
   const spawnAgent = (args: Record<string, unknown>, at: string): unknown => {
@@ -135,10 +157,27 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
       if (intent.status !== "reserved") {
         if (typeof reconcilePane !== "string" || reconcilePane.trim() === "") throw new HcoordError("spawn_uncertain", "tab creation outcome is unknown; inspect the original tab and retry this intent with --reconcile-pane <exact-pane-id>", { intent: intent.key, pane: null, unfinishedStep: "record_pane" });
         // Older persisted intents lack placement, so retain their parent placement check.
-        confirmSpawnPane({ ...intent, pane: reconcilePane }, intent.placement ?? parentPlacement(parent));
+        // A worktree's placement was never recorded; the named pane's own placement is adopted.
+        const placement = intent.worktree ? observedPlacement(intent, reconcilePane) : intent.placement ?? parentPlacement(parent);
+        confirmSpawnPane({ ...intent, pane: reconcilePane }, placement);
         const found = inspectSpawnedAgent({ ...intent, pane: reconcilePane });
         if (found.state === "absent" && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "pane is confirmed but has no agent; retry with --reconcile-pane and --resume-start after inspecting it", { intent: intent.key, pane: reconcilePane, unfinishedStep: "agent_start" });
-        intent = commit("agent.spawn.pane", { intent: intent.key, pane: reconcilePane }, new Date().toISOString()) as SpawnIntent;
+        intent = commit("agent.spawn.pane", { intent: intent.key, pane: reconcilePane, ...placement }, new Date().toISOString()) as SpawnIntent;
+      } else if (intent.worktree) {
+        if (reconcilePane !== null && reconcilePane !== undefined) throw new HcoordError("invalid_argument", "a new spawn intent cannot reconcile an existing pane");
+        // The target's Herdr and hcoord must be usable before any remote effect (PRD B15, B16).
+        if (!isLocalMachine(intent.machine)) { requireRemoteHerdr(intent.machine); remoteCall(intent.machine, ["hello", "--hq", os.hostname()]); }
+        requireSpawnStorage(SPAWN_EVENT_SLOTS.reserve - 1, "create_worktree");
+        intent = commit("agent.spawn.unknown", { intent: intent.key, reason: "worktree creation reserved; outcome pending" }, at) as SpawnIntent;
+        let created: { pane: string; workspace: string; cwd: string };
+        try { created = createSpawnWorktree(intent); }
+        catch (error) {
+          if (error instanceof HcoordError && (error.code === "repo_missing" || error.code === "worktree_failed")) commit("agent.spawn.release", { intent: intent.key, reason: error.message, code: error.code }, new Date().toISOString());
+          throw error;
+        }
+        try { intent = commit("agent.spawn.pane", { intent: intent.key, ...created }, new Date().toISOString()) as SpawnIntent; }
+        catch (error) { throw new HcoordError("spawn_uncertain", "worktree was created but pane recording failed; repair storage and retry this intent with --reconcile-pane", { intent: intent.key, pane: created.pane, unfinishedStep: "record_pane", code: error instanceof HcoordError ? error.code : "storage_failed" }); }
+        createdNow = true;
       } else {
         if (reconcilePane !== null && reconcilePane !== undefined) throw new HcoordError("invalid_argument", "a new spawn intent cannot reconcile an existing pane");
         const placement = parentPlacement(parent);
@@ -158,13 +197,20 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
       if (!createdNow) confirmSpawnPane(intent, intent.placement ?? parentPlacement(ledger.participants[intent.parent]!));
       requireEventSlots(intent.kind === "codex" ? SPAWN_EVENT_SLOTS.beforeExternalStart : SPAWN_EVENT_SLOTS.beforeRegistration, "agent_start");
       requireSpawnStorage(intent.kind === "codex" ? SPAWN_EVENT_SLOTS.beforeExternalStart : SPAWN_EVENT_SLOTS.beforeRegistration, "agent_start");
-      startSpawnedAgent(intent);
+      try { startSpawnedAgent(intent); }
+      catch (error) {
+        const started = inspectSpawnedAgent(intent);
+        if (started.state === "initializing" && started.blocked) throw blockedSpawnError(intent);
+        throw error;
+      }
       identity = inspectSpawnedAgent(intent);
       if (identity.state === "absent") throw new HcoordError("spawn_uncertain", "agent start returned but its named execution is unavailable", { intent: intent.key, pane: intent.pane });
     }
     if (identity.state === "initializing") {
       if (intent.observedInstance != null && identity.instance !== intent.observedInstance) throw new HcoordError("identity_conflict", "spawn terminal was replaced after its first observation", { intent: intent.key, pane: intent.pane });
-      if (intent.kind !== "codex" || intent.initialization !== "pending") throw new HcoordError("spawn_uncertain", "first-turn submission may already have occurred; inspect the saved pane without resubmitting it", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
+      if (identity.blocked) throw blockedSpawnError(intent);
+      if (intent.kind !== "codex") throw new HcoordError("spawn_uncertain", "the agent has not reported its session yet; inspect the saved pane and retry this intent", { intent: intent.key, pane: intent.pane, unfinishedStep: "inspect_agent" });
+      if (intent.initialization !== "pending") throw new HcoordError("spawn_uncertain", "first-turn submission may already have occurred; inspect the saved pane without resubmitting it", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
       if (identity.interactiveReady !== true || (identity.runtime !== "idle" && identity.runtime !== "done")) throw new HcoordError("spawn_uncertain", "named agent is not interactive-ready for its first turn", { intent: intent.key, pane: intent.pane, unfinishedStep: "initialize_agent" });
       requireEventSlots(SPAWN_EVENT_SLOTS.beforeFirstTurn, "initialize_agent");
       requireSpawnStorage(SPAWN_EVENT_SLOTS.beforeFirstTurn, "initialize_agent");
@@ -197,8 +243,8 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
   const registerSasuRun = (args: Record<string, unknown>, at: string): unknown => {
     const run = String(args["run"] ?? ""), project = String(args["project"] ?? "");
     if (run === "" || project === "") throw new HcoordError("invalid_argument", "run and project are required");
-    const observerBinding = validateLocalBinding("local", String(args["observerSession"] ?? ""), String(args["observerInstance"] ?? ""), String(args["observerPane"] ?? ""), String(args["observerHostScope"] ?? "default"), String(args["observerName"] ?? ""));
-    const implementorBinding = validateLocalBinding("local", String(args["implementorSession"] ?? ""), String(args["implementorInstance"] ?? ""), String(args["implementorPane"] ?? ""), String(args["implementorHostScope"] ?? "default"), String(args["implementorName"] ?? ""));
+    const observerBinding = validateBinding("local", String(args["observerSession"] ?? ""), String(args["observerInstance"] ?? ""), String(args["observerPane"] ?? ""), String(args["observerHostScope"] ?? "default"), String(args["observerName"] ?? ""));
+    const implementorBinding = validateBinding("local", String(args["implementorSession"] ?? ""), String(args["implementorInstance"] ?? ""), String(args["implementorPane"] ?? ""), String(args["implementorHostScope"] ?? "default"), String(args["implementorName"] ?? ""));
     const observerCapability = officialDeliveryAvailable({ machine: "local", hostScope: String(args["observerHostScope"] ?? "default"), session: String(args["observerSession"] ?? ""), instance: String(args["observerInstance"] ?? ""), pane: String(args["observerPane"] ?? ""), name: String(args["observerName"] ?? "") });
     if (!observerCapability.ready) throw new HcoordError("unsupported_runtime", `Sasu Observer wake cannot use official delivery: ${observerCapability.reason}`);
     const next = structuredClone(ledger);
@@ -212,6 +258,176 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
     if (!prior) put(next.sasuRuns, run, { observer: observer.id, implementor: implementor.id, project, registeredAt: at });
     saveLedger(next, home); ledger = next;
     return { run, observer, implementor, watch, owner: "hcoord" };
+  };
+  const recordOnly = (letter: LetterRecord): void => {
+    const next = structuredClone(ledger);
+    recordLetter(next, letter);
+    saveLedger(next, home); ledger = next;
+  };
+  /** One write, whether it arrived as a letter or as a direct API call. */
+  const performWrite = (operation: string, args: Record<string, unknown>, at: string, letter?: LetterRecord): unknown => {
+    if (operation === "agent.spawn") {
+      const value = spawnAgent(args, at);
+      if (letter) recordOnly(letter);
+      return value;
+    }
+    if (operation === "agent.register") {
+      const machine = String(args["machine"] ?? "");
+      // A remote pane is addressed through its saved machine's own session, never this host's socket.
+      if (!isLocalMachine(machine)) args = { ...args, hostScope: "default" };
+      const binding = validateBinding(machine, String(args["session"] ?? ""), String(args["instance"] ?? ""), typeof args["pane"] === "string" ? args["pane"] : null, String(args["hostScope"] ?? "default"), String(args["name"] ?? ""));
+      if (!isLocalMachine(machine)) remoteCall(machine, ["hello", "--hq", os.hostname()]);
+      args = { ...args, runtime: binding.runtime };
+    }
+    return commit(operation, args, at, letter);
+  };
+  // Results of letters the sweep applied before their writer asked; bounded,
+  // and only a convenience: the ledger record remains the dedupe authority.
+  const letterResults = new Map<string, WireResult>();
+  const remember = (letterId: string, result: WireResult): void => {
+    letterResults.set(letterId, result);
+    if (letterResults.size > 256) letterResults.delete(letterResults.keys().next().value!);
+  };
+  const refusal = (error: unknown, at: string): WireResult => {
+    const reason = error instanceof HcoordError ? error : new HcoordError("internal", "coordinator operation failed; inspect daemon stderr");
+    if (!(error instanceof HcoordError)) process.stderr.write(`${JSON.stringify({ event: "hcoord.letter_failed", at, code: "internal" })}\n`);
+    return { ok: false, error: { code: reason.code, message: reason.message, ...(reason.detail ? { detail: reason.detail } : {}) }, observedAt: at };
+  };
+  /**
+   * Applies one letter at most once. The effect and the letter record share
+   * one ledger save; the caller deletes the letter only after that save.
+   * Returns null when the letter must stay in its outbox (unsupported).
+   */
+  const applyLetter = (found: Found, origin: string, reported: boolean): { result: WireResult; remove: boolean } => {
+    const at = new Date().toISOString();
+    const known = own(ledger.letters, found.id);
+    if (known) {
+      const cached = letterResults.get(found.id);
+      const result = cached ?? (known.outcome === "applied" ? { ok: true, value: { letter: found.id, outcome: "applied", operation: known.operation }, observedAt: at } : { ok: false, error: { code: known.code ?? "rejected", message: known.message ?? "letter was not applied" }, observedAt: at });
+      return { result, remove: known.outcome !== "unsupported" };
+    }
+    const record = (outcome: LetterRecord["outcome"], code: string | null, message: string | null): LetterRecord => ({ id: found.id, origin, operation: found.letter?.operation ?? "unknown", at, outcome, code, message, reported });
+    const unsupported = (code: string, message: string): { result: WireResult; remove: boolean } => {
+      recordOnly(record("unsupported", code, message));
+      return { result: { ok: false, error: { code, message }, observedAt: at }, remove: false };
+    };
+    if (found.letter === null) return unsupported("unsupported_letter", found.reason);
+    const letter = found.letter;
+    // A remote writer names its own host as local; the HQ knows it by its saved machine label.
+    if (origin !== "local" && letter.operation === "agent.register") {
+      const named = String(letter.args["machine"] ?? "");
+      letter.args = { ...letter.args, machine: named === "local" || named === letter.writer.host ? origin : named, hostScope: "default" };
+    }
+    if (letter.writer.protocol !== REMOTE_PROTOCOL) return unsupported("version_mismatch", `letter from hcoord protocol ${letter.writer.protocol}; this coordinator speaks ${REMOTE_PROTOCOL}`);
+    let result: WireResult;
+    if (!LETTER_OPERATIONS.has(letter.operation)) {
+      result = { ok: false, error: { code: "forbidden", message: `operation ${letter.operation} cannot travel as a letter` }, observedAt: at };
+      recordOnly(record("rejected", "forbidden", result.error!.message));
+      return { result, remove: true };
+    }
+    try {
+      result = { ok: true, value: performWrite(letter.operation, letter.args, at, record("applied", null, null)), observedAt: at };
+    } catch (error) {
+      result = refusal(error, at);
+      if (!own(ledger.letters, found.id)) recordOnly(record("rejected", result.error!.code, result.error!.message));
+    }
+    remember(found.id, result);
+    return { result, remove: true };
+  };
+  /** Applies local letters oldest first; stops after `until` when given. */
+  const collectLocal = (until: string | null, minimumAgeMs: number): WireResult | null => {
+    let requested: WireResult | null = null, applied = 0;
+    for (const found of readOutbox(MAX_OUTBOX_LETTERS, home)) {
+      if (until === null && (Date.now() - found.createdMs < minimumAgeMs || applied >= SWEEP_LETTERS_PER_TICK)) break;
+      if (!own(ledger.letters, found.id)) applied += 1;
+      const outcome = applyLetter(found, "local", found.id === until);
+      if (outcome.remove) removeLetters([found.id], home);
+      if (found.id === until) { requested = outcome.result; break; }
+    }
+    return requested;
+  };
+  /** A machine collection refusal a person must fix is kept in the ledger until a later success. */
+  const noteMachine = (machine: string, problem: { code: string; message: string } | null): void => {
+    const current = ledger.machines[machine]?.problem ?? null;
+    if (current === null && problem === null) return;
+    if (current !== null && problem !== null && current.code === problem.code) return;
+    const at = new Date().toISOString();
+    const next = structuredClone(ledger);
+    put(next.machines, machine, { problem: problem === null ? null : { ...problem, at } });
+    event(next, at, problem === null ? "machine.recovered" : "machine.problem", machine, null, { code: problem?.code ?? null });
+    saveLedger(next, home); ledger = next;
+  };
+  /** An unreachable machine makes its participants unobservable, not failed (PRD B11). */
+  const markUnreachable = (machine: string, reason: string): void => {
+    const at = new Date().toISOString();
+    const next = structuredClone(ledger);
+    let changed = false;
+    for (const participant of Object.values(next.participants)) {
+      if (participant.machine !== machine || participant.connection === "unavailable") continue;
+      execute(next, "agent.observe", { id: participant.id, runtime: "unknown", connection: "unavailable", reason }, at);
+      changed = true;
+    }
+    if (changed) { saveLedger(next, home); ledger = next; }
+  };
+  /** Applies one collected batch oldest first; returns the letters the remote may delete. */
+  const applyCollected = (machine: string, raw: Raw): string[] => {
+    let value: Record<string, unknown>;
+    try { value = remoteOutcome(machine, raw); }
+    catch (error) {
+      const reason = error instanceof HcoordError ? error : new HcoordError("internal", "collection failed");
+      if (reason.code === "machine_unreachable") markUnreachable(machine, reason.message);
+      else noteMachine(machine, { code: reason.code, message: reason.message });
+      throw reason;
+    }
+    noteMachine(machine, null);
+    const letters = Array.isArray(value["letters"]) ? value["letters"] as RawLetter[] : [];
+    const removable: string[] = [];
+    for (const letter of letters) {
+      if (typeof letter?.id !== "string" || typeof letter.text !== "string" || typeof letter.createdMs !== "number") continue;
+      if (applyLetter(parseLetter(letter.id, letter.createdMs, letter.text), machine, false).remove) removable.push(letter.id);
+    }
+    return removable;
+  };
+  /** Runs one step on the serialized operation queue; a failed step never blocks the next. */
+  const queue = <T>(step: () => T): Promise<T> => {
+    const run = processing.then(step);
+    processing = run.then(() => undefined, () => undefined);
+    return run;
+  };
+  const collections = new Map<string, { inFlight: boolean; nextAt: number }>();
+  const inFlight = new Set<Promise<void>>();
+  const aborter = new AbortController();
+  /** Starts at most one collection per remote machine; SSH runs outside the operation queue. */
+  const pollRemotes = (): void => {
+    const machines = new Set([...Object.values(ledger.participants).map((p) => p.machine), ...Object.values(ledger.spawnIntents).filter((i) => i.status !== "complete").map((i) => i.machine)].filter((m) => !isLocalMachine(m)));
+    for (const machine of machines) {
+      const state = collections.get(machine) ?? { inFlight: false, nextAt: 0 };
+      collections.set(machine, state);
+      if (state.inFlight || closing || Date.now() < state.nextAt) continue;
+      state.inFlight = true;
+      const job = (async () => {
+        let retryAfter = COLLECT_BACKOFF_MS;
+        try {
+          let target: string;
+          try { target = savedMachine(machine).target; }
+          catch (error) {
+            const reason = error instanceof HcoordError ? error : new HcoordError("internal", "saved machine lookup failed");
+            await queue(() => noteMachine(machine, { code: reason.code, message: reason.message }));
+            throw reason;
+          }
+          const raw = await remoteCallAsync(target, ["take", "--limit", String(COLLECT_LETTERS)], aborter.signal);
+          const removable = await queue(() => closing ? [] : applyCollected(machine, raw));
+          retryAfter = COLLECT_INTERVAL_MS;
+          // A failed deletion is harmless: the next take returns recorded letters, which are only deleted again.
+          if (removable.length) await remoteCallAsync(target, ["drop", ...removable], aborter.signal);
+        } catch (error) {
+          // The SSH or remote diagnostic belongs in the log: one live run saw a single transient auth refusal that the code alone could not explain.
+          process.stderr.write(`${JSON.stringify({ event: "hcoord.collect_failed", at: new Date().toISOString(), machine, code: error instanceof HcoordError ? error.code : "internal", detail: error instanceof Error ? error.message.slice(0, 300) : null })}\n`);
+        } finally { state.inFlight = false; state.nextAt = Date.now() + retryAfter; }
+      })();
+      inFlight.add(job);
+      void job.finally(() => inFlight.delete(job));
+    }
   };
   const processOutbox = (): void => {
     let examined = 0;
@@ -292,7 +508,7 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
           saveLedger(deferred, home); ledger = deferred;
           continue;
         }
-        const outcome = submitOfficial(item, delivery, recipient, watch?.cycle ?? null);
+        const outcome = submitOfficial(item, delivery, recipient, watch?.cycle ?? null, own(ledger.participants, item.from));
         const finished = structuredClone(ledger);
         const recorded = finished.requests[item.id]!.deliveries.find((entry) => entry.id === delivery.id)!;
         recorded.status = outcome.status;
@@ -338,20 +554,33 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
             closing = true;
           } else {
             if (decoded.operation.startsWith("agent.spawn.") || decoded.operation === "tick" || decoded.operation === "agent.observe") throw new HcoordError("forbidden", "operation is daemon-internal");
-            if (decoded.operation === "agent.register") {
-              const binding = validateLocalBinding(String(decoded.args["machine"] ?? ""), String(decoded.args["session"] ?? ""), String(decoded.args["instance"] ?? ""), typeof decoded.args["pane"] === "string" ? decoded.args["pane"] : null, String(decoded.args["hostScope"] ?? "default"), String(decoded.args["name"] ?? ""));
-              decoded.args["runtime"] = binding.runtime;
+            if (decoded.operation === "outbox.collect") {
+              const letterId = decoded.args["letter"];
+              if (typeof letterId !== "string" || letterId === "") throw new HcoordError("invalid_argument", "letter is required");
+              const collected = collectLocal(letterId, 0);
+              const known = own(ledger.letters, letterId);
+              const resolved = collected ?? letterResults.get(letterId) ?? (known ? applyLetter({ id: letterId, createdMs: 0, letter: null, reason: "" }, "local", true).result : null);
+              if (resolved === null) throw new HcoordError("not_found", "letter is neither in the outbox nor recorded; inspect hcoord inbox before resending");
+              // The sweep may have applied it before this call arrived; its writer sees the outcome now, so it leaves the inbox.
+              const record = own(ledger.letters, letterId);
+              if (record && !record.reported) {
+                const next = structuredClone(ledger);
+                next.letters[letterId]!.reported = true;
+                saveLedger(next, home); ledger = next;
+              }
+              socket.end(`${JSON.stringify({ ...resolved, delivery: "delivered" })}\n`);
+              return;
             }
-            let value = decoded.operation === "agent.spawn" ? spawnAgent(decoded.args, at) : decoded.operation === "sasu.register" ? registerSasuRun(decoded.args, at) : commit(decoded.operation, decoded.args, at);
+            let value = decoded.operation === "sasu.register" ? registerSasuRun(decoded.args, at) : LETTER_OPERATIONS.has(decoded.operation) ? performWrite(decoded.operation, decoded.args, at) : commit(decoded.operation, decoded.args, at);
             if (decoded.operation === "status") {
-              value = { ...(value as object), deliverySafety: OFFICIAL_PROMPT_BOUNDARY, usage: { ledgerBytes: fs.existsSync(ledgerPath(home)) ? fs.statSync(ledgerPath(home)).size : 0,
+              value = { ...(value as object), deliverySafety: OFFICIAL_PROMPT_BOUNDARY, usage: { uncollectedLocalLetters: outboxCount(home), ledgerBytes: fs.existsSync(ledgerPath(home)) ? fs.statSync(ledgerPath(home)).size : 0,
                 connections, queuedOperations, queuedDeliveries: Object.values(ledger.requests).reduce((sum, item) => sum + item.deliveries.filter((delivery) => delivery.status === "pending" || delivery.status === "deferred").length, 0),
                 uncertainSpawns: Object.values(ledger.spawnIntents).filter((intent) => intent.status === "unknown").length } };
             }
             if (decoded.operation === "agent.list") {
               const registered = value as Array<Record<string, unknown>>;
-              const scopes = [...new Set(["default", ...Object.values(ledger.participants).map((entry) => entry.hostScope)])];
-              const discovered = scopes.slice(0, 4).map((scope) => discoverLocalAgents(Object.values(ledger.participants), typeof decoded.args["project"] === "string" ? decoded.args["project"] : null, scope));
+              const scopes = [...new Set(["local\u0000default", ...Object.values(ledger.participants).map((entry) => `${isLocalMachine(entry.machine) ? "local" : entry.machine}\u0000${isLocalMachine(entry.machine) ? entry.hostScope : "default"}`)])];
+              const discovered = scopes.slice(0, 4).map((scope) => { const [machine, hostScope] = scope.split("\u0000"); return discoverAgents(Object.values(ledger.participants), typeof decoded.args["project"] === "string" ? decoded.args["project"] : null, machine, hostScope); });
               value = { items: [...registered.map((entry) => ({ registered: true, ...entry })), ...discovered.flatMap((entry) => entry.items)], partialFailures: [...discovered.flatMap((entry) => entry.partialFailures), ...(scopes.length > 4 ? [`discovery skipped ${scopes.length - 4} socket scopes; registered participants remain visible`] : [])], observedAt: at };
             }
             result = { ok: true, value, observedAt: at };
@@ -369,13 +598,21 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
       }).finally(() => { queuedOperations -= 1; });
     });
   });
+  // Handlers exist before the start record: a stop that landed between that
+  // record and the socket being ready used the default action, left no clean
+  // mark, and a clean stop read as a crash (hcoord-health e2e flake, 2026-09-25).
+  const closed = new Promise<void>((resolve) => server.once("close", () => resolve()));
+  const onSignal = (): void => { if (!closing) { closing = true; if (server.listening) server.close(); } };
+  process.once("SIGTERM", onSignal);
+  process.once("SIGINT", onSignal);
+  recordStart(process.pid, new Date().toISOString(), home);
   try {
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(socketFile, () => { server.off("error", reject); resolve(); }); });
     socketOwned = true;
     fs.chmodSync(socketFile, 0o600);
-    const onSignal = (): void => { if (!closing) { closing = true; server.close(); } };
-    process.once("SIGTERM", onSignal);
-    process.once("SIGINT", onSignal);
+    recordReady(process.pid, new Date().toISOString(), home);
+    reconcileAlert(home, Date.now(), true, notifyText);
+    if (closing) server.close();
     const timer = setInterval(() => {
       if (tickPending || closing) return;
       tickPending = true;
@@ -401,14 +638,21 @@ export async function runDaemon(home = os.homedir()): Promise<void> {
         const outcome = execute(next, "tick", { observedTargets, runRetention }, at);
         if (outcome.changed || observedTargets.length > 0 || oldestUnwatched) { saveLedger(next, home); ledger = next; }
         if (runRetention) lastRetentionAt = Date.parse(at);
+        collectLocal(null, LOCAL_SWEEP_GRACE_MS);
         processOutbox();
       }).catch((error) => { process.stderr.write(`${JSON.stringify({ event: "hcoord.tick_failed", at: new Date().toISOString(), code: error instanceof HcoordError ? error.code : "internal" })}\n`); }).finally(() => { tickPending = false; });
+      pollRemotes();
     }, 1000);
-    await new Promise<void>((resolve) => server.once("close", resolve));
+    await closed;
     clearInterval(timer);
+    aborter.abort();
+    await Promise.allSettled([...inFlight]);
+    await processing;
+    recordClean(process.pid, new Date().toISOString(), home);
+  } finally {
     process.off("SIGTERM", onSignal);
     process.off("SIGINT", onSignal);
-    await processing;
-  } finally { try { if (socketOwned && fs.existsSync(socketFile)) fs.unlinkSync(socketFile); } catch { /* report only through original error */ } }
+    try { if (socketOwned && fs.existsSync(socketFile)) fs.unlinkSync(socketFile); } catch { /* report only through original error */ } }
   } finally { try { if (lockOwned && fs.existsSync(lockFile)) fs.unlinkSync(lockFile); } catch { /* report only through original error */ } }
+  return "stopped";
 }

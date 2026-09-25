@@ -1,7 +1,8 @@
 import path from "node:path";
-import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, validateSpawnSpec, type Delivery, type Ledger, type Participant, type Request, type Watch } from "./model";
+import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_LETTER_RECORDS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, validateSpawnSpec, type Delivery, type Ledger, type LetterRecord, type Participant, type Request, type Watch } from "./model";
 
 type Args = Record<string, unknown>;
+const isHere = (machine: string): boolean => machine === "local" || machine === require("node:os").hostname();
 export interface Outcome { value: unknown; changed: boolean }
 const required = (args: Args, key: string): string => {
   const value = args[key];
@@ -79,6 +80,26 @@ const retireUnsent = (item: Request, reason: string, phase?: Delivery["phase"]):
     delivery.reason = reason;
   }
 };
+/**
+ * Records a letter in the same ledger save as its effect, so a crash before the
+ * outbox deletion re-reads a letter the ledger already knows (PRD B10).
+ */
+export function recordLetter(state: Ledger, record: LetterRecord): void {
+  if (own(state.letters, record.id)) throw new HcoordError("conflict", "letter is already recorded");
+  if (Object.keys(state.letters).length >= MAX_LETTER_RECORDS) throw new HcoordError("capacity", `letter history reached ${MAX_LETTER_RECORDS}; the letter stays in its outbox until retention frees room`);
+  put(state.letters, record.id, record);
+  if (record.outcome !== "applied") event(state, record.at, "letter.rejected", record.id, null, { origin: record.origin, operation: record.operation, code: record.code });
+  else state.updatedAt = record.at;
+}
+
+/** Work that still needs this HQ: moving the HQ away is refused while any remains (PRD D-15, B17). */
+export function openWork(state: Ledger): { requests: Array<{ id: string; from: string; to: string; status: string }>; watches: Array<{ target: string; observer: string | null }> } {
+  return {
+    requests: Object.values(state.requests).filter((item) => !terminalRequest(state, item)).map((item) => ({ id: item.id, from: item.from, to: item.to, status: item.status })),
+    watches: Object.values(state.watches).filter((watch) => watch.status === "active").map((watch) => ({ target: watch.target, observer: watch.observer })),
+  };
+}
+
 export function execute(state: Ledger, operation: string, args: Args, at: string): Outcome {
   if (operation === "status") return { changed: false, value: {
     schema: state.schema, at, lastUpdatedAt: state.updatedAt, eventCursor: state.seq, counts: {
@@ -117,14 +138,22 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
   }
   if (operation === "agent.spawn.reserve") {
     const key = required(args, "intent"), parent = person(state, required(args, "parent"));
-    const machine = required(args, "machine"), session = required(args, "session"), name = required(args, "name"), kind = required(args, "kind");
+    // Without --machine the child is placed beside its parent, as before (PRD B4).
+    const machine = optional(args, "machine") ?? parent.machine, session = required(args, "session"), name = required(args, "name"), kind = required(args, "kind");
     validateSpawnSpec(name, kind);
     const nativeArgs = args["nativeArgs"];
     if (!Array.isArray(nativeArgs) || nativeArgs.some((value) => typeof value !== "string")) throw new HcoordError("invalid_argument", "nativeArgs must be a string array");
-    if (parent.machine !== machine || parent.session !== session) throw new HcoordError("identity_conflict", "parent is not bound to the selected machine and session");
+    if (parent.session !== session) throw new HcoordError("identity_conflict", "parent is not bound to the selected session");
+    const repo = optional(args, "repo"), branch = optional(args, "branch"), worktreePath = optional(args, "path");
+    if ((repo === null) !== (branch === null)) throw new HcoordError("invalid_argument", "--repo and --branch are given together");
+    if (worktreePath !== null && repo === null) throw new HcoordError("invalid_argument", "--path applies only to a worktree spawn with --repo and --branch");
+    const sameMachine = machine === parent.machine || (isHere(machine) && isHere(parent.machine));
+    if (!sameMachine && repo === null) throw new HcoordError("invalid_argument", `a child on another machine needs --repo <source repository on ${machine}> and --branch <new branch>`);
+    for (const [flag, value] of [["repo", repo], ["path", worktreePath]] as const) if (value !== null && !(value.startsWith("/") || value === "~" || value.startsWith("~/"))) throw new HcoordError("invalid_argument", `--${flag} must be absolute or start with ~/ on ${machine}`);
+    const worktree = repo === null ? null : { repo, branch: branch!, path: worktreePath };
     const prior = own(state.spawnIntents, key);
     if (prior) {
-      if (prior.parent !== parent.id || prior.machine !== machine || prior.session !== session || prior.name !== name || prior.kind !== kind || prior.noWatch !== (args["noWatch"] === true) || JSON.stringify(prior.nativeArgs) !== JSON.stringify(nativeArgs)) throw new HcoordError("intent_conflict", "spawn intent key already belongs to another operation", { participant: prior.participant, pane: prior.pane });
+      if (prior.parent !== parent.id || prior.machine !== machine || prior.session !== session || prior.name !== name || prior.kind !== kind || prior.noWatch !== (args["noWatch"] === true) || JSON.stringify(prior.nativeArgs) !== JSON.stringify(nativeArgs) || JSON.stringify(prior.worktree ?? null) !== JSON.stringify(worktree)) throw new HcoordError("intent_conflict", "spawn intent key already belongs to another operation", { participant: prior.participant, pane: prior.pane });
       // Older completed records retained a tab-creation warning. A same-key
       // read repairs that obsolete progress without repeating any external act.
       if (prior.status === "complete" && (prior.reason !== null || prior.initialization !== "complete")) {
@@ -137,7 +166,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (Object.keys(state.participants).length >= MAX_AGENTS) throw new HcoordError("capacity", `participant limit ${MAX_AGENTS} reached`);
     if (Object.keys(state.spawnIntents).length >= MAX_SPAWN_INTENTS) throw new HcoordError("capacity", `spawn intent limit ${MAX_SPAWN_INTENTS} reached; uncertain outcomes remain inspectable`);
     if (MAX_EVENTS - state.events.length < SPAWN_EVENT_SLOTS.reserve) throw new HcoordError("capacity", "event history has insufficient room for a complete spawn; resolve retention before creating a pane");
-    const record = { key, parent: parent.id, machine, hostScope: parent.hostScope, session, name, kind, nativeArgs, noWatch: args["noWatch"] === true, status: "reserved" as const, pane: null, participant: null, reason: null, at, initialization: "pending" as const, observedInstance: null, observedSession: null };
+    const record = { key, parent: parent.id, machine, hostScope: sameMachine ? parent.hostScope : "default", session, name, kind, nativeArgs, noWatch: args["noWatch"] === true, status: "reserved" as const, pane: null, participant: null, reason: null, at, initialization: "pending" as const, observedInstance: null, observedSession: null, worktree };
     put(state.spawnIntents, key, record);
     event(state, at, "agent.spawn_reserved", parent.id, key);
     return { changed: true, value: record };
@@ -149,6 +178,8 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (record.pane !== null && record.pane !== pane) throw new HcoordError("conflict", "spawn intent already owns another pane");
     record.pane = pane;
     record.status = "unknown";
+    const workspace = optional(args, "workspace"), cwd = optional(args, "cwd");
+    if (workspace !== null && cwd !== null) record.placement = { workspace, cwd };
     event(state, at, "agent.spawn_pane", pane, record.key);
     return { changed: true, value: record };
   }
@@ -156,8 +187,16 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const record = own(state.spawnIntents, required(args, "intent"));
     if (!record || record.status === "complete") throw new HcoordError("conflict", "spawn intent is not reservable");
     record.status = "unknown"; record.reason = required(args, "reason");
-    record.placement = { workspace: required(args, "workspace"), cwd: required(args, "cwd") };
+    if (!record.worktree) record.placement = { workspace: required(args, "workspace"), cwd: required(args, "cwd") };
     event(state, at, "agent.spawn_uncertain", record.parent, record.key, { pane: record.pane });
+    return { changed: true, value: record };
+  }
+  if (operation === "agent.spawn.release") {
+    // Herdr definitively refused the worktree, so nothing exists; the same intent may try again later.
+    const record = own(state.spawnIntents, required(args, "intent"));
+    if (!record || record.status !== "unknown" || record.pane !== null) throw new HcoordError("invalid_state", "only a spawn without a pane can be released");
+    record.status = "reserved"; record.reason = required(args, "reason");
+    event(state, at, "agent.spawn_refused", record.parent, record.key, { code: required(args, "code") });
     return { changed: true, value: record };
   }
   if (operation === "agent.spawn.initialization") {
@@ -197,7 +236,8 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (Object.keys(state.participants).length >= MAX_AGENTS) throw new HcoordError("capacity", `participant limit ${MAX_AGENTS} reached; retain the saved spawn and resolve retention before registration`);
     const runtime = required(args, "runtime") as Participant["runtime"];
     if (!["working", "idle", "done", "unknown"].includes(runtime)) throw new HcoordError("invalid_argument", "spawn runtime observation is invalid");
-    const participant: Participant = { id: id("a"), machine: record.machine, hostScope: record.hostScope, session: runtimeSession, instance, name: record.name, project: optional(args, "project"), parent: record.parent, pane: record.pane, runtime, connection: "connected", observedAt: at };
+    const worktree = record.worktree && record.placement ? { repo: record.worktree.repo, branch: record.worktree.branch, path: record.placement.cwd } : null;
+    const participant: Participant = { id: id("a"), machine: record.machine, hostScope: record.hostScope, session: runtimeSession, instance, name: record.name, project: worktree ? worktree.path : optional(args, "project"), parent: record.parent, pane: record.pane, runtime, connection: "connected", observedAt: at, worktree };
     put(state.participants, participant.id, participant);
     if (!record.noWatch) {
       const watch: Watch = { target: participant.id, observer: record.parent, generation: 1, status: "active", intervalMs: state.config.watchMs, dueAt: timed(at, state.config.watchMs), cycle: null, requestId: null, checkedAt: null, startedAt: at, stoppedAt: null, observation: null };
@@ -420,6 +460,8 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       if ((item.status === "open" && item.requiresReply && (item.to === "human" || item.escalatedAt !== null)) || pendingRelay(item)) items.push({ kind: pendingRelay(item) ? "relay_problem" : "question", requestId: item.id, createdAt: item.createdAt, from: item.from, to: item.to, status: item.status, nextAction: pendingRelay(item) ? "inspect parent delivery and relay the recorded answer" : uncheckedWatchRequest(state, item) ? "assign or restart the watch for an explicit check, or stop and cancel the old request" : "reply or cancel this request" });
       if (item.status !== "canceled" && !pendingRelay(item) && item.deliveries.some((delivery) => !delivery.actionClosedAt && (delivery.status === "unknown" || delivery.status === "deferred" || (delivery.status === "failed" && !(item.status === "answered" && (delivery.phase ?? "request") === "request"))))) items.push({ kind: "delivery_problem", requestId: item.id, createdAt: item.createdAt, nextAction: "inspect delivery history and recipient identity" });
     }
+    for (const [machine, entry] of Object.entries(state.machines)) if (entry.problem) items.push({ kind: "machine_problem", machine, code: entry.problem.code, reason: entry.problem.message, at: entry.problem.at, nextAction: entry.problem.code === "version_mismatch" ? `install the HQ's hcoord version on ${machine}` : entry.problem.code === "remote_not_installed" ? `install hcoord on ${machine}` : `fix SSH access to ${machine}; hcoord stores no credentials` });
+    for (const record of Object.values(state.letters)) if (record.outcome !== "applied" && !record.reported) items.push({ kind: "letter_rejected", letter: record.id, origin: record.origin, operation: record.operation, at: record.at, code: record.code, reason: record.message, nextAction: record.outcome === "unsupported" ? "upgrade the writing machine's hcoord to this coordinator's version; the letter stays in its outbox" : "the letter was not applied; resend the command if it is still needed" });
     for (const watch of Object.values(state.watches)) if (watch.status === "active" && (watch.observer === null || own(state.participants, watch.observer)?.connection === "unavailable" || !own(state.participants, watch.observer))) items.push({ kind: "watch_unassigned", target: watch.target, observer: watch.observer, nextAction: "inspect current observer and assign explicitly" });
     return { changed: false, value: items };
   }
@@ -468,6 +510,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
         state.prunedBefore = at; changed = true;
       }
       for (const [key, intent] of Object.entries(state.spawnIntents)) if (intent.status === "reserved" && Date.parse(intent.at) < before) { delete state.spawnIntents[key]; state.prunedBefore = at; changed = true; }
+      for (const [key, record] of Object.entries(state.letters)) if (Date.parse(record.at) < before) { delete state.letters[key]; state.prunedBefore = at; changed = true; }
       const retained = state.events.filter((entry) => Date.parse(entry.at) >= before);
       if (retained.length !== state.events.length) { state.events = retained; state.prunedBefore = at; changed = true; }
     }

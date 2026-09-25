@@ -9,8 +9,12 @@ import { dataDir, stopMarkerPath } from "./store";
 const LABEL = "com.hcoord.daemon";
 const plistPath = (home: string): string => path.join(home, "Library", "LaunchAgents", `${LABEL}.plist`);
 const escapeXml = (text: string): string => text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+// Each value states what was actually observed (PRD B18): "verified_isolated"
+// means a real run in an isolated HOME or test session, not a production login.
+// Remote rows rest on the 2026-09-24 laptop HQ <-> mini run (Herdr 0.9.1,
+// test-only remote session) and the isolated launchd KeepAlive check.
 export const platformSupport = () => ({
-  macos: { localSocket: "verified_isolated", loginStart: "unverified", manualStop: "verified_isolated", herdrNotification: "unverified", systemNotification: "unsupported", remoteHerdr: "unsupported" },
+  macos: { localSocket: "verified_isolated", loginStart: "unverified", crashRestart: "verified_isolated", manualStop: "verified_isolated", herdrNotification: "unverified", systemNotification: "unsupported", remoteHerdr: "verified_isolated", remoteOutbox: "verified_isolated", remoteWorktreeSpawn: "verified_isolated" },
   windows: { sharedCore: "implemented_unverified", namedPipe: "unsupported", loginStart: "unsupported", manualStop: "unsupported", desktopNotification: "unsupported", remoteHerdrHost: "unsupported" },
 });
 
@@ -18,6 +22,30 @@ export const platformSupport = () => ({
 export function notifyHuman(requestId: string): { ok: boolean; code: string } {
   const result = runHerdrCommand(["notification", "show", `hcoord request ${requestId}: open the CLI inbox`, "--sound", "request"], 2000);
   return { ok: result.status === 0, code: result.status === 0 ? "herdr_accepted" : result.status === null ? "runtime_unavailable" : "notification_refused" };
+}
+
+/** A Herdr notification with caller-chosen text; true only when Herdr accepted it. */
+/** What a person prepares once so a machine can host remote agents (PRD B18, D-13). */
+export const REMOTE_SETUP = [
+  "on the HQ: herdr machine add --label <name> <ssh-target> (hcoord reads only this saved machine; it stores no credentials)",
+  "on the remote: run scripts/install-local-skills.mjs from this repository, which writes ~/.hcoord/bin/hcoord for the HQ's SSH calls",
+  "on the remote: clone the source repository that agent spawn --repo names",
+] as const;
+
+export function notifyText(text: string): boolean {
+  return runHerdrCommand(["notification", "show", text, "--sound", "request"], 2000).status === 0;
+}
+
+/**
+ * KeepAlive restarts only an unsuccessful exit: a crash or kill comes back,
+ * while `hcoord daemon stop` (and a start that finds the manual-stop marker)
+ * exits 0 and stays stopped (PRD D-11, B13).
+ */
+export function daemonPlist(home: string, args: string[], label = LABEL): string {
+  const environment: Array<[string, string]> = [["HOME", home], ["PATH", process.env["PATH"] ?? ""]];
+  if (process.env["HCOORD_HOME"]) environment.push(["HCOORD_HOME", process.env["HCOORD_HOME"]]);
+  if (process.env["HCOORD_REMOTE_HOME"]) environment.push(["HCOORD_REMOTE_HOME", process.env["HCOORD_REMOTE_HOME"]]);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${escapeXml(label)}</string><key>ProgramArguments</key><array>${args.map((a) => `<string>${escapeXml(a)}</string>`).join("")}</array><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>EnvironmentVariables</key><dict>${environment.map(([key, value]) => `<key>${key}</key><string>${escapeXml(value)}</string>`).join("")}</dict><key>StandardOutPath</key><string>${escapeXml(path.join(dataDir(home), "daemon.log"))}</string><key>StandardErrorPath</key><string>${escapeXml(path.join(dataDir(home), "daemon.err.log"))}</string></dict></plist>\n`;
 }
 
 export function startDaemon(home = os.homedir()): { label: string; path: string } {
@@ -29,7 +57,7 @@ export function startDaemon(home = os.homedir()): { label: string; path: string 
   fs.rmSync(stopMarkerPath(home), { force: true });
   const executable = path.resolve(__dirname, "cli.js");
   const args = [process.execPath, executable, "daemon", "run"];
-  const body = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${LABEL}</string><key>ProgramArguments</key><array>${args.map((a) => `<string>${escapeXml(a)}</string>`).join("")}</array><key>RunAtLoad</key><true/><key>EnvironmentVariables</key><dict><key>HOME</key><string>${escapeXml(home)}</string><key>PATH</key><string>${escapeXml(process.env["PATH"] ?? "")}</string></dict><key>StandardOutPath</key><string>${escapeXml(path.join(dataDir(home), "daemon.log"))}</string><key>StandardErrorPath</key><string>${escapeXml(path.join(dataDir(home), "daemon.err.log"))}</string></dict></plist>\n`;
+  const body = daemonPlist(home, args);
   fs.writeFileSync(file, body, { mode: 0o600 });
   const boot = spawnSync("launchctl", ["bootstrap", domain, file], { encoding: "utf8", timeout: 5000 });
   if (boot.status !== 0 && !/already bootstrapped|service already loaded/i.test(`${boot.stderr}${boot.stdout}`)) throw new HcoordError("start_failed", "launchd could not bootstrap coordinator; inspect its stderr log");

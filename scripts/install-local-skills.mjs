@@ -214,7 +214,14 @@ function installCliBinary() {
   const hcoordShimPath = path.join(binDir, "hcoord");
   fs.writeFileSync(shimPath, `#!/bin/sh\nexec node "${entry}" "$@"\n`, { mode: 0o755 });
   fs.writeFileSync(hcoordShimPath, `#!/bin/sh\nexec node "${hcoordEntry}" "$@"\n`, { mode: 0o755 });
-  return { ok: true, shimPath, hcoordShimPath, contractVersion: (version.stdout || "").trim() };
+  // The HQ reaches this machine's hcoord over a non-login SSH shell, whose
+  // PATH lacked node on the measured remote (2026-09-24), so this copy names
+  // node by absolute path and lives at a fixed place under the hcoord data dir.
+  const hcoordData = process.env.HCOORD_HOME || path.join(home, ".hcoord");
+  const remoteShimPath = path.join(hcoordData, "bin", "hcoord");
+  fs.mkdirSync(path.dirname(remoteShimPath), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(remoteShimPath, `#!/bin/sh\nexec "${process.execPath}" "${hcoordEntry}" "$@"\n`, { mode: 0o755 });
+  return { ok: true, shimPath, hcoordShimPath, remoteShimPath, contractVersion: (version.stdout || "").trim() };
 }
 
 // The LaunchAgent that runs `sasu supervisor tick` every interval. The CLI
