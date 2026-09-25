@@ -24,10 +24,10 @@ import { closePreparedSpawn, getAgent, herdrCapabilities, isAgentAlive, promptAg
 import { currentObserverIdentity, newRunInstanceId } from "../supervisor/commands";
 import { captureEnrollmentGeneration, readIndex, reconcileEnrollmentAuthority, recipientAuthorityKey, type SupervisorIndex } from "../supervisor/index";
 import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
-import { buildDigest, renderDigest } from "../supervisor/digest";
+import { buildDigest, renderDigest, type CoordinatorFacts } from "../supervisor/digest";
 import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
 import { sasuEnabledPath } from "../hcoord/store";
-import { HcoordCallFailed, preflightRun, registerRun, sendRunNotice, type ObserverRegistration, type RunNoticeKind, type RunRegistration, type SentNotice } from "./hcoord";
+import { HcoordCallFailed, endRun, preflightRun, registerRun, sendRunNotice, showRun, type ObserverRegistration, type RunNoticeKind, type RunRegistration, type SentNotice } from "./hcoord";
 import { DispatchRejected, assertDispatchablePrd, assertNotImplementor, dispatchImplementor, parseEnvPairs, placementFor } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
@@ -551,14 +551,31 @@ function recordDispatch(
   return record;
 }
 
+/**
+ * Ends the coordinator's watch of a retired hcoord run (B17). The ledger
+ * letter is idempotent, so running `retire` again on a retired run is the
+ * retry after a refusal.
+ */
+function endCoordination(state: ImplementState, reason: string, base: ImplementCommandResult): ImplementCommandResult {
+  const run = hcoordRunKey(state);
+  if (run === null) return base;
+  try {
+    const ended = endRun(run, reason);
+    return { ...base, message: `${base.message}; hcoord watch ${ended.delivery === "pending" ? "end is waiting in the hcoord outbox until its daemon runs" : "ended"}`, detail: { ...(base.detail ?? {}), hcoord: { ended: true, run, delivery: ended.delivery } } };
+  } catch (error) {
+    if (!(error instanceof HcoordCallFailed)) throw error;
+    return { ...base, ok: false, exitCode: 1, message: `${base.message}, but hcoord still watches it: ${error.message}; run \`sasu implement retire --slug ${state.topicSlug}\` again to retry`, detail: { ...(base.detail ?? {}), hcoord: { ended: false, run, problem: error.message } } };
+  }
+}
+
 function retire(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   if (state.status === "retired") {
-    return result("retire", true, `implement run is already retired: ${state.topicSlug}`, {
+    return endCoordination(state, "retired", result("retire", true, `implement run is already retired: ${state.topicSlug}`, {
       status: state.status,
       retirement: state.retirement,
       occupancyReleased: true,
-    });
+    }));
   }
   if (state.status !== "active") {
     throw new Error(`only an active unfinished run can be retired; ${state.topicSlug} is ${state.status}`);
@@ -577,11 +594,11 @@ function retire(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   };
   state.verificationReport = null;
   persistState(statePath, state);
-  return result("retire", true, `implement run retired and tree occupancy released: ${state.topicSlug}`, {
+  return endCoordination(state, "retired", result("retire", true, `implement run retired and tree occupancy released: ${state.topicSlug}`, {
     status: state.status,
     retirement: state.retirement,
     occupancyReleased: true,
-  });
+  }));
 }
 
 /**
@@ -1585,6 +1602,17 @@ function currentInputs(state: ImplementState) {
   return { source, held, contract, context, intentInput, fingerprint };
 }
 
+/** The coordinator's record of an hcoord run for the digest; a stopped daemon answers from its saved ledger. */
+function coordinatorFacts(run: string): CoordinatorFacts {
+  try {
+    const { value, stale } = showRun(run);
+    return { run, observer: value.observer?.id ?? null, implementor: value.implementor?.id ?? null, intervalMs: value.watch?.intervalMs ?? null, watchStatus: value.watch?.status ?? null, openCycle: value.watch?.openCycle ?? null, lastCheckedAt: value.watch?.lastCheckedAt ?? null, endedAt: value.endedAt, stale };
+  } catch (error) {
+    if (error instanceof HcoordCallFailed) return { run, problem: error.message };
+    throw error;
+  }
+}
+
 /**
  * `status --digest`: the deterministic facts an Observer reads on a wake
  * (B16). Addressed to the run's recorded Observer alone: a wake that lands in
@@ -1607,7 +1635,7 @@ function digest(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   if (session !== supervision.observer.sessionId) {
     throw new Error(`digest refused: run '${state.topicSlug}' is observed by session ${supervision.observer.sessionId}, and this session is ${session ?? "unidentified"}; nothing was changed. \`sasu implement status --json\` remains readable`);
   }
-  const built = buildDigest(state, supervision);
+  const built = buildDigest(state, supervision, { coordinator: coordinatorFacts });
   return result("status", true, `${state.topicSlug}: digest since dispatch`, { digest: built }, renderDigest(built));
 }
 

@@ -57,7 +57,14 @@ export interface RunDigest {
     reportStatus: string | null;
   };
   events: { count: number; lastAt: string | null; lastKind: string | null; sinceDispatch: number };
+  /** Who wakes the Observer, and for an hcoord run the coordinator's own record of its watch (B18). */
+  supervision: { owner: "legacy" | "hcoord"; patrolIntervalMs: number; coordinator: CoordinatorFacts | null };
 }
+
+/** The coordinator's view of an hcoord run, read by the caller; `problem` when it could not be read. */
+export type CoordinatorFacts =
+  | { run: string; observer: string | null; implementor: string | null; intervalMs: number | null; watchStatus: string | null; openCycle: string | null; lastCheckedAt: string | null; endedAt: string | null; stale: boolean }
+  | { run: string; problem: string };
 
 const RECENT_COMMITS = 10;
 const CHURN_ROWS = 10;
@@ -217,7 +224,7 @@ function scopedHerdr(environment: HerdrEnvironment, hostScope: string): HerdrEnv
   return { ...environment, env };
 }
 
-export function buildDigest(state: ImplementState, supervision: SupervisionRecord, options: { herdr?: HerdrEnvironment; now?: () => number } = {}): RunDigest {
+export function buildDigest(state: ImplementState, supervision: SupervisionRecord, options: { herdr?: HerdrEnvironment; now?: () => number; coordinator?: (run: string) => CoordinatorFacts } = {}): RunDigest {
   const facts = runFacts(state, supervision);
   const now = options.now ?? (() => Date.now());
   const workRoot = requireWorkRoot(state);
@@ -243,6 +250,11 @@ export function buildDigest(state: ImplementState, supervision: SupervisionRecor
     git: gitFacts(workRoot, supervision.dispatchHead),
     verify: verifyFacts(state, supervision.dispatchedAt),
     events: { count: state.events.length, lastAt: state.events.at(-1)?.at ?? null, lastKind: state.events.at(-1)?.kind ?? null, sinceDispatch: events.length },
+    supervision: {
+      owner: supervision.coordinationOwner ?? "legacy",
+      patrolIntervalMs: supervision.patrolIntervalMs,
+      coordinator: supervision.coordinationOwner === "hcoord" && options.coordinator !== undefined ? options.coordinator(supervision.runInstanceId) : null,
+    },
   };
 }
 
@@ -270,5 +282,10 @@ export function renderDigest(digest: RunDigest): string[] {
   }
   lines.push(`Verify: ${digest.verify.attempts} attempt(s); latest ${digest.verify.latestVerdict ?? "none"} ${ago(digest.verify.latestAt, now)}; report ${digest.verify.reportStatus ?? "none"}; repeatedly failing: ${digest.verify.repeatedlyFailing.length === 0 ? "none" : digest.verify.repeatedlyFailing.join(", ")}`);
   lines.push(`Events: ${digest.events.sinceDispatch} since dispatch; last ${digest.events.lastKind ?? "none"} ${ago(digest.events.lastAt, now)}`);
+  const coordinator = digest.supervision.coordinator;
+  if (digest.supervision.owner === "legacy") lines.push(`Supervision: legacy supervisor tick; patrol every ${Math.round(digest.supervision.patrolIntervalMs / 60_000)} min`);
+  else if (coordinator === null) lines.push("Supervision: hcoord; coordinator record not read");
+  else if ("problem" in coordinator) lines.push(`Supervision: hcoord run ${coordinator.run}; coordinator record unavailable: ${coordinator.problem}`);
+  else lines.push(`Supervision: hcoord run ${coordinator.run}${coordinator.stale ? " (daemon stopped; saved record)" : ""}; Observer ${coordinator.observer ?? "none"}, implementor ${coordinator.implementor ?? "none"}; watch ${coordinator.watchStatus ?? "none"} every ${coordinator.intervalMs === null ? "unknown" : `${Math.round(coordinator.intervalMs / 60_000)} min`}; open cycle ${coordinator.openCycle ?? "none"}; last closed cycle ${coordinator.lastCheckedAt === null ? "never" : `${ago(coordinator.lastCheckedAt, now)} (${coordinator.lastCheckedAt})`}${coordinator.endedAt === null ? "" : `; ended ${coordinator.endedAt}`}`);
   return lines;
 }

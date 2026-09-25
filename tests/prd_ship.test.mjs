@@ -121,6 +121,23 @@ test("local delivery accepts a report bound to the already committed implementat
   assert.equal(run("git", ["log", "-1", "--format=%s"], { cwd: current.root }).stdout.trim(), "Implement feature");
 });
 
+test("a completed delivery of an hcoord-supervised run ends its hcoord watch", () => {
+  const current = fixture();
+  current.state.supervision = { runInstanceId: "run-key-1", coordinationOwner: "hcoord" };
+  write(current.statePath, `${JSON.stringify(current.state, null, 2)}\n`);
+  const bin = path.join(current.root, "agents", "test-bin");
+  write(path.join(bin, "hcoord"), `#!/usr/bin/env node
+require("node:fs").appendFileSync(${JSON.stringify(path.join(current.root, "agents", "hcoord-argv.log"))}, JSON.stringify(process.argv.slice(2)) + "\\n");
+process.stdout.write(JSON.stringify({ ok: true, delivery: "delivered", value: {} }));
+`, 0o755);
+  const result = run(process.execPath, [shipScript, "local", "--state", current.statePath, "--no-gpg-sign"], { cwd: current.root, env: current.env });
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.ok, true);
+  assert.deepEqual(output.coordination, { ended: true, run: "run-key-1", delivery: "delivered" });
+  const asked = fs.readFileSync(path.join(current.root, "agents", "hcoord-argv.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.deepEqual(asked, [["sasu", "end", "--run", "run-key-1", "--reason", "delivered", "--json"]]);
+});
+
 test("local delivery never amends a verified checkpoint commit", () => {
   const current = fixture();
   run("git", ["commit", "--amend", "-q", "-m", "checkpoint: implementation"], { cwd: current.root });

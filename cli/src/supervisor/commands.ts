@@ -4,6 +4,7 @@ import path from "node:path";
 import { legacyRetiredPath, sasuEnabledPath } from "../hcoord/store";
 import { getAgent, guardedPromptSupport, type HerdrEnvironment } from "../implement/herdr";
 import { recordEvent } from "../implement/events";
+import { HcoordCallFailed, handoverRun, listRuns, type SasuRunView } from "../implement/hcoord";
 import { loadState, nowIso, persistState, resolveStatePath } from "../implement/store";
 import type { ImplementCommandResult, ImplementState, ObserverIdentity } from "../implement/types";
 import { currentHerdrRole } from "../runs/session";
@@ -95,6 +96,11 @@ export function supervisorStatusView(env: NodeJS.ProcessEnv, herdr: HerdrEnviron
     wakePath: entry.lastObservation === null ? "unobserved" : entry.lastObservation.guardedPrompt ? "guarded" : "session-match",
     stale: entry.missingTicks > 0 || (entry.lastObservation !== null && (/^observer-gone/.test(entry.lastObservation.observer) || /^implementor-gone/.test(entry.lastObservation.implementor) || /^unobservable/.test(entry.lastObservation.observer) || /^unobservable/.test(entry.lastObservation.implementor))),
   }));
+  // Runs hcoord owns never enter the index (B2); they are listed from the
+  // coordinator's own record so an operator finds every run in one place (B18).
+  let coordinated: { runs: SasuRunView[]; stale: boolean; problem: string | null };
+  try { const listed = listRuns(); coordinated = { runs: listed.value.filter((run) => run.endedAt === null), stale: listed.stale, problem: null }; }
+  catch (error) { if (!(error instanceof HcoordCallFailed)) throw error; coordinated = { runs: [], stale: false, problem: error.message }; }
   const tickAgeMs = index?.lastTickAt === null || index?.lastTickAt === undefined ? null : now - Date.parse(index.lastTickAt);
   const healthProblems = [
     ...(indexProblem === null ? [] : [indexProblem]),
@@ -106,6 +112,8 @@ export function supervisorStatusView(env: NodeJS.ProcessEnv, herdr: HerdrEnviron
     ...runs.filter((run) => run.stale).map((run) => `${run.slug} routing is stale`),
     ...runs.filter((run) => run.lastFailure !== null).map((run) => `${run.slug} current failure: ${run.lastFailure!.detail}`),
     ...(index?.undeliveredTerminal.map((record) => `undelivered-terminal ${slugOf(record.statePath)}: ${record.detail}`) ?? []),
+    ...(coordinated.problem === null ? [] : [`hcoord runs unreadable: ${coordinated.problem}`]),
+    ...(coordinated.stale && coordinated.runs.length > 0 ? [`hcoord daemon is stopped while ${coordinated.runs.length} hcoord run(s) are active; start it with hcoord daemon start`] : []),
   ];
   const lines = [
     `LaunchAgent: ${agent.installed ? "installed" : "NOT installed"} at ${agent.plistPath}; ${agent.loaded === true ? "loaded" : agent.loaded === false ? "NOT loaded" : "load state unknown"}${agent.detail === null ? "" : ` (${agent.detail})`}`,
@@ -116,11 +124,13 @@ export function supervisorStatusView(env: NodeJS.ProcessEnv, herdr: HerdrEnviron
     `Runs: ${runs.length}`,
     ...runs.map((run) => `  ${run.slug} ${run.runInstanceId}${run.stale ? " [stale]" : ""}: recovery owner ${run.recoveryOwner}; observer ${run.lastObservation?.observer ?? "unobserved"}; implementor ${run.lastObservation?.implementor ?? "unobserved"}; last wake ${run.lastWake === null ? "none" : `${run.lastWake.reasons.join("+")} at ${run.lastWake.at} ${run.lastWake.outcome} via ${run.lastWake.path}`}; last failure ${run.lastFailure === null ? "none" : `${run.lastFailure.at} ${run.lastFailure.detail}`}`),
     ...(index?.removed.slice(-5).map((removal) => `  removed ${slugOf(removal.statePath)} at ${removal.at}: ${removal.cause}`) ?? []),
+    `hcoord runs: ${coordinated.problem !== null ? "unreadable" : coordinated.runs.length}${coordinated.stale ? " (daemon stopped; saved record)" : ""}`,
+    ...coordinated.runs.map((run) => `  ${run.slug ?? "unnamed"} ${run.run}: hcoord owns this run; Observer ${run.observer?.name ?? "none"} (${run.observer?.id ?? "none"}); implementor ${run.implementor?.name ?? "none"} (${run.implementor?.id ?? "none"}); watch ${run.watch?.status ?? "none"} every ${run.watch === null ? "unknown" : `${Math.round(run.watch.intervalMs / 60_000)} min`}; open cycle ${run.watch?.openCycle ?? "none"}; last closed ${run.watch?.lastCheckedAt ?? "never"}; recovery owner ${run.recoveryOwner ?? "unrecorded"}`),
     `Undelivered terminal: ${index?.undeliveredTerminal.length ?? 0}`,
     ...(index?.undeliveredTerminal.slice(-5).map((record) => `  ATTENTION ${slugOf(record.statePath)} ${record.runInstanceId} at ${record.at}: ${record.detail}`) ?? []),
   ];
   const ok = healthProblems.length === 0;
-  return { ok, lines, detail: { launchAgent: agent, lastTickAt: index?.lastTickAt ?? null, lastTickAgeMs: tickAgeMs, lastHerdr: index?.lastHerdr ?? null, guardedPrompt: guarded, indexPath: file, indexProblem, healthProblems, runs, removed: index?.removed ?? [], undeliveredTerminal: index?.undeliveredTerminal ?? [], tickExecutor: index?.tickExecutor ?? null, tickLog: tickLogPath(env) } };
+  return { ok, lines, detail: { hcoordRuns: coordinated, launchAgent: agent, lastTickAt: index?.lastTickAt ?? null, lastTickAgeMs: tickAgeMs, lastHerdr: index?.lastHerdr ?? null, guardedPrompt: guarded, indexPath: file, indexProblem, healthProblems, runs, removed: index?.removed ?? [], undeliveredTerminal: index?.undeliveredTerminal ?? [], tickExecutor: index?.tickExecutor ?? null, tickLog: tickLogPath(env) } };
 }
 
 function status(env: NodeJS.ProcessEnv): ImplementCommandResult {
@@ -191,12 +201,18 @@ function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.Process
   if (state.status !== "active") throw new Error(`run ${state.topicSlug} is ${state.status}; a finished run is not handed over`);
   const observer = currentObserverIdentity(env, hooks.herdr ?? { env });
   if (observer.identity === null) throw new Error(observer.problem ?? "cannot read this pane's identity");
+  // An hcoord run's watch moves first: the coordinator validates the new
+  // Observer's exact execution, and until it accepts, the old Observer's
+  // place receives nothing and the Sasu record still names it (B15). A
+  // repeat after a later failure finds the watch already moved.
+  const coordinated = supervision?.coordinationOwner === "hcoord" ? handoverCoordination(supervision.runInstanceId, observer.identity, hooks.herdr ?? { env }) : null;
   const at = nowIso();
   const from = supervision?.observer ?? pending!.observer;
   const transfer = { at, from, to: observer.identity, approval };
   if (supervision !== null) {
     supervision.handovers = [...supervision.handovers, transfer];
     supervision.observer = observer.identity;
+    if (coordinated !== null && supervision.hcoord !== undefined && coordinated.observer !== null) supervision.hcoord = { ...supervision.hcoord, observer: coordinated.observer.id };
   }
   // A partial handoff is recovered by the Observer, not by the Implementor.
   // Move that recovery authority with the explicit human-approved handover so
@@ -225,7 +241,18 @@ function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.Process
   if (currentObserver === null || !sameObserverAuthority(currentObserver, observer.identity)) {
     throw new Error("handover authority changed after persistence; the current enrollment was reconciled but this handover is no longer authoritative");
   }
-  return result("handover", true, `run ${current.topicSlug} is now observed by session ${observer.identity.sessionId} in pane ${observer.identity.paneId}; wakes and partial recovery resume on the next action`, { observer: observer.identity, handovers: current.pendingDispatch?.handovers?.length ?? current.supervision?.handovers.length ?? 0, pendingPhase: current.pendingDispatch?.phase ?? null });
+  return result("handover", true, `run ${current.topicSlug} is now observed by session ${observer.identity.sessionId} in pane ${observer.identity.paneId}; ${coordinated === null ? "wakes and partial recovery resume on the next action" : `hcoord now sends its watch cycles and notices to participant ${coordinated.observer?.id ?? "unknown"}`}`, { observer: observer.identity, handovers: current.pendingDispatch?.handovers?.length ?? current.supervision?.handovers.length ?? 0, pendingPhase: current.pendingDispatch?.phase ?? null, hcoord: coordinated });
+}
+
+function handoverCoordination(run: string, identity: ObserverIdentity, herdr: HerdrEnvironment): SasuRunView {
+  const looked = getAgent(identity.paneId, herdr);
+  const name = looked.kind === "found" ? looked.agent.name?.trim() ?? "" : "";
+  if (name === "") throw new Error(`hcoord registers the Observer by its Herdr agent name and pane ${identity.paneId} has none; run \`herdr agent rename ${identity.paneId} <name>\` and hand over again. Nothing was changed`);
+  try { return handoverRun(run, { identity, name }); }
+  catch (error) {
+    if (error instanceof HcoordCallFailed) throw new Error(`${error.message}; the handover was not recorded and the old Observer remains recorded`);
+    throw error;
+  }
 }
 
 export async function runSupervisorCommand(projectRoot: string, args: SupervisorArgs, env: NodeJS.ProcessEnv = process.env, hooks: SupervisorCommandHooks = {}): Promise<ImplementCommandResult> {
