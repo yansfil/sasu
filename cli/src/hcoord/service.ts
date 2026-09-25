@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_LETTER_RECORDS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, validateSpawnSpec, type Delivery, type Ledger, type LetterRecord, type Participant, type Request, type Watch } from "./model";
+import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_LETTER_RECORDS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, validateSpawnSpec, type Delivery, type Ledger, type LetterRecord, type Participant, type Request, type SasuRun, type Watch } from "./model";
 
 type Args = Record<string, unknown>;
 const isHere = (machine: string): boolean => machine === "local" || machine === require("node:os").hostname();
@@ -98,6 +98,38 @@ export function openWork(state: Ledger): { requests: Array<{ id: string; from: s
     requests: Object.values(state.requests).filter((item) => !terminalRequest(state, item)).map((item) => ({ id: item.id, from: item.from, to: item.to, status: item.status })),
     watches: Object.values(state.watches).filter((watch) => watch.status === "active").map((watch) => ({ target: watch.target, observer: watch.observer })),
   };
+}
+
+/** The active Sasu binding whose implementor is this participant, if any. */
+export function sasuRunWatching(state: Ledger, participant: string): { run: string; binding: SasuRun } | null {
+  for (const [run, binding] of Object.entries(state.sasuRuns)) if (binding.implementor === participant && !binding.endedAt) return { run, binding };
+  return null;
+}
+function sasuRunView(state: Ledger, run: string, binding: SasuRun): Record<string, unknown> {
+  const watch = own(state.watches, binding.implementor) ?? null;
+  const person = (id: string): Record<string, unknown> | null => { const found = own(state.participants, id); return found ? { id: found.id, name: found.name, pane: found.pane, runtime: found.runtime, connection: found.connection } : null; };
+  return {
+    run, slug: binding.slug ?? null, statePath: binding.statePath ?? null, project: binding.project, recoveryOwner: binding.recoveryOwner ?? null,
+    registeredAt: binding.registeredAt, replaces: binding.replaces ?? null, endedAt: binding.endedAt ?? null, endReason: binding.endReason ?? null,
+    observer: person(binding.observer), implementor: person(binding.implementor),
+    watch: watch === null ? null : { observer: watch.observer, generation: watch.generation, status: watch.status, intervalMs: watch.intervalMs, dueAt: watch.dueAt, openCycle: watch.cycle, lastCheckedAt: watch.checkedAt },
+  };
+}
+/** Stops the run implementor's watch and cancels everything it still has open, its unchecked cycle included. */
+export function endSasuRun(state: Ledger, binding: SasuRun, at: string): void {
+  const watch = own(state.watches, binding.implementor);
+  if (watch?.status === "active") {
+    watch.status = "stopped"; watch.stoppedAt = at;
+    watch.cycle = null; watch.requestId = null;
+    event(state, at, "watch.stopped", watch.target, null, { generation: watch.generation });
+  }
+  // A question the ended run's implementor still waits on has nobody left to answer it.
+  for (const item of Object.values(state.requests)) {
+    if (item.from !== binding.implementor || item.status !== "open") continue;
+    item.status = "canceled"; item.canceledAt = at;
+    for (const delivery of item.deliveries) if (delivery.status === "pending" || delivery.status === "deferred") { delivery.status = "failed"; delivery.reason = "Sasu run ended before submission"; }
+    event(state, at, "request.canceled", item.id, item.intent);
+  }
 }
 
 export function execute(state: Ledger, operation: string, args: Args, at: string): Outcome {
@@ -336,7 +368,54 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     event(state, at, "watch.checked", target, cycle, { observer: watch.observer });
     return { changed: true, value: watch };
   }
-  if (operation === "watch.list") return { changed: false, value: Object.values(state.watches) };
+  if (operation === "watch.list") return { changed: false, value: Object.values(state.watches).map((watch) => {
+    const run = sasuRunWatching(state, watch.target);
+    return run === null ? watch : { ...watch, sasuRun: { run: run.run, slug: run.binding.slug ?? null, recoveryOwner: run.binding.recoveryOwner ?? null } };
+  }) };
+  if (operation === "sasu.list") return { changed: false, value: Object.entries(state.sasuRuns).map(([run, binding]) => sasuRunView(state, run, binding)) };
+  if (operation === "sasu.show") {
+    const run = required(args, "run");
+    const binding = own(state.sasuRuns, run);
+    if (!binding) throw new HcoordError("not_found", `Sasu run ${run} is not registered with this coordinator`);
+    return { changed: false, value: sasuRunView(state, run, binding) };
+  }
+  if (operation === "sasu.handover.apply") {
+    // The ledger half of a human-approved Observer handover (PRD B15); the
+    // daemon validates the new Observer's exact execution before calling it.
+    // The watch moves with its open cycle, and questions the implementor
+    // asked the old Observer move too, so none waits on a session that left.
+    const run = required(args, "run"), observer = person(state, required(args, "observer")).id;
+    const binding = own(state.sasuRuns, run);
+    if (!binding) throw new HcoordError("not_found", `Sasu run ${run} is not registered with this coordinator`);
+    if (binding.endedAt) throw new HcoordError("conflict", `Sasu run ${run} ended at ${binding.endedAt}; a finished run is not handed over`);
+    if (binding.observer === observer) return { changed: false, value: sasuRunView(state, run, binding) };
+    const previous = binding.observer;
+    const watch = own(state.watches, binding.implementor);
+    if (watch?.status === "active") execute(state, "watch.assign", { target: binding.implementor, observer, actor: "human", expectedGeneration: String(watch.generation) }, at);
+    else execute(state, "watch.start", { target: binding.implementor, observer, actor: "human", intervalMs: watch?.intervalMs }, at);
+    for (const item of Object.values(state.requests)) {
+      if (item.from !== binding.implementor || item.to !== previous || item.status !== "open" || uncheckedWatchRequest(state, item)) continue;
+      retireUnsent(item, "Observer handed over before submission");
+      item.to = observer;
+      queueDelivery(item, observer, at);
+    }
+    binding.observer = observer;
+    event(state, at, "sasu.handover", run, null, { from: previous, to: observer });
+    return { changed: true, value: sasuRunView(state, run, binding) };
+  }
+  if (operation === "sasu.end") {
+    // Retire or delivery ends a run's supervision (PRD B17). The watch stops
+    // and an unchecked cycle is canceled so neither a wake nor an inbox item
+    // outlives the run; a second end of the same run changes nothing.
+    const run = required(args, "run"), reason = required(args, "reason");
+    const binding = own(state.sasuRuns, run);
+    if (!binding) throw new HcoordError("not_found", `Sasu run ${run} is not registered with this coordinator`);
+    if (binding.endedAt) return { changed: false, value: sasuRunView(state, run, binding) };
+    endSasuRun(state, binding, at);
+    binding.endedAt = at; binding.endReason = reason;
+    event(state, at, "sasu.ended", run, null, { reason });
+    return { changed: true, value: sasuRunView(state, run, binding) };
+  }
   if (operation === "request.send") {
     const from = required(args, "from"), to = required(args, "to"), intent = required(args, "intent");
     person(state, from);

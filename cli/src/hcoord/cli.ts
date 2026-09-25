@@ -58,8 +58,17 @@ function route(args: Parsed): { operation: string; data: Record<string, unknown>
   if (topic === "inbox") return { operation: "inbox", data: {} };
   if (topic === "graph") return { operation: "graph", data: {} };
   if (topic === "events") return { operation: "events", data: { cursor: flag(args, "cursor") ?? "0" } };
-  if (topic === "sasu" && action === "register") return { operation: "sasu.register", data: { run: needed(args, "run"), project: needed(args, "project"), observerName: needed(args, "observer-name"), observerPane: needed(args, "observer-pane"), observerSession: needed(args, "observer-session"), observerInstance: needed(args, "observer-instance"), observerHostScope: flag(args, "observer-host-scope") ?? "default", implementorName: needed(args, "implementor-name"), implementorPane: needed(args, "implementor-pane"), implementorSession: needed(args, "implementor-session"), implementorInstance: needed(args, "implementor-instance"), implementorHostScope: flag(args, "implementor-host-scope") ?? "default" } };
-  throw new HcoordError("invalid_argument", "usage: hcoord status | agent register/list/show | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status");
+  if (topic === "sasu") {
+    const observer = () => ({ observerName: needed(args, "observer-name"), observerPane: needed(args, "observer-pane"), observerSession: needed(args, "observer-session"), observerInstance: needed(args, "observer-instance"), observerHostScope: flag(args, "observer-host-scope") ?? "default" });
+    const run = () => ({ run: needed(args, "run"), project: needed(args, "project"), slug: needed(args, "slug"), statePath: needed(args, "state"), intervalMs: flag(args, "interval") ? duration(needed(args, "interval")) : undefined, recoveryOwner: flag(args, "recovery-owner") ?? "supervisor", replaces: flag(args, "replaces") });
+    if (action === "preflight") return { operation: "sasu.preflight", data: { ...run(), ...observer() } };
+    if (action === "register") return { operation: "sasu.register", data: { ...run(), ...observer(), implementorName: needed(args, "implementor-name"), implementorPane: needed(args, "implementor-pane"), implementorSession: needed(args, "implementor-session"), implementorInstance: needed(args, "implementor-instance"), implementorHostScope: flag(args, "implementor-host-scope") ?? "default" } };
+    if (action === "handover") return { operation: "sasu.handover", data: { run: needed(args, "run"), ...observer() } };
+    if (action === "show") return { operation: "sasu.show", data: { run: needed(args, "run") } };
+    if (action === "list") return { operation: "sasu.list", data: {} };
+    if (action === "end") return { operation: "sasu.end", data: { run: needed(args, "run"), reason: needed(args, "reason") } };
+  }
+  throw new HcoordError("invalid_argument", "usage: hcoord status | agent register/list/show | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status | sasu enable/status/preflight/register/handover/show/list/end");
 }
 
 /**
@@ -177,7 +186,7 @@ export async function main(argv: string[]): Promise<number> {
     if (args.words[0] === "config" && args.words[1] === "set" && args.words[2] === "hq") { const result = await setHq(args.words[3]); print(result, json); return 0; }
     const hq = readHq();
     if (hq !== "local") {
-      const { operation, data } = args.words[0] === "daemon" || args.words[0] === "sasu" ? { operation: `${args.words[0]}.${args.words[1]}`, data: {} } : route(args);
+      const { operation, data } = args.words[0] === "daemon" || (args.words[0] === "sasu" && (args.words[1] === "enable" || args.words[1] === "status")) ? { operation: `${args.words[0]}.${args.words[1]}`, data: {} } : route(args);
       if (!LETTER_OPERATIONS.has(operation)) throw new HcoordError("hq_only", `${operation} runs only at the coordinator HQ (${hq}); this machine keeps no conversation record`, { hq });
       const letter = writeLetter(operation, data);
       print({ ok: true, delivery: "pending", value: { letter: letter.id, operation, reason: `the coordinator at ${hq} applies it when it next collects this machine's letters; nothing else to do`, hq }, observedAt: new Date().toISOString() }, json);

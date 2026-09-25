@@ -21,7 +21,7 @@ export const LETTER_SCHEMA = "hcoord.letter.v1" as const;
 export const REMOTE_PROTOCOL = 1;
 export const MAX_OUTBOX_LETTERS = 1024;
 export const MAX_LETTER_RECORDS = 20000;
-export const LETTER_OPERATIONS = new Set(["config.set", "agent.register", "agent.spawn", "watch.start", "watch.assign", "watch.stop", "watch.check", "request.send", "request.reply", "request.relay", "request.ack", "request.cancel", "request.escalate"]);
+export const LETTER_OPERATIONS = new Set(["config.set", "agent.register", "agent.spawn", "watch.start", "watch.assign", "watch.stop", "watch.check", "request.send", "request.reply", "request.relay", "request.ack", "request.cancel", "request.escalate", "sasu.end"]);
 export const DEFAULTS = { watchMs: 5 * 60_000, remindMs: 15 * 60_000, escalateMs: 30 * 60_000, retentionMs: 30 * 24 * 60 * 60_000 };
 
 export type RequestStatus = "open" | "answered" | "canceled";
@@ -55,6 +55,20 @@ export interface Request {
   deliveryRemindedAt?: string | null; deliveryEscalatedAt?: string | null;
   deliveries: Delivery[];
 }
+/**
+ * One Sasu dispatch supervised by this coordinator, keyed by the dispatch's
+ * run instance id. Sasu keeps its own state.json; these fields are only what
+ * the coordinator needs to wake the right Observer and to name the run in
+ * its own views. Fields after `registeredAt` were added with the Sasu
+ * transition and are absent on bindings registered before it.
+ */
+export interface SasuRun {
+  observer: string; implementor: string; project: string; registeredAt: string;
+  slug?: string; statePath?: string; recoveryOwner?: "supervisor" | "task-factory";
+  /** The binding this dispatch replaced after its implementor was gone. */
+  replaces?: string | null;
+  endedAt?: string | null; endReason?: string | null;
+}
 export interface Letter { schema: string; id: string; operation: string; args: Record<string, unknown>; createdAt: string; writer: { host: string; protocol: number } }
 /** One processed or refused letter. `reported` means the writer already saw the outcome directly. */
 export interface LetterRecord { id: string; origin: string; operation: string; at: string; outcome: "applied" | "rejected" | "unsupported"; code: string | null; message: string | null; reported: boolean }
@@ -63,7 +77,7 @@ export interface SpawnIntent { key: string; parent: string; machine: string; hos
 export interface Ledger {
   schema: typeof SCHEMA; seq: number; updatedAt: string; config: typeof DEFAULTS;
   participants: Record<string, Participant>; watches: Record<string, Watch>; watchHistory: Watch[]; requests: Record<string, Request>;
-  spawnIntents: Record<string, SpawnIntent>; sasuRuns: Record<string, { observer: string; implementor: string; project: string; registeredAt: string }>; events: Event[]; prunedBefore: string | null;
+  spawnIntents: Record<string, SpawnIntent>; sasuRuns: Record<string, SasuRun>; events: Event[]; prunedBefore: string | null;
   letters: Record<string, LetterRecord>;
   /** A remote machine's last collection refusal that needs a person (auth, install, version); cleared by the next success. */
   machines: Record<string, { problem: { code: string; message: string; at: string } | null }>;

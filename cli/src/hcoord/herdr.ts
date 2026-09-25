@@ -67,13 +67,15 @@ export function officialPromptSupport(hostScope?: string): { ready: boolean; rea
  * `peer` is the participant the notice is about: the watched target for a
  * watch check, the child for a delivery problem.
  */
-export function messageForDelivery(item: Request, delivery: Delivery, watchCycle: string | null, peer?: Participant): string {
+export function messageForDelivery(item: Request, delivery: Delivery, watchCycle: string | null, peer?: Participant, sasuSlug?: string): string {
   const me = delivery.recipient;
   const header = (kind: string): string => `${kind}\nrequest: ${item.id}\ndelivery: ${delivery.id}`;
   const question = `question from ${item.from}:\n${item.body}`;
   const inspect = peer?.pane ? `herdr ${isLocalMachine(peer.machine) ? "" : `--machine ${peer.machine} `}agent read ${peer.pane} --source recent-unwrapped --lines 80` : null;
+  // A Sasu run's facts live in its state.json, which only Sasu reads (PRD B5, D-02).
+  const sasu = sasuSlug ? `\nSasu run: ${sasuSlug}; read sasu implement status --slug ${sasuSlug} --digest before the pane.` : "";
   if (watchCycle !== null && (delivery.phase === "request" || delivery.phase === "watch_check" || delivery.phase === undefined)) {
-    return `HCOORD_WATCH_CHECK\nrequest: ${item.id}\ndelivery: ${delivery.id}\ntarget: ${item.from}${peer ? ` (${peer.name} on ${peer.machine})` : ""}\ncycle: ${watchCycle}\nRecorded observation: ${item.context ?? "none"}\nInspect the target's current exact Herdr execution before confirming this cycle${inspect ? `, for example with ${inspect}` : ""}. Then run hcoord watch check ${item.from} --cycle ${watchCycle} --actor ${me}. Do not use request reply for a watch cycle. If inspection is unavailable, leave the cycle unchecked and end this turn; hcoord will remind you.`;
+    return `HCOORD_WATCH_CHECK\nrequest: ${item.id}\ndelivery: ${delivery.id}\ntarget: ${item.from}${peer ? ` (${peer.name} on ${peer.machine})` : ""}\ncycle: ${watchCycle}${sasu}\nRecorded observation: ${item.context ?? "none"}\nInspect the target's current exact Herdr execution before confirming this cycle${inspect ? `, for example with ${inspect}` : ""}. Then run hcoord watch check ${item.from} --cycle ${watchCycle} --actor ${me}. Do not use request reply for a watch cycle. If inspection is unavailable, leave the cycle unchecked and end this turn; hcoord will remind you.`;
   }
   if (delivery.phase === "relay_problem") return `${header("HCOORD_RELAY_PROBLEM")}\n${question}\nrecorded answer from ${item.respondent ?? "unknown"}:\n${item.answer ?? ""}\nThe answer still needs relay. Relay it within its scope with hcoord request relay ${item.id} --actor ${me} --body <text>.`;
   if (delivery.phase === "delivery_problem") {
@@ -82,12 +84,14 @@ export function messageForDelivery(item: Request, delivery: Delivery, watchCycle
   }
   if (delivery.phase === "relay") return `${header("HCOORD_RELAY")}\n${item.relayBody}\nThis relays the answer to your question:\n${item.body}\nAcknowledge with hcoord request ack ${item.id} --actor ${me} --delivery ${delivery.id}`;
   if (delivery.phase === "answer") return `${header("HCOORD_ANSWER")}\n${question}\nanswer: ${item.answer}\n${item.intermediary === me ? `Relay within the answer's scope with hcoord request relay ${item.id} --body <text> --actor ${me}` : `Acknowledge with hcoord request ack ${item.id} --actor ${me} --delivery ${delivery.id}`}`;
+  // A notify-only request asks for nothing; the reply instructions below would invite an answer nobody reads.
+  if (!item.requiresReply) return `${header("HCOORD_NOTICE")}\nfrom: ${item.from}${peer ? ` (${peer.name})` : ""}${sasu}\n${item.body}${item.context ? `\ncontext: ${item.context}` : ""}\nNo reply is needed; act on it only if it changes what you would do.`;
   return `${header("HCOORD_REQUEST")}\nfrom: ${item.from}\n${item.body}${item.context ? `\ncontext: ${item.context}` : ""}\nIf you can answer, use hcoord request reply ${item.id} --as ${me} --body <answer>. If a human must decide, use hcoord request escalate ${item.id} --actor ${me}, then end this turn. Do not poll: hcoord will wake you with HCOORD_ANSWER when the human reply is ready. Relay only the recorded answer.`;
 }
 
-export function submitOfficial(item: Request, delivery: Delivery, recipient: Participant, watchCycle: string | null, peer?: Participant): { status: Delivery["status"]; code: string; reason: string } {
+export function submitOfficial(item: Request, delivery: Delivery, recipient: Participant, watchCycle: string | null, peer?: Participant, sasuSlug?: string): { status: Delivery["status"]; code: string; reason: string } {
   if (recipient.pane === null) throw new HcoordError("invalid_state", "recipient pane missing at submission");
-  const result = promptAgent({ target: recipient.pane, text: messageForDelivery(item, delivery, watchCycle, peer), expectedInputGuard: null }, at(recipient), 2000);
+  const result = promptAgent({ target: recipient.pane, text: messageForDelivery(item, delivery, watchCycle, peer, sasuSlug), expectedInputGuard: null }, at(recipient), 2000);
   if (result.path !== "session-match") throw new HcoordError("runtime_unavailable", "Herdr adapter returned an unexpected prompt path; inspect the delivery outcome");
   return { status: result.outcome === "accepted" ? "accepted" : result.outcome === "rejected" ? "deferred" : "unknown", code: result.code, reason: result.detail };
 }

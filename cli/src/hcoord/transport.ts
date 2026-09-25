@@ -3,7 +3,7 @@ import net from "node:net";
 import os from "node:os";
 import { API_VERSION, HcoordError, LETTER_OPERATIONS, MAX_AGENTS, MAX_CONNECTIONS, MAX_EVENTS, MAX_LEDGER_BYTES, MAX_MESSAGE_BYTES, MAX_OUTBOX_LETTERS, MAX_QUEUE, REMOTE_PROTOCOL, SPAWN_EVENT_SLOTS, own, put, type Ledger, type LetterRecord } from "./model";
 import { event } from "./model";
-import { execute, recordLetter, watchForRequest } from "./service";
+import { endSasuRun, execute, recordLetter, sasuRunWatching, watchForRequest } from "./service";
 import { outboxCount, parseLetter, readOutbox, removeLetters, type Found, type RawLetter } from "./outbox";
 import { blockedSpawnError, confirmSpawnPane, createSpawnPane, createSpawnWorktree, observedPlacement, discoverAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateBinding, waitForSpawnInitialization } from "./herdr";
 import type { SpawnIntent } from "./model";
@@ -26,7 +26,7 @@ const SWEEP_LETTERS_PER_TICK = 16;
 const COLLECT_INTERVAL_MS = 5000;
 const COLLECT_BACKOFF_MS = 30_000;
 const COLLECT_LETTERS = 64;
-const mutation = (operation: string): boolean => !["status", "agent.list", "agent.show", "watch.list", "request.show", "inbox", "graph", "events"].includes(operation);
+const mutation = (operation: string): boolean => !["status", "agent.list", "agent.show", "watch.list", "request.show", "inbox", "graph", "events", "sasu.list", "sasu.show"].includes(operation);
 
 export async function callDaemon(operation: string, args: Record<string, unknown> = {}, home = os.homedir(), timeoutOverrideMs?: number): Promise<WireResult> {
   if (process.platform === "win32") throw new HcoordError("unsupported_platform", "Windows named-pipe ACL support is unverified; no local daemon connection was attempted");
@@ -240,24 +240,69 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
     try { return commit("agent.spawn.complete", { intent: intent.key, runtimeSession: identity.session, instance: identity.instance, runtime: identity.runtime, project: ledger.participants[intent.parent]?.project }, new Date().toISOString()); }
     catch (error) { throw new HcoordError("spawn_uncertain", "agent exists but registration failed; inspect the saved pane and retry this intent after repairing storage", { intent: intent.key, pane: intent.pane, unfinishedStep: "register_agent", code: error instanceof HcoordError ? error.code : "storage_failed" }); }
   };
+  /**
+   * The Observer half of a Sasu registration, shared by preflight, register
+   * and handover: its exact execution and name, and official delivery to it.
+   * The Observer is registered without a project, because one Observer
+   * supervises runs in several trees and a participant's project is fixed.
+   */
+  const sasuObserver = (args: Record<string, unknown>, next: Ledger, at: string): { id: string } => {
+    const hostScope = String(args["observerHostScope"] ?? "default"), session = String(args["observerSession"] ?? ""), instance = String(args["observerInstance"] ?? ""), pane = String(args["observerPane"] ?? ""), name = String(args["observerName"] ?? "");
+    const binding = validateBinding("local", session, instance, pane, hostScope, name);
+    const capability = officialDeliveryAvailable({ machine: "local", hostScope, session, instance, pane, name });
+    if (!capability.ready) throw new HcoordError("unsupported_runtime", `Sasu Observer wake cannot use official delivery: ${capability.reason}`);
+    return execute(next, "agent.register", { machine: "local", hostScope, session, instance, name, pane, runtime: binding.runtime }, at).value as { id: string };
+  };
+  const sasuRunFields = (args: Record<string, unknown>): { run: string; project: string; intervalMs: number | undefined; recoveryOwner: "supervisor" | "task-factory"; slug: string; statePath: string; replaces: string | null } => {
+    const run = String(args["run"] ?? ""), project = String(args["project"] ?? ""), slug = String(args["slug"] ?? ""), statePath = String(args["statePath"] ?? "");
+    if (run === "" || project === "" || slug === "" || statePath === "") throw new HcoordError("invalid_argument", "run, project, slug and state are required");
+    const recoveryOwner = args["recoveryOwner"] ?? "supervisor";
+    if (recoveryOwner !== "supervisor" && recoveryOwner !== "task-factory") throw new HcoordError("invalid_argument", "recovery owner must be supervisor or task-factory");
+    const replaces = typeof args["replaces"] === "string" && args["replaces"] !== "" ? args["replaces"] : null;
+    // A replaced dispatch whose own registration never completed has no binding to end; the new binding still names it.
+    return { run, project, intervalMs: args["intervalMs"] === undefined ? undefined : Number(args["intervalMs"]), recoveryOwner, slug, statePath, replaces };
+  };
+  /**
+   * Everything a Sasu registration checks that does not need the implementor,
+   * run before Sasu creates any pane (PRD B3): the Observer's exact named
+   * execution, official delivery, and that registering it would not conflict
+   * with a participant the ledger already has. Nothing is saved.
+   */
+  const preflightSasuRun = (args: Record<string, unknown>, at: string): unknown => {
+    const fields = sasuRunFields(args);
+    if (own(ledger.sasuRuns, fields.run)) throw new HcoordError("intent_conflict", "Sasu run is already registered", { run: fields.run });
+    const observer = sasuObserver(args, structuredClone(ledger), at);
+    return { run: fields.run, observer, ready: true };
+  };
   const registerSasuRun = (args: Record<string, unknown>, at: string): unknown => {
-    const run = String(args["run"] ?? ""), project = String(args["project"] ?? "");
-    if (run === "" || project === "") throw new HcoordError("invalid_argument", "run and project are required");
-    const observerBinding = validateBinding("local", String(args["observerSession"] ?? ""), String(args["observerInstance"] ?? ""), String(args["observerPane"] ?? ""), String(args["observerHostScope"] ?? "default"), String(args["observerName"] ?? ""));
+    const fields = sasuRunFields(args);
+    const { run, project } = fields;
     const implementorBinding = validateBinding("local", String(args["implementorSession"] ?? ""), String(args["implementorInstance"] ?? ""), String(args["implementorPane"] ?? ""), String(args["implementorHostScope"] ?? "default"), String(args["implementorName"] ?? ""));
-    const observerCapability = officialDeliveryAvailable({ machine: "local", hostScope: String(args["observerHostScope"] ?? "default"), session: String(args["observerSession"] ?? ""), instance: String(args["observerInstance"] ?? ""), pane: String(args["observerPane"] ?? ""), name: String(args["observerName"] ?? "") });
-    if (!observerCapability.ready) throw new HcoordError("unsupported_runtime", `Sasu Observer wake cannot use official delivery: ${observerCapability.reason}`);
     const next = structuredClone(ledger);
-    const observer = execute(next, "agent.register", { machine: "local", hostScope: args["observerHostScope"], session: args["observerSession"], instance: args["observerInstance"], name: args["observerName"], pane: args["observerPane"], project, runtime: observerBinding.runtime }, at).value as { id: string };
+    const observer = sasuObserver(args, next, at);
     const implementor = execute(next, "agent.register", { machine: "local", hostScope: args["implementorHostScope"], session: args["implementorSession"], instance: args["implementorInstance"], name: args["implementorName"], pane: args["implementorPane"], project, parent: observer.id, runtime: implementorBinding.runtime }, at).value as { id: string };
     const prior = own(next.sasuRuns, run);
     if (prior && (prior.observer !== observer.id || prior.implementor !== implementor.id || prior.project !== project)) throw new HcoordError("intent_conflict", "Sasu run is already bound to another execution", { run });
     const current = next.watches[implementor.id];
     if (current?.status === "active" && current.observer !== observer.id) throw new HcoordError("conflict", "Sasu implementor has another active observer");
-    const watch = current?.status === "active" ? current : execute(next, "watch.start", { target: implementor.id, observer: observer.id, actor: "human" }, at).value;
-    if (!prior) put(next.sasuRuns, run, { observer: observer.id, implementor: implementor.id, project, registeredAt: at });
+    const watch = current?.status === "active" ? current : execute(next, "watch.start", { target: implementor.id, observer: observer.id, actor: "human", intervalMs: fields.intervalMs }, at).value;
+    if (!prior) {
+      // A replacement dispatch ends the binding of the implementor it replaces
+      // in the same save, so the gone implementor is never watched again (PRD B14).
+      const replaced = fields.replaces === null ? undefined : own(next.sasuRuns, fields.replaces);
+      if (replaced && !replaced.endedAt) { endSasuRun(next, replaced, at); replaced.endedAt = at; replaced.endReason = `replaced by ${run}`; event(next, at, "sasu.ended", fields.replaces!, null, { reason: "replaced" }); }
+      put(next.sasuRuns, run, { observer: observer.id, implementor: implementor.id, project, registeredAt: at, slug: fields.slug, statePath: fields.statePath, recoveryOwner: fields.recoveryOwner, replaces: fields.replaces, endedAt: null, endReason: null });
+    }
     saveLedger(next, home); ledger = next;
-    return { run, observer, implementor, watch, owner: "hcoord" };
+    return { run, observer, implementor, watch, recoveryOwner: own(next.sasuRuns, run)!.recoveryOwner ?? fields.recoveryOwner, owner: "hcoord" };
+  };
+  /** A human-approved Observer handover: the new Observer's exact execution, then the ledger move (PRD B15). */
+  const handoverSasuRun = (args: Record<string, unknown>, at: string): unknown => {
+    const next = structuredClone(ledger);
+    const observer = sasuObserver(args, next, at);
+    const value = execute(next, "sasu.handover.apply", { run: args["run"], observer: observer.id }, at).value;
+    saveLedger(next, home); ledger = next;
+    return value;
   };
   const recordOnly = (letter: LetterRecord): void => {
     const next = structuredClone(ledger);
@@ -508,7 +553,7 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
           saveLedger(deferred, home); ledger = deferred;
           continue;
         }
-        const outcome = submitOfficial(item, delivery, recipient, watch?.cycle ?? null, own(ledger.participants, item.from));
+        const outcome = submitOfficial(item, delivery, recipient, watch?.cycle ?? null, own(ledger.participants, item.from), sasuRunWatching(ledger, item.from)?.binding.slug);
         const finished = structuredClone(ledger);
         const recorded = finished.requests[item.id]!.deliveries.find((entry) => entry.id === delivery.id)!;
         recorded.status = outcome.status;
@@ -553,7 +598,7 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
             result = { ok: true, value: { stopped: true }, observedAt: at };
             closing = true;
           } else {
-            if (decoded.operation.startsWith("agent.spawn.") || decoded.operation === "tick" || decoded.operation === "agent.observe") throw new HcoordError("forbidden", "operation is daemon-internal");
+            if (decoded.operation.startsWith("agent.spawn.") || decoded.operation.startsWith("sasu.handover.") || decoded.operation === "tick" || decoded.operation === "agent.observe") throw new HcoordError("forbidden", "operation is daemon-internal");
             if (decoded.operation === "outbox.collect") {
               const letterId = decoded.args["letter"];
               if (typeof letterId !== "string" || letterId === "") throw new HcoordError("invalid_argument", "letter is required");
@@ -571,7 +616,8 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
               socket.end(`${JSON.stringify({ ...resolved, delivery: "delivered" })}\n`);
               return;
             }
-            let value = decoded.operation === "sasu.register" ? registerSasuRun(decoded.args, at) : LETTER_OPERATIONS.has(decoded.operation) ? performWrite(decoded.operation, decoded.args, at) : commit(decoded.operation, decoded.args, at);
+            const sasu = { "sasu.register": registerSasuRun, "sasu.preflight": preflightSasuRun, "sasu.handover": handoverSasuRun } as Record<string, (args: Record<string, unknown>, at: string) => unknown>;
+            let value = own(sasu, decoded.operation) ? sasu[decoded.operation]!(decoded.args, at) : LETTER_OPERATIONS.has(decoded.operation) ? performWrite(decoded.operation, decoded.args, at) : commit(decoded.operation, decoded.args, at);
             if (decoded.operation === "status") {
               value = { ...(value as object), deliverySafety: OFFICIAL_PROMPT_BOUNDARY, usage: { uncollectedLocalLetters: outboxCount(home), ledgerBytes: fs.existsSync(ledgerPath(home)) ? fs.statSync(ledgerPath(home)).size : 0,
                 connections, queuedOperations, queuedDeliveries: Object.values(ledger.requests).reduce((sum, item) => sum + item.deliveries.filter((delivery) => delivery.status === "pending" || delivery.status === "deferred").length, 0),

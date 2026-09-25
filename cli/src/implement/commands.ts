@@ -27,12 +27,12 @@ import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest } from "../supervisor/digest";
 import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
 import { sasuEnabledPath } from "../hcoord/store";
-import { officialDeliveryAvailable } from "../hcoord/herdr";
+import { HcoordCallFailed, preflightRun, registerRun, type ObserverRegistration, type RunRegistration } from "./hcoord";
 import { DispatchRejected, assertDispatchablePrd, assertNotImplementor, dispatchImplementor, parseEnvPairs, placementFor } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, repositoryHead, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, StateConflictError } from "./store";
-import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type SolverHandoff, type DispatchRecord, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, type PendingDispatch, type SupervisionRecord, ESCALATE_LIMIT_PER_RUN } from "./types";
+import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type SolverHandoff, type DispatchRecord, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, type PendingDispatch, type SupervisionRecord, type ObserverIdentity, ESCALATE_LIMIT_PER_RUN } from "./types";
 
 export interface ImplementArgs {
   positional: string[];
@@ -43,26 +43,62 @@ export interface ImplementArgs {
 
 const ARTIFACT_KINDS = new Set(["screenshot", "image", "browser", "api", "db", "log", "file", "command-log"]);
 
-function hcoordCommand(argv: string[]): Record<string, unknown> {
-  const executable = path.resolve(__dirname, "..", "hcoord", "cli.js");
-  const run = spawnSync(process.execPath, [executable, ...argv, "--json"], { encoding: "utf8", timeout: 15_000 });
-  if (run.status !== 0) throw new DispatchRejected(`hcoord ${argv[0]} ${argv[1] ?? ""} failed: ${(run.stderr || run.stdout).trim().slice(0, 300)}; no legacy wake fallback was selected`);
-  try { return JSON.parse(run.stdout) as Record<string, unknown>; }
-  catch { throw new DispatchRejected("hcoord returned invalid JSON; no legacy wake fallback was selected"); }
+/**
+ * The coordinator registration inputs of one dispatch. A replacement of an
+ * hcoord run names the dispatch it replaces so the coordinator stops watching
+ * the gone implementor in the same save (PRD B14).
+ */
+function hcoordRunRegistration(state: ImplementState, statePath: string, run: string, project: string, patrolIntervalMs: number, recoveryOwner: "supervisor" | "task-factory"): RunRegistration {
+  const previous = state.supervision ?? null;
+  const replaces = previous !== null && previous.coordinationOwner === "hcoord" && previous.runInstanceId !== run ? previous.runInstanceId : null;
+  return { run, project, slug: state.topicSlug, statePath, patrolIntervalMs, recoveryOwner, replaces };
 }
 
-function assertHcoordReady(observer: NonNullable<ReturnType<typeof currentObserverIdentity>["identity"]>): void {
-  const status = hcoordCommand(["daemon", "status"]);
-  if (status["ok"] !== true || (status["value"] as Record<string, unknown> | undefined)?.["stale"] === true) throw new DispatchRejected("hcoord is enabled but its daemon is stopped; start it before dispatch; no legacy wake fallback was selected");
-  const capability = officialDeliveryAvailable({ machine: "local", hostScope: observer.hostScope, session: observer.sessionId, instance: observer.terminalId, pane: observer.paneId });
-  if (!capability.ready) throw new DispatchRejected(`hcoord cannot confirm the exact Observer for official wake: ${capability.reason}; no legacy wake fallback was selected`);
+/**
+ * The Observer as the coordinator must register it: its exact identity and
+ * its Herdr agent name. hcoord binds a participant to the name Herdr reports
+ * and refuses a mismatch, so an unnamed Observer pane is refused here, before
+ * anything is created, with the one command that fixes it; dispatch used to
+ * pass an invented "observer" name and fail after the implementor had
+ * started (2026-09-26).
+ */
+function hcoordObserver(identity: ObserverIdentity): ObserverRegistration {
+  const looked = getAgent(identity.paneId, herdrEnvironmentForHostScope(identity.hostScope));
+  if (looked.kind !== "found") throw new DispatchRejected(`herdr cannot read the Observer pane ${identity.paneId}: ${looked.detail}; no legacy wake fallback was selected`);
+  const name = looked.agent.name?.trim() ?? "";
+  if (name === "") throw new DispatchRejected(`the Observer pane ${identity.paneId} has no Herdr agent name, and hcoord registers participants by name; run \`herdr agent rename ${identity.paneId} <name>\` and dispatch again. Nothing was created; no legacy wake fallback was selected`);
+  return { identity, name };
 }
 
-function registerHcoordRun(run: string, project: string, observer: NonNullable<ReturnType<typeof currentObserverIdentity>["identity"]>, observerName: string, implementor: { paneId: string; name: string; sessionId: string; terminalId: string; hostScope: string }): void {
-  const registered = hcoordCommand(["sasu", "register", "--run", run, "--project", project,
-    "--observer-name", observerName, "--observer-pane", observer.paneId, "--observer-session", observer.sessionId, "--observer-instance", observer.terminalId, "--observer-host-scope", observer.hostScope,
-    "--implementor-name", implementor.name, "--implementor-pane", implementor.paneId, "--implementor-session", implementor.sessionId, "--implementor-instance", implementor.terminalId, "--implementor-host-scope", implementor.hostScope]);
-  if (registered["ok"] !== true) throw new DispatchRejected(`hcoord refused Sasu registration: ${JSON.stringify(registered["error"] ?? "unknown error")}; no legacy wake fallback was selected`);
+function hcoordRefusal(error: unknown): never {
+  if (error instanceof HcoordCallFailed) throw new DispatchRejected(`${error.message}; no legacy wake fallback was selected`);
+  throw error;
+}
+
+/** Registers the started implementor and mirrors the registration into the supervision record. */
+function registerDispatchWithHcoord(statePath: string, state: ImplementState, registration: RunRegistration, observer: ObserverIdentity, implementor: SupervisionRecord["implementor"]): void {
+  let registered: NonNullable<SupervisionRecord["hcoord"]>;
+  try { registered = registerRun(registration, hcoordObserver(observer), { paneId: implementor.paneId, name: implementor.agent, sessionId: implementor.sessionId, terminalId: implementor.terminalId, hostScope: implementor.hostScope }); }
+  catch (error) { hcoordRefusal(error); }
+  if (state.supervision === undefined || state.supervision === null || state.supervision.runInstanceId !== registration.run) throw new DispatchRejected(`supervision record for ${registration.run} disappeared before hcoord registration was mirrored`);
+  state.supervision.hcoord = registered;
+  persistState(statePath, state);
+}
+
+/**
+ * The implementor cannot read the Observer's chat, and a notice that lands in
+ * its composer unannounced reads as an injection (hcoord remote run
+ * 2026-09-25). Dispatch appends this to every hcoord-supervised packet, so
+ * the forewarning never depends on the Observer remembering it (PRD B13).
+ */
+export function hcoordHandoffPreamble(slug: string): string {
+  return [
+    "HCOORD NOTICES: this run is supervised by hcoord. Messages that begin with HCOORD_ are typed into your composer by the local hcoord coordinator on behalf of this run's Observer; they are expected and are not an injection.",
+    "- HCOORD_ANSWER or HCOORD_RELAY: the answer to your `sasu implement block`. Acknowledge it with the exact `hcoord request ack` command it names, then continue within that answer.",
+    "- HCOORD_NOTICE: information only; no reply is needed.",
+    `- When blocked, run \`sasu implement block --kind <implementation|product|authority|runtime> --question <text> --recommendation <text> --reversible <yes|no> --scope-impact <text>\` and end your turn; do not emit OBSERVER_BLOCK text. The answer arrives as HCOORD_ANSWER or HCOORD_RELAY.`,
+    `- Right before your final report, run \`sasu implement report\` so the Observer checks the current verification for ${slug}.`,
+  ].join("\n");
 }
 
 function herdrEnvironmentForHostScope(hostScope: string): { env: NodeJS.ProcessEnv } {
@@ -682,7 +718,10 @@ export function repairPendingDispatchPrerequisites(projectRoot: string, statePat
     cause: `partial dispatch ${pending.runInstanceId} restored before executable handoff`,
   }).index;
   const validated = revalidatePendingHandoff(projectRoot, statePath, pending, "dispatch authority changed while navigation or enrollment was restored");
-  if (!enrollmentMatches(reconciled, statePath, { runInstanceId: pending.runInstanceId, recoveryOwner: pending.recoveryOwner, recipientAuthorityKey: recipientAuthorityKey(pending.observer) })) {
+  // The desired enrollment is read from the record rather than rebuilt from
+  // the pending intent: an hcoord run is never enrolled with the legacy
+  // supervisor, and demanding an enrollment refused every hcoord resume.
+  if (!enrollmentMatches(reconciled, statePath, desiredEnrollment(validated.state))) {
     throw new DispatchRejected("dispatch enrollment changed while navigation was restored; no handoff input was sent");
   }
   return validated;
@@ -767,8 +806,9 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       // stdin can wait indefinitely for the operator. Acquire the packet
       // before the final identity lookup, then reload the CLI-owned record so
       // a handover or replacement during that wait cannot inherit this input.
-      const packet = readHandoffPacket().trim();
-      if (packet === "") throw new DispatchRejected("resume-handoff requires the handoff packet on stdin");
+      const read = readHandoffPacket().trim();
+      if (read === "") throw new DispatchRejected("resume-handoff requires the handoff packet on stdin");
+      const packet = pending.coordinationOwner === "hcoord" ? `${read}\n${hcoordHandoffPreamble(state.topicSlug)}` : read;
       const refreshed = revalidatePendingHandoff(projectRoot, statePath, pending, "the partial dispatch changed while the handoff packet was read");
       state = refreshed.state;
       pending = refreshed.pending;
@@ -799,6 +839,13 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       const executable = revalidatePendingHandoff(projectRoot, statePath, pending, "run, recovery authority or implementor identity changed while handoff prerequisites were restored");
       state = executable.state;
       pending = executable.pending;
+      // A coordinator refusal after the implementor started left this record
+      // behind; the registration is idempotent, so the retry completes it
+      // before the handoff is submitted (B3).
+      if (pending.coordinationOwner === "hcoord" && state.supervision?.runInstanceId === pending.runInstanceId && state.supervision.hcoord === undefined) {
+        const registration: RunRegistration = { run: pending.runInstanceId, project: pending.prepared?.cwd ?? state.worktree?.path ?? state.projectRoot, slug: state.topicSlug, statePath, patrolIntervalMs: pending.patrolIntervalMs, recoveryOwner: pending.recoveryOwner, replaces: pending.hcoordReplaces ?? null };
+        registerDispatchWithHcoord(statePath, state, registration, pending.observer, implementor);
+      }
       const sent = promptAgent({ target: implementor.paneId, text: packet, expectedInputGuard: finalLooked.agent.inputGuard }, resumeHerdr);
       if (sent.outcome !== "accepted") return result("dispatch", false, `handoff was not confirmed (${sent.outcome}, ${sent.code}): ${sent.detail}; pending dispatch remains for an explicit retry`, { pendingDispatch: pending, prompt: sent });
       state.pendingDispatch = null;
@@ -840,16 +887,22 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     const observer = currentObserverIdentity();
     if (observer.identity === null) throw new DispatchRejected(`the Observer cannot be recorded: ${observer.problem}`);
     const coordinationOwner = state.supervision?.coordinationOwner ?? (state.supervision ? "legacy" : fs.existsSync(sasuEnabledPath()) ? "hcoord" : "legacy");
-    if (coordinationOwner === "hcoord") assertHcoordReady(observer.identity);
-    const observedAgent = getAgent(observer.identity.paneId);
-    const observerName = observedAgent.kind === "found" ? observedAgent.agent.name ?? "observer" : "observer";
     const runInstanceId = newRunInstanceId();
     const name = requiredFlag(args, "name");
+    // Every coordinator check that does not need the implementor runs before
+    // any pane exists (B3): a refusal after start left a started pane no
+    // recovery path owned (2026-09-26).
+    const registration = coordinationOwner === "hcoord" ? hcoordRunRegistration(state, statePath, runInstanceId, placed.placement.cwd, patrolIntervalMs, recoveryOwner) : null;
+    if (registration !== null) {
+      try { preflightRun(registration, hcoordObserver(observer.identity)); }
+      catch (error) { hcoordRefusal(error); }
+    }
     const dispatchedAt = nowIso();
     let pending: PendingDispatch = {
       runInstanceId, observer: observer.identity, plannedAgent: name, phase: "planned", prepared: null, implementor: null,
       canonicalRepository: canonicalRepository(placed.placement.cwd), prdPath: state.prdPath,
       dispatchHead: repositoryHead(placed.placement.cwd), dispatchedAt, patrolIntervalMs, recoveryOwner, coordinationOwner, handovers: [],
+      ...(registration === null ? {} : { hcoordReplaces: registration.replaces }),
     };
     // The durable intent and enrollment exist before a pane is created. A
     // tick during this short window reports the partial dispatch rather than
@@ -877,7 +930,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       dispatched = dispatchImplementor(projectRoot, {
       name,
       prdPath: prd.relative,
-      handoff: readHandoffPacket(),
+      handoff: registration === null ? readHandoffPacket() : `${readHandoffPacket().trimEnd()}\n${hcoordHandoffPreamble(state.topicSlug)}`,
       placement: placed.placement,
       kind: flag(args, "kind")?.trim() || undefined,
       model: flag(args, "model")?.trim() || undefined,
@@ -895,7 +948,6 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       },
       beforeHandoff: (started) => {
         const implementor = { paneId: started.paneId, agent: started.name, sessionId: started.sessionId, terminalId: started.terminalId, hostScope: started.hostScope, recordedAt: started.recordedAt };
-        if (coordinationOwner === "hcoord") registerHcoordRun(runInstanceId, placed.placement!.cwd, observer.identity!, observerName, { ...started, name: started.name });
         pending.phase = "started";
         pending.implementor = implementor;
         state.pendingDispatch = pending;
@@ -907,6 +959,10 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         recordId = recordDispatch(projectRoot, statePath, state, { ...started, agent: started.name, cwd: placed.placement!.cwd }, "observer",
           `implementor ${started.name} (${started.kind}) started in ${started.paneId}; exact identity recorded before handoff`, supervision).id;
         reconcileCurrentDispatchPrerequisites(projectRoot, statePath, `started dispatch ${runInstanceId} reconciled before executable handoff`);
+        // Registered only after the implementor's exact identity is durable, so
+        // a coordinator refusal here leaves a started record that
+        // --resume-handoff can register and hand off (B3).
+        if (registration !== null) registerDispatchWithHcoord(statePath, state, registration, observer.identity!, implementor);
       },
       beforeSubmit: () => {
         const ready = revalidatePendingHandoff(projectRoot, statePath, pending, "run or dispatch authority changed during the final target lookup");
@@ -923,18 +979,19 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     const where = placed.placement.kind === "workspace"
       ? `a new workspace on ${dispatched.cwd}`
       : `a new tab of workspace ${dispatched.workspaceId} at ${dispatched.cwd}`;
-    const supervised = coordinationOwner === "hcoord"
-      ? `coordinated by hcoord as instance ${runInstanceId}`
+    const coordinated = state.supervision?.hcoord ?? null;
+    const supervised = coordinated !== null
+      ? `coordinated by hcoord as instance ${runInstanceId}: Observer ${coordinated.observer}, implementor ${coordinated.implementor}, watch every ${Math.round(coordinated.intervalMs / 60_000)} min, recovery owner ${coordinated.recoveryOwner}`
       : `supervised as instance ${runInstanceId} (patrol every ${Math.round(patrolIntervalMs / 60_000)} min, recovery owner ${recoveryOwner})`;
     return result(
       "dispatch",
       true,
       `implementor ${dispatched.agent} (${dispatched.kind}) started in ${dispatched.paneId}, ${where}, from ${dispatched.prd}; ${supervised}`,
-      { ...dispatched, dispatchId: recordId, slug: state.topicSlug, runInstanceId, observer: observer.identity, patrolIntervalMs, recoveryOwner, enrolled: true, enrollProblem: null },
+      { ...dispatched, dispatchId: recordId, slug: state.topicSlug, runInstanceId, observer: observer.identity, patrolIntervalMs, recoveryOwner, coordinationOwner, hcoord: coordinated, enrolled: coordinationOwner === "legacy", enrollProblem: null },
       [
         ...(dispatched.parentLineage === "reported" ? [] : [`Lineage was not recorded: ${dispatched.parentLineage.unreported}`]),
         coordinationOwner === "hcoord"
-          ? "hcoord watches this implementor and wakes the Observer when a watch cycle needs inspection. End this turn while waiting; the legacy supervisor is not enrolled for this run."
+          ? "hcoord wakes this session with HCOORD_WATCH_CHECK every watch interval, and at once with HCOORD_NOTICE for a plan or a report and HCOORD_REQUEST for a block. End this turn while waiting; the legacy supervisor is not enrolled for this run."
           : "The supervisor tick wakes this session when the implementor settles, blocks, escalates, registers a plan, stalls, disappears or finishes, and on patrol; nothing else needs arming.",
         `On a wake, read \`sasu implement status --slug ${state.topicSlug} --digest\` and \`herdr agent read ${dispatched.agent} --source recent-unwrapped --lines 120\` for diagnosis only.`,
       ],
@@ -1554,6 +1611,24 @@ function digest(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   return result("status", true, `${state.topicSlug}: digest since dispatch`, { digest: built }, renderDigest(built));
 }
 
+/** Who wakes the Observer for this run, as `status` shows it (B1, B16). */
+function supervisionLine(state: ImplementState): string[] {
+  const supervision = state.supervision ?? null;
+  const pending = state.pendingDispatch ?? null;
+  if (supervision === null && pending === null) return [];
+  const owner = supervision?.coordinationOwner ?? pending?.coordinationOwner ?? "legacy";
+  if (owner === "legacy") {
+    const record = (supervision ?? pending)!;
+    return [`Supervision: legacy supervisor tick; patrol every ${Math.round(record.patrolIntervalMs / 60_000)} min; recovery owner ${record.recoveryOwner}`];
+  }
+  const registered = supervision?.hcoord ?? null;
+  if (registered === null) {
+    const record = (supervision ?? pending)!;
+    return [`Supervision: hcoord run ${record.runInstanceId}; registration not mirrored here (dispatched before it was recorded, or pending --resume-handoff); recovery owner ${record.recoveryOwner}; \`hcoord sasu show --run ${record.runInstanceId}\` shows the coordinator's record`];
+  }
+  return [`Supervision: hcoord run ${registered.run}; Observer ${registered.observer}, implementor ${registered.implementor}; watch every ${Math.round(registered.intervalMs / 60_000)} min; recovery owner ${registered.recoveryOwner}`];
+}
+
 /** The one move `status` names for the run's current verification verdict. */
 function statusNextStep(state: ImplementState, verdict: string, eligible: boolean, problems: string[]): string {
   if (state.status !== "active") return "start a new run if more work is required";
@@ -1587,6 +1662,7 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
       `Verification report: ${state.verificationReport?.markdownPath ?? "not generated"}`,
       `Agent Review: ${verificationVerdict === "PASS" && currentDelivery.eligible ? `ship when the last native review covered this head with the same registered evidence; otherwise one native ${nativeReviewNames(state)} review set (${REVIEW_TOOL})` : `allowed on a committed head with verdict ${verificationVerdict} disclosed; delivery needs a current PASS`}`,
       `escalations: ${state.escalations.length} of ${ESCALATE_LIMIT_PER_RUN} used${state.escalations.length >= ESCALATE_LIMIT_PER_RUN ? "; bound spent" : ""}`,
+      ...supervisionLine(state),
       ...currentDelivery.reasons.map((reason) => `Delivery: ${reason}`),
       ...(state.activeVerification ? [`Verification in progress: ${state.activeVerification.attemptId}`] : []),
       `Next: ${statusNextStep(state, verificationVerdict, currentDelivery.eligible, problems)}`,

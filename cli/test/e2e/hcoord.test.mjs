@@ -113,7 +113,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(fs.existsSync(path.join(home, ".hcoord", "sasu-enabled")), false);
   delete env.HCOORD_FAKE_PROMPT_API;
   ok("sasu", "enable");
-  const sasuArgs = ["sasu", "register", "--run", "run-one", "--project", home, "--observer-name", "parent", "--observer-pane", "parent-pane", "--observer-session", "one", "--observer-instance", "a", "--implementor-name", "child", "--implementor-pane", "child-pane", "--implementor-session", "two", "--implementor-instance", "b"];
+  const sasuArgs = ["sasu", "register", "--run", "run-one", "--project", home, "--slug", "run-one", "--state", path.join(home, "state.json"), "--observer-name", "parent", "--observer-pane", "parent-pane", "--observer-session", "one", "--observer-instance", "a", "--implementor-name", "child", "--implementor-pane", "child-pane", "--implementor-session", "two", "--implementor-instance", "b"];
   await stop();
   env.HCOORD_FAKE_OBSERVER_REPLACED = "1";
   fs.writeFileSync(path.join(home, ".hcoord", "api.sock.lock"), "99999999\n");

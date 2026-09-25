@@ -112,7 +112,7 @@ export interface VerificationReportIdentity {
   reportSha256: string;
 }
 export type IssuerLabel = "implementor" | "observer" | "human";
-export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify" | "dispatch" | "handover" | "plan";
+export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify" | "dispatch" | "handover" | "plan" | "block" | "report";
 export interface ImplementEvent {
   id: number; at: string; kind: ImplementEventKind; actor: IssuerLabel;
   subject: string | null; summary: string;
@@ -291,6 +291,12 @@ export interface SupervisionRecord {
   recoveryOwner: "supervisor" | "task-factory";
   /** Existing runs remain on the Sasu supervisor; newly enabled runs belong only to hcoord. */
   coordinationOwner?: "legacy" | "hcoord";
+  /**
+   * The coordinator's registration of this dispatch, mirrored for status and
+   * digest. The coordinator's run binding stays the authority for sending;
+   * runs dispatched before this field existed have none.
+   */
+  hcoord?: { run: string; observer: string; implementor: string; intervalMs: number; recoveryOwner: "supervisor" | "task-factory"; registeredAt: string };
   handovers: ObserverHandover[];
 }
 
@@ -321,6 +327,8 @@ export interface PendingDispatch {
   coordinationOwner?: "legacy" | "hcoord";
   /** Human-approved recovery-authority transfers before supervision exists. */
   handovers?: ObserverHandover[];
+  /** The hcoord dispatch this one replaces, kept so a resumed registration still ends it. */
+  hcoordReplaces?: string | null;
 }
 
 export type PrdJudgeRecord =

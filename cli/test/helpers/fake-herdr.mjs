@@ -11,6 +11,7 @@
 //   HERDR_FAKE_GUARD_SUPPORT "1" makes `agent prompt` accept --expected-input-guard
 //   HERDR_FAKE_DOWN          "1" makes every call fail like a dead socket
 //   HERDR_FAKE_REQUIRED_SOCKET_PATH fails calls routed to any other socket
+//   HERDR_FAKE_ON_START_PATCH JSON {pane: fields} merged into the agents after agent start
 //   HERDR_FAKE_GET_BARRIER_* holds one exact agent get at a test-owned barrier;
 //     OCCURRENCE and COUNT select a later lookup deterministically
 import fs from "node:fs";
@@ -62,6 +63,9 @@ if (key === "agent start") {
     current[pane].agent_status = "idle";
     delete current[pane].agent_session;
   }
+  // HERDR_FAKE_ON_START_PATCH merges {pane: fields} into the agents right
+  // after a start, so a test can change another execution at that boundary.
+  if (process.env.HERDR_FAKE_ON_START_PATCH) for (const [patched, fields] of Object.entries(JSON.parse(process.env.HERDR_FAKE_ON_START_PATCH))) current[patched] = { ...(current[patched] ?? {}), ...fields };
   if (file) fs.writeFileSync(file, JSON.stringify(current));
   answer({ result: { type: "agent_started" } });
 }
