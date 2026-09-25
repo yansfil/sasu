@@ -27,12 +27,12 @@ import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest } from "../supervisor/digest";
 import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
 import { sasuEnabledPath } from "../hcoord/store";
-import { HcoordCallFailed, preflightRun, registerRun, type ObserverRegistration, type RunRegistration } from "./hcoord";
+import { HcoordCallFailed, preflightRun, registerRun, sendRunNotice, type ObserverRegistration, type RunNoticeKind, type RunRegistration, type SentNotice } from "./hcoord";
 import { DispatchRejected, assertDispatchablePrd, assertNotImplementor, dispatchImplementor, parseEnvPairs, placementFor } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, repositoryHead, requireWorkRoot, sha256, statePathFor, writeActivePointer, writeJsonAtomic, writeTextAtomic, StateConflictError } from "./store";
-import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type SolverHandoff, type DispatchRecord, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, type PendingDispatch, type SupervisionRecord, type ObserverIdentity, ESCALATE_LIMIT_PER_RUN } from "./types";
+import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type LaneRecord, type MechanicalRunRecord, type RegisteredArtifact, type ReviewProfile, type SolverHandoff, type DispatchRecord, type UnifiedVerificationAttempt, type VerificationStatus, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, type PendingDispatch, type SupervisionRecord, type ObserverIdentity, type ImplementEvent, ESCALATE_LIMIT_PER_RUN } from "./types";
 
 export interface ImplementArgs {
   positional: string[];
@@ -1639,10 +1639,8 @@ function statusNextStep(state: ImplementState, verdict: string, eligible: boolea
   return `commit, request native review with verdict ${verdict} disclosed, run verify on the final committed candidate`;
 }
 
-function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
-  if (args.flags.get("digest") === true) return digest(projectRoot, args);
-  const { state } = loadState(projectRoot, stateOptions(args));
-  const herdr = herdrCapabilities();
+/** The run's verification verdict against its current inputs, as status reports it. */
+function currentVerification(state: ImplementState): { sourceDigest: string | undefined; problems: string[]; detail: Record<string, unknown>; verdict: string } {
   let sourceDigest: string | undefined, fingerprint: string | undefined;
   const problems = artifactIntegrityProblems(state.projectRoot, state);
   try {
@@ -1652,6 +1650,14 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   } catch (error) { problems.push(error instanceof Error ? error.message : String(error)); fingerprint = "INPUT_ERROR"; }
   if (problems.length > 0) fingerprint = "INPUT_ERROR";
   const detail = publicState(state, sourceDigest, fingerprint);
+  return { sourceDigest, problems, detail, verdict: (detail.verification as { verdict: string }).verdict };
+}
+
+function status(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  if (args.flags.get("digest") === true) return digest(projectRoot, args);
+  const { state } = loadState(projectRoot, stateOptions(args));
+  const herdr = herdrCapabilities();
+  const { sourceDigest, problems, detail } = currentVerification(state);
   const verificationVerdict = (detail.verification as {verdict:string}).verdict;
   const currentDelivery = delivery(state, problems.concat((detail.verification as {verdict:string}).verdict === "STALE" ? ["verification is STALE"] : []));
   return result("status", true, `${state.topicSlug}: ${state.status}`, { ...detail, delivery: currentDelivery, artifactProblems: problems,
@@ -1681,12 +1687,48 @@ function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   return result("amend", true, `amendment ${outcome.record.id} sealed; full review freshness invalidated`, { amendment: outcome.record });
 }
 
+/** The run key hcoord knows this run by, or null when the legacy supervisor owns it. */
+function hcoordRunKey(state: ImplementState): string | null {
+  const supervision = state.supervision ?? null;
+  return supervision !== null && supervision.coordinationOwner === "hcoord" ? supervision.runInstanceId : null;
+}
+
+/**
+ * The event a plan, block or report records, reused when the same content is
+ * registered again. Its subject carries the content hash, so a rerun after an
+ * hcoord refusal neither adds a second Sasu event nor sends a second notice
+ * (B12).
+ */
+function recordNoticeEvent(state: ImplementState, kind: "plan" | "block" | "report", subject: string, summary: string, actor: IssuerLabel): { event: ImplementEvent; reused: boolean } {
+  const prior = [...state.events].reverse().find((event) => event.kind === kind && event.subject === subject);
+  if (prior !== undefined) return { event: prior, reused: true };
+  return { event: recordEvent(state, { kind, actor, subject, summary, at: nowIso() }), reused: false };
+}
+
+/**
+ * Sends the recorded event to the Observer through hcoord, after the Sasu
+ * record is durable (B12). A stopped daemon keeps the letter and delivers it
+ * later; a refusal fails the command with its reason and the retry, and the
+ * Sasu record stays.
+ */
+function sendNotice(action: string, run: string, kind: RunNoticeKind, body: string, recorded: string, retry: string, detail: Record<string, unknown>, sentLine: (sent: SentNotice) => string): ImplementCommandResult {
+  let sent: SentNotice;
+  try { sent = sendRunNotice(run, kind, body); }
+  catch (error) {
+    if (!(error instanceof HcoordCallFailed)) throw error;
+    return result(action, false, `${recorded}, but the Observer was not notified: ${error.message}. The Sasu record stays; retry with \`${retry}\`, which sends the same notice once.`, { ...detail, hcoord: { sent: false, problem: error.message, retry } });
+  }
+  const where = sent.delivery === "pending" ? `waiting in the hcoord outbox as letter ${sent.letter}; the coordinator delivers it when its daemon runs again` : `sent as hcoord request ${sent.requestId}`;
+  return result(action, true, `${recorded}; ${where}; ${sentLine(sent)}`, { ...detail, hcoord: { sent: true, ...sent } });
+}
+
+const quote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
+
 /**
  * Register the execution plan the Implementor wrote before its first source
- * change. The only effect is a `plan` event. Legacy runs wake the Observer
- * once per plan event through their supervisor tick. New hcoord runs retain
- * the Sasu event and use the coordinator's watch cycle for observation; plan
- * registration does not itself submit a prompt (D-09).
+ * change. It records one `plan` event; a legacy run's supervisor tick wakes
+ * the Observer for it, and an hcoord run sends the Observer an HCOORD_NOTICE
+ * naming the file at once (B7). The implementor keeps working either way.
  */
 function plan(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
@@ -1696,12 +1738,86 @@ function plan(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
   const bytes = fs.readFileSync(target.absolute);
   if (bytes.toString("utf8").trim() === "") throw new Error(`plan file is empty: ${target.relative}`);
   const digest = sha256(bytes).slice(0, 12);
-  const event = recordEvent(state, { kind: "plan", actor: resolveIssuer(flag(args, "issuer")), subject: target.relative, summary: `execution plan ${target.relative} (${digest})`, at: nowIso() });
-  persistState(statePath, state);
-  const nextAction = state.supervision?.coordinationOwner === "hcoord"
-    ? "hcoord observes the implementor on its configured watch cycle; plan registration does not send an immediate prompt"
-    : "the supervisor tick wakes the Observer once for it";
-  return result("plan", true, `plan ${event.id} registered: ${target.relative}; ${nextAction}`, { event });
+  const run = hcoordRunKey(state);
+  const { event, reused } = run === null
+    ? { event: recordEvent(state, { kind: "plan", actor: resolveIssuer(flag(args, "issuer")), subject: target.relative, summary: `execution plan ${target.relative} (${digest})`, at: nowIso() }), reused: false }
+    : recordNoticeEvent(state, "plan", `${target.relative}@${digest}`, `execution plan ${target.relative} (${digest})`, resolveIssuer(flag(args, "issuer")));
+  if (!reused) persistState(statePath, state);
+  if (run === null) return result("plan", true, `plan ${event.id} registered: ${target.relative}; the supervisor tick wakes the Observer once for it`, { event });
+  const body = [
+    `SASU_PLAN run ${state.topicSlug}`,
+    `plan: ${target.absolute} (${digest})`,
+    "Read it. Answer only a \"What I decide and go with\" item you disagree with, or a structure that differs from the approved PRD; the implementor is not waiting.",
+  ].join("\n");
+  return sendNotice("plan", run, "plan", body, `plan ${event.id} registered: ${target.relative}`, `sasu implement plan --path ${target.relative}`, { event }, () => "keep working; the Observer answers only if it disagrees");
+}
+
+const BLOCK_KINDS = ["implementation", "product", "authority", "runtime"] as const;
+
+/**
+ * The implementor's question to its Observer (B8), replacing the
+ * OBSERVER_BLOCK final text on hcoord runs. It carries the same fields the
+ * Observer's block rules read, waits for an answer, and the implementor ends
+ * its turn: the answer arrives as HCOORD_ANSWER, or HCOORD_RELAY when a
+ * person decided, and the implementor acknowledges it (B9, B10).
+ */
+function block(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state); assertRunOwnership(statePath, state, args);
+  const run = hcoordRunKey(state);
+  if (run === null) throw new Error("this run is supervised by the legacy supervisor, which reads no block command; emit the OBSERVER_BLOCK packet as final text and end the turn");
+  const field = (name: string): string => {
+    const value = flag(args, name)?.trim() ?? "";
+    if (value === "") throw new VerbRejected("arguments", `block requires --${name}`);
+    return value;
+  };
+  const kind = field("kind");
+  if (!(BLOCK_KINDS as readonly string[]).includes(kind)) throw new VerbRejected("arguments", `--kind must be one of ${BLOCK_KINDS.join(", ")}`);
+  const reversible = field("reversible");
+  if (reversible !== "yes" && reversible !== "no") throw new VerbRejected("arguments", "--reversible must be yes or no");
+  const question = field("question");
+  const body = [
+    `SASU_BLOCK run ${state.topicSlug}`,
+    `kind: ${kind}`,
+    `question: ${question}`,
+    `recommendation: ${field("recommendation")}`,
+    `reversible: ${reversible}`,
+    `scope_or_requirement_impact: ${field("scope-impact")}`,
+    `external_effect: ${flag(args, "external-effect")?.trim() || "none"}`,
+  ].join("\n");
+  const hash = sha256(Buffer.from(body)).slice(0, 12);
+  const { event, reused } = recordNoticeEvent(state, "block", `block@${hash}`, `${kind} block: ${question.slice(0, 200)}`, resolveIssuer(flag(args, "issuer")));
+  if (!reused) persistState(statePath, state);
+  const retry = ["sasu implement block", ...["kind", "question", "recommendation", "reversible", "scope-impact"].map((name) => `--${name} ${quote(field(name))}`), ...(flag(args, "external-effect")?.trim() ? [`--external-effect ${quote(flag(args, "external-effect")!.trim())}`] : [])].join(" ");
+  return sendNotice("block", run, "block", body, `block ${event.id} recorded`, retry, { event },
+    () => "end your turn now and do not poll; the answer arrives as HCOORD_ANSWER or HCOORD_RELAY, and you acknowledge it with the exact hcoord request ack command it names");
+}
+
+/**
+ * The completion signal an implementor sends right before its final report
+ * (B11). It names the current verification verdict and report so the
+ * Observer checks them; the notice itself declares nothing complete.
+ */
+function report(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
+  const { statePath, state } = loadState(projectRoot, stateOptions(args));
+  assertRunOpenForMutation(state); assertRunOwnership(statePath, state, args);
+  const run = hcoordRunKey(state);
+  if (run === null) throw new Error("this run is supervised by the legacy supervisor, whose tick wakes the Observer when the implementor settles; end with the final report");
+  const current = currentVerification(state);
+  const reportRecord = state.verificationReport ?? null;
+  const summary = flag(args, "summary")?.trim() ?? "";
+  const body = [
+    `SASU_REPORT run ${state.topicSlug}`,
+    `verification: ${current.verdict}${reportRecord === null ? "; no report generated" : `; report ${path.join(state.projectRoot, reportRecord.markdownPath)}`}`,
+    `head: ${repositoryHead(requireWorkRoot(state)) ?? "unavailable"}`,
+    ...(summary === "" ? [] : [`summary: ${summary}`]),
+    "This notice declares nothing. Completion needs a current PASS: read sasu implement status and the report before the final user-facing report.",
+  ].join("\n");
+  const hash = sha256(Buffer.from(body)).slice(0, 12);
+  const { event, reused } = recordNoticeEvent(state, "report", `report@${hash}`, `completion report with verification ${current.verdict}`, resolveIssuer(flag(args, "issuer")));
+  if (!reused) persistState(statePath, state);
+  return sendNotice("report", run, "report", body, `report ${event.id} recorded with verification ${current.verdict}`, `sasu implement report${summary === "" ? "" : ` --summary ${quote(summary)}`}`, { event, verdict: current.verdict },
+    () => "write the final report; the Observer checks the current verification itself");
 }
 
 function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -1996,11 +2112,13 @@ export async function runImplementCommand(projectRoot: string, args: ImplementAr
     if (subcommand === "status") return status(projectRoot, args);
     if (subcommand === "artifact") return artifact(projectRoot, args);
     if (subcommand === "plan") return plan(projectRoot, args);
+    if (subcommand === "block") return block(projectRoot, args);
+    if (subcommand === "report") return report(projectRoot, args);
     if (subcommand === "amend") return amend(projectRoot, args);
     if (subcommand === "escalate") return await escalate(projectRoot, args);
     if (subcommand === "retire") return retire(projectRoot, args);
     if (subcommand === "verify") return await verify(projectRoot, args);
-    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, dispatch, status, artifact, plan, amend, escalate, retire, or verify" };
+    return { ok: false, action: subcommand ?? "unknown", exitCode: 2, message: "unknown implement subcommand; use intake, start, dispatch, status, artifact, plan, block, report, amend, escalate, retire, or verify" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const check = error instanceof VerbRejected || error instanceof AmendmentRejected || error instanceof EscalateRejected ? error.check : "transition";

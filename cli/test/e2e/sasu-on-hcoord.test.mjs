@@ -162,3 +162,115 @@ test("B3: a coordinator refusal after the implementor started is completed by --
   assert.equal(handoffs.length, 1);
   assert.match(handoffs[0].text, /HCOORD NOTICES/);
 });
+
+/** A dispatched hcoord run whose implementor pane is idle, so answers can reach it. */
+async function dispatchedRun(t, options = {}) {
+  const run = await hcoordProject(t, options);
+  const dispatched = run.dispatch();
+  assert.equal(dispatched.status, 0, dispatched.text);
+  run.herdr.patchAgent(IMPL_PANE, { agent_status: "idle", interactive_ready: true });
+  const record = run.state().supervision;
+  run.implementorEnv.SASU_RUN_INSTANCE_ID = record.runInstanceId;
+  const implementor = (args) => run.sasu(["implement", ...args], { env: run.implementorEnv });
+  const field = (text, name) => new RegExp(`^${name}: (\\S+)$`, "m").exec(text)?.[1];
+  return { ...run, record, implementor, field, observerId: record.hcoord.observer, implementorId: record.hcoord.implementor };
+}
+
+test("B7, B12: a registered plan reaches the Observer at once as a notice, and registering it again sends nothing twice", async (t) => {
+  const run = await dispatchedRun(t);
+  fs.mkdirSync(path.join(run.root, "agents", "runs", "fixture"), { recursive: true });
+  fs.writeFileSync(path.join(run.root, "agents", "runs", "fixture", "plan.md"), "# plan\nstep 1\n");
+  const first = run.implementor(["plan", "--path", "agents/runs/fixture/plan.md"]);
+  assert.equal(first.status, 0, first.text);
+  assert.match(first.json.message, /sent as hcoord request r_/);
+  const notice = await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.includes("SASU_PLAN")), "the plan notice");
+  assert.match(notice.text, /^HCOORD_NOTICE\n/);
+  assert.match(notice.text, new RegExp(`plan: ${path.join(run.root, "agents/runs/fixture/plan.md").replaceAll("/", "\\/")} \\(`));
+  assert.match(notice.text, /No reply is needed/);
+  assert.doesNotMatch(notice.text, /request reply/, "a notice does not invite an answer");
+  const again = run.implementor(["plan", "--path", "agents/runs/fixture/plan.md"]);
+  assert.equal(again.status, 0, again.text);
+  assert.equal(again.json.detail.hcoord.requestId, first.json.detail.hcoord.requestId, "the same plan is the same request");
+  assert.equal(run.state().events.filter((event) => event.kind === "plan").length, 1, "and the same Sasu event");
+  await wait(1500);
+  assert.equal(run.noticesTo(OBSERVER_PANE).filter((prompt) => prompt.text.includes("SASU_PLAN")).length, 1);
+});
+
+test("B8, B9: a block asks the Observer, its answer reaches the implementor, and the acknowledgement is recorded", async (t) => {
+  const run = await dispatchedRun(t);
+  const blocked = run.implementor(["block", "--kind", "implementation", "--question", "Which retry bound?", "--recommendation", "3, matching the queue", "--reversible", "yes", "--scope-impact", "none"]);
+  assert.equal(blocked.status, 0, blocked.text);
+  assert.match(blocked.json.message, /end your turn now/);
+  const asked = await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.includes("SASU_BLOCK")), "the block question");
+  assert.match(asked.text, /^HCOORD_REQUEST\n/);
+  assert.match(asked.text, /question: Which retry bound\?\nrecommendation: 3, matching the queue\nreversible: yes\nscope_or_requirement_impact: none\nexternal_effect: none/);
+  const requestId = run.field(asked.text, "request");
+  assert.equal(run.hcoord("request", "reply", requestId, "--as", run.observerId, "--body", "3").ok, true);
+  const answer = await run.until(() => run.noticesTo(IMPL_PANE).find((prompt) => prompt.text.startsWith("HCOORD_ANSWER")), "the answer at the implementor");
+  assert.match(answer.text, /answer: 3/);
+  assert.match(answer.text, new RegExp(`hcoord request ack ${requestId} --actor ${run.implementorId} --delivery d_`));
+  assert.equal(run.hcoord("request", "ack", requestId, "--actor", run.implementorId, "--delivery", run.field(answer.text, "delivery")).ok, true);
+  const shown = run.hcoord("request", "show", requestId).value;
+  assert.equal(shown.respondent, run.observerId);
+  assert.equal(shown.deliveries.find((delivery) => delivery.phase === "answer").status, "acknowledged");
+  assert.equal(run.state().events.filter((event) => event.kind === "block").length, 1);
+});
+
+test("B10: a person's answer is recorded verbatim with the Observer as recorder, relayed, and acknowledged", async (t) => {
+  const run = await dispatchedRun(t);
+  const blocked = run.implementor(["block", "--kind", "product", "--question", "Drop the export button?", "--recommendation", "keep it", "--reversible", "no", "--scope-impact", "B4 changes"]);
+  assert.equal(blocked.status, 0, blocked.text);
+  const asked = await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.includes("SASU_BLOCK")), "the block question");
+  const requestId = run.field(asked.text, "request");
+  assert.equal(run.hcoord("request", "escalate", requestId, "--actor", run.observerId).ok, true);
+  const words = "ㅇㅇ 유지해";
+  assert.equal(run.hcoord("request", "reply", requestId, "--as", "human", "--recorded-by", run.observerId, "--body", words).ok, true);
+  const toRelay = await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.startsWith("HCOORD_ANSWER")), "the recorded answer at the Observer");
+  assert.match(toRelay.text, /hcoord request relay/);
+  assert.equal(run.hcoord("request", "relay", requestId, "--actor", run.observerId, "--body", words).ok, true);
+  const relayed = await run.until(() => run.noticesTo(IMPL_PANE).find((prompt) => prompt.text.startsWith("HCOORD_RELAY")), "the relay at the implementor");
+  assert.match(relayed.text, new RegExp(words));
+  assert.equal(run.hcoord("request", "ack", requestId, "--actor", run.implementorId, "--delivery", run.field(relayed.text, "delivery")).ok, true);
+  const shown = run.hcoord("request", "show", requestId).value;
+  assert.deepEqual({ respondent: shown.respondent, recordedBy: shown.recordedBy, answer: shown.answer, relay: shown.relayBody }, { respondent: "human", recordedBy: run.observerId, answer: words, relay: words });
+  assert.equal(shown.deliveries.find((delivery) => delivery.phase === "relay").status, "acknowledged");
+});
+
+test("B11, B12: a report names the current verdict; a stopped daemon delivers it later; an ended run fails with the retry and keeps the Sasu record", async (t) => {
+  const run = await dispatchedRun(t);
+  const reported = run.implementor(["report"]);
+  assert.equal(reported.status, 0, reported.text);
+  const notice = await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.includes("SASU_REPORT")), "the report notice");
+  assert.match(notice.text, /^HCOORD_NOTICE\n/);
+  assert.match(notice.text, /verification: NOT_RUN; no report generated/);
+  assert.match(notice.text, /declares nothing/);
+
+  await run.stopDaemon();
+  const later = run.implementor(["report", "--summary", "all rows done"]);
+  assert.equal(later.status, 0, later.text);
+  assert.match(later.json.message, /waiting in the hcoord outbox/);
+  assert.equal(run.noticesTo(OBSERVER_PANE).filter((prompt) => prompt.text.includes("all rows done")).length, 0);
+  await run.startDaemon();
+  await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.includes("summary: all rows done")), "the pending report after restart");
+
+  assert.equal(run.hcoord("sasu", "end", "--run", run.record.runInstanceId, "--reason", "test").ok, true);
+  fs.mkdirSync(path.join(run.root, "agents", "runs", "fixture"), { recursive: true });
+  fs.writeFileSync(path.join(run.root, "agents", "runs", "fixture", "plan.md"), "# plan\n");
+  const refused = run.implementor(["plan", "--path", "agents/runs/fixture/plan.md"]);
+  assert.equal(refused.status, 1, refused.text);
+  assert.match(refused.json.message, /Observer was not notified: .*ended/);
+  assert.match(refused.json.message, /retry with `sasu implement plan --path agents\/runs\/fixture\/plan.md`/);
+  assert.equal(run.state().events.filter((event) => event.kind === "plan").length, 1, "the Sasu record stays");
+});
+
+test("legacy runs keep OBSERVER_BLOCK: block and report refuse without an hcoord registration", async (t) => {
+  const run = await hcoordProject(t);
+  fs.rmSync(path.join(run.home, ".hcoord", "sasu-enabled"));
+  const dispatched = run.dispatch();
+  assert.equal(dispatched.status, 0, dispatched.text);
+  assert.equal(run.state().supervision.coordinationOwner, "legacy");
+  const blocked = run.sasu(["implement", "block", "--kind", "runtime", "--question", "q", "--recommendation", "r", "--reversible", "yes", "--scope-impact", "none"], { env: { ...run.implementorEnv, SASU_RUN_INSTANCE_ID: run.state().supervision.runInstanceId } });
+  assert.notEqual(blocked.status, 0);
+  assert.match(blocked.json.message, /emit the OBSERVER_BLOCK packet/);
+  assert.doesNotMatch(run.herdr.prompts().find((prompt) => prompt.target === IMPL_PANE).text, /HCOORD NOTICES/, "a legacy handoff carries no hcoord forewarning");
+});

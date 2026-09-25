@@ -55,7 +55,7 @@ export class VerbRejected extends Error {
  * Observer retiring its own scratch run, 2026-09-24). Structural facts guard
  * what needs guarding: session ownership, the pane marker, the verify lease.
  */
-export const ISSUED_COMMANDS: IssuedCommand[] = ["artifact", "plan", "verify", "retire", "escalate", "amend"];
+export const ISSUED_COMMANDS: IssuedCommand[] = ["artifact", "plan", "block", "report", "verify", "retire", "escalate", "amend"];
 
 /**
  * Subcommands with no verb record: reads, and the two that run before a run

@@ -154,6 +154,8 @@ High-risk changes require the repository's independent specialist review and exp
 | `status` | optional `--state` or `--slug` | read-only |
 | `artifact` | kind, path, description | registers runtime evidence |
 | `plan` | `--path` | records the execution plan, wakes the Observer once under Herdr |
+| `block` | `--kind`, `--question`, `--recommendation`, `--reversible`, `--scope-impact` | hcoord runs: records the block and asks the Observer through hcoord; end the turn and wait for its answer |
+| `report` | optional `--summary` | hcoord runs: right before the final report, sends the Observer the current verification verdict |
 | `amend` | `--approval`, `--reason` | re-seals the PRD with the recorded human approval; invalidates the report |
 | `escalate` | `--reason` | Observer diagnosis; the recorded Observer needs no `--adopt`; refused from a pane marked implementor |
 | `retire` | active run | ends the run; another session's run needs `--adopt` |

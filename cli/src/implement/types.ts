@@ -117,7 +117,7 @@ export interface ImplementEvent {
   id: number; at: string; kind: ImplementEventKind; actor: IssuerLabel;
   subject: string | null; summary: string;
 }
-export type IssuedCommand = "artifact" | "plan" | "verify" | "escalate" | "amend" | "retire";
+export type IssuedCommand = "artifact" | "plan" | "block" | "report" | "verify" | "escalate" | "amend" | "retire";
 export type VerbRejectionCheck = "arguments" | "transition";
 export interface VerbRecord {
   id: number;
