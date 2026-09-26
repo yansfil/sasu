@@ -184,6 +184,7 @@ Recovery on an hcoord run:
 - A gone Implementor is found at the next watch cycle; dispatch one replacement with `--adopt`, as in [Recovery And Completion](#recovery-and-completion).
   The replacement joins the same run and hcoord stops watching the gone one.
 - A changed Observer session receives nothing until `sasu supervisor handover --slug <slug> --approval "<verbatim user words>"` from the new Observer's pane moves the watch and any question still waiting.
+- A Herdr restart that only rotates terminal ids or clears agent names changes nothing: hcoord knows a participant by its machine, pane and session, so notices keep arriving and no handover is needed.
 - `--recovery-owner task-factory` is recorded with the registration and shown by status; hcoord still wakes only the recorded Observer.
 - `sasu implement retire` and a completed `/ship` delivery end the watch.
 

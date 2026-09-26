@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_LETTER_RECORDS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, validateSpawnSpec, type Delivery, type Ledger, type LetterRecord, type Participant, type Request, type SasuRun, type Watch } from "./model";
+import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_LETTER_RECORDS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, sameExecution, validateSpawnSpec, type Delivery, type Ledger, type LetterRecord, type Participant, type Request, type SasuRun, type SpawnIntent, type Watch } from "./model";
 
 type Args = Record<string, unknown>;
 const isHere = (machine: string): boolean => machine === "local" || machine === require("node:os").hostname();
@@ -134,6 +134,12 @@ export function endSasuRun(state: Ledger, binding: SasuRun, at: string): void {
   }
 }
 
+/** Whether a spawn's execution is still the one first observed in its saved pane (D-18). */
+function spawnObservationHolds(record: SpawnIntent, session: string, instance: string): boolean {
+  const recorded = { machine: record.machine, hostScope: record.hostScope, pane: record.pane, session: record.observedSession ?? null, instance: record.observedInstance ?? null };
+  return (recorded.session === null && recorded.instance === null) || sameExecution(recorded, { ...recorded, session, instance });
+}
+
 export function execute(state: Ledger, operation: string, args: Args, at: string): Outcome {
   if (operation === "status") return { changed: false, value: {
     schema: state.schema, at, lastUpdatedAt: state.updatedAt, eventCursor: state.seq, counts: {
@@ -151,16 +157,22 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
   }
   if (operation === "agent.register") {
     const machine = required(args, "machine"), hostScope = required(args, "hostScope"), session = required(args, "session"), instance = required(args, "instance"), name = required(args, "name");
-    const matches = Object.values(state.participants).filter((p) => p.machine === machine && p.hostScope === hostScope && p.session === session && p.instance === instance);
-    if (matches.length) {
-      const existing = matches[0]!;
+    const binding = { machine, hostScope, pane: optional(args, "pane"), session, instance };
+    // Participants registered under the older terminal rule can share one
+    // execution; the one already carrying the requested name is kept, else the latest.
+    const matches = Object.values(state.participants).filter((p) => sameExecution(p, binding));
+    const existing = matches.find((p) => p.name === name) ?? matches.at(-1);
+    const namesakes = Object.values(state.participants).filter((p) => p.machine === machine && p.hostScope === hostScope && p.session === session && p.name === name && !sameExecution(p, binding));
+    if (namesakes.length) throw new HcoordError("identity_conflict", "name belongs to the same session in another pane", { candidates: namesakes });
+    if (existing) {
       const project = optional(args, "project");
-      if (existing.name !== name || existing.pane !== optional(args, "pane") || existing.parent !== optional(args, "parent") || (project !== null && existing.project !== null && existing.project !== path.resolve(project))) throw new HcoordError("identity_conflict", "runtime identity already has a different name, pane, parent, or project; inspect the exact binding before changing it", { candidates: matches });
+      if (existing.parent !== optional(args, "parent") || (project !== null && existing.project !== null && existing.project !== path.resolve(project))) throw new HcoordError("identity_conflict", "this execution is registered with a different parent or project; inspect the exact binding before changing it", { candidates: matches });
+      // Terminal and name are recorded, never matched (D-18): a registration keeps them current.
+      const refreshed = existing.instance !== instance || existing.name !== name;
+      if (refreshed) { event(state, at, "agent.binding_refreshed", existing.id, null, { instance, name, previousInstance: existing.instance, previousName: existing.name }); existing.instance = instance; existing.name = name; }
       if (project !== null && existing.project === null) { existing.project = path.resolve(project); event(state, at, "agent.project_attached", existing.id); return { changed: true, value: existing }; }
-      return { changed: false, value: existing };
+      return { changed: refreshed, value: existing };
     }
-    const namesakes = Object.values(state.participants).filter((p) => p.machine === machine && p.hostScope === hostScope && p.session === session && p.name === name);
-    if (namesakes.length) throw new HcoordError("identity_conflict", "name belongs to a different execution instance", { candidates: namesakes });
     if (Object.keys(state.participants).length >= MAX_AGENTS) throw new HcoordError("capacity", `participant limit ${MAX_AGENTS} reached`);
     const parent = optional(args, "parent");
     if (parent !== null) person(state, parent);
@@ -252,8 +264,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const record = own(state.spawnIntents, required(args, "intent"));
     if (!record || record.pane === null || record.status === "complete") throw new HcoordError("invalid_state", "spawn has no active saved pane");
     const instance = required(args, "instance"), session = required(args, "runtimeSession");
-    if ((record.observedInstance !== null && record.observedInstance !== undefined && record.observedInstance !== instance)
-      || (record.observedSession !== null && record.observedSession !== undefined && record.observedSession !== session)) throw new HcoordError("identity_conflict", "spawn execution differs from its first observation");
+    if (!spawnObservationHolds(record, session, instance)) throw new HcoordError("identity_conflict", "spawn execution differs from its first observation");
     record.observedInstance = instance; record.observedSession = session;
     event(state, at, "agent.spawn_identity", record.parent, record.key, { pane: record.pane });
     return { changed: true, value: record };
@@ -263,9 +274,8 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (!record || record.pane === null) throw new HcoordError("not_found", "spawn pane is not recorded");
     if (record.status === "complete") return { changed: false, value: { intent: record, participant: state.participants[record.participant!] } };
     const runtimeSession = required(args, "runtimeSession"), instance = required(args, "instance");
-    if ((record.observedInstance !== null && record.observedInstance !== undefined && record.observedInstance !== instance)
-      || (record.observedSession !== null && record.observedSession !== undefined && record.observedSession !== runtimeSession)) throw new HcoordError("identity_conflict", "spawn execution changed before registration");
-    const matches = Object.values(state.participants).filter((p) => p.machine === record.machine && p.hostScope === record.hostScope && p.session === runtimeSession && p.instance === instance);
+    if (!spawnObservationHolds(record, runtimeSession, instance)) throw new HcoordError("identity_conflict", "spawn execution changed before registration");
+    const matches = Object.values(state.participants).filter((p) => sameExecution(p, { machine: record.machine, hostScope: record.hostScope, pane: record.pane, session: runtimeSession, instance }));
     if (matches.length) throw new HcoordError("identity_conflict", "spawned execution is already registered elsewhere", { candidates: matches });
     if (Object.keys(state.participants).length >= MAX_AGENTS) throw new HcoordError("capacity", `participant limit ${MAX_AGENTS} reached; retain the saved spawn and resolve retention before registration`);
     const runtime = required(args, "runtime") as Participant["runtime"];

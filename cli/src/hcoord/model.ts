@@ -33,6 +33,25 @@ export interface Participant {
   /** Where a worktree spawn placed this agent (PRD B3). */
   worktree?: { repo: string; branch: string; path: string } | null;
 }
+/** Where an execution runs and what Herdr calls it; `null` where Herdr reports nothing. */
+export interface ExecutionBinding { machine: string; hostScope: string; pane: string | null; session: string | null; instance: string | null }
+
+/**
+ * Whether two bindings name the same execution (sasu-on-hcoord D-18): the
+ * same machine, host scope, pane and session. A Herdr restart gives every
+ * pane a new terminal id and clears agent names while the pane and the
+ * agent's session stay, and matching the terminal made 7 of 12 live
+ * participants undeliverable (2026-09-26), so terminal and name are recorded,
+ * never required to match. Only an execution Herdr reports without a session
+ * is told apart by its terminal. Every identity check in hcoord uses this.
+ */
+export function sameExecution(recorded: ExecutionBinding, observed: ExecutionBinding): boolean {
+  if (recorded.machine !== observed.machine || recorded.hostScope !== observed.hostScope) return false;
+  if (recorded.pane === null || observed.pane !== recorded.pane) return false;
+  if (recorded.session !== null && observed.session !== null) return observed.session === recorded.session;
+  return recorded.instance !== null && observed.instance === recorded.instance;
+}
+
 export interface Watch {
   target: string; observer: string | null; generation: number; status: "active" | "stopped";
   intervalMs: number; dueAt: string; cycle: string | null; requestId?: string | null; checkedAt: string | null;

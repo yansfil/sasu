@@ -537,3 +537,17 @@ test("D-17: an idle or done recipient without a readiness flag takes input; work
   assert.equal(inputReadiness("idle", true).ready, true);
   assert.equal(inputReadiness("working", true).ready, false);
 });
+
+test("D-18: registering the same pane and session keeps one participant and records its current terminal and name; the session in another pane under that name conflicts", () => {
+  const at = "2026-09-26T00:00:00.000Z", state = emptyLedger(at);
+  const register = (fields) => execute(state, "agent.register", { machine: "local", hostScope: "default", session: "s", instance: "t1", name: "observer", pane: "w1:p1", runtime: "idle", ...fields }, at).value;
+  const first = register();
+  // Registered under the older terminal rule: a second record for the same execution.
+  state.participants["a_legacy"] = { ...first, id: "a_legacy", instance: "t2", name: "observer-2" };
+  assert.equal(register({ instance: "t3", name: "observer-2" }).id, "a_legacy", "the record already carrying the requested name is kept");
+  const renamed = register({ instance: "t4", name: "observer-3" });
+  assert.equal(renamed.id, "a_legacy", "otherwise the latest record");
+  assert.deepEqual([renamed.instance, renamed.name], ["t4", "observer-3"]);
+  assert.equal(state.events.filter((entry) => entry.type === "agent.binding_refreshed").length, 2);
+  assert.throws(() => register({ pane: "w1:p9", name: "observer" }), { code: "identity_conflict", message: /another pane/ });
+});

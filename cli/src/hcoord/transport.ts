@@ -242,16 +242,17 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
   };
   /**
    * The Observer half of a Sasu registration, shared by preflight, register
-   * and handover: its exact execution and name, and official delivery to it.
+   * and handover: its execution (the same pane and session, D-18), the name it
+   * is recorded under, and official delivery to it.
    * The Observer is registered without a project, because one Observer
    * supervises runs in several trees and a participant's project is fixed.
    */
   const sasuObserver = (args: Record<string, unknown>, next: Ledger, at: string): { id: string } => {
     const hostScope = String(args["observerHostScope"] ?? "default"), session = String(args["observerSession"] ?? ""), instance = String(args["observerInstance"] ?? ""), pane = String(args["observerPane"] ?? ""), name = String(args["observerName"] ?? "");
-    const binding = validateBinding("local", session, instance, pane, hostScope, name);
-    const capability = officialDeliveryAvailable({ machine: "local", hostScope, session, instance, pane, name });
+    const binding = validateBinding("local", session, instance, pane, hostScope);
+    const capability = officialDeliveryAvailable({ machine: "local", hostScope, session, instance: binding.instance, pane });
     if (!capability.ready) throw new HcoordError("unsupported_runtime", `Sasu Observer wake cannot use official delivery: ${capability.reason}`);
-    return execute(next, "agent.register", { machine: "local", hostScope, session, instance, name, pane, runtime: binding.runtime }, at).value as { id: string };
+    return execute(next, "agent.register", { machine: "local", hostScope, session, instance: binding.instance, name, pane, runtime: binding.runtime }, at).value as { id: string };
   };
   const sasuRunFields = (args: Record<string, unknown>): { run: string; project: string; intervalMs: number | undefined; recoveryOwner: "supervisor" | "task-factory"; slug: string; statePath: string; replaces: string | null } => {
     const run = String(args["run"] ?? ""), project = String(args["project"] ?? ""), slug = String(args["slug"] ?? ""), statePath = String(args["statePath"] ?? "");
@@ -277,10 +278,10 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
   const registerSasuRun = (args: Record<string, unknown>, at: string): unknown => {
     const fields = sasuRunFields(args);
     const { run, project } = fields;
-    const implementorBinding = validateBinding("local", String(args["implementorSession"] ?? ""), String(args["implementorInstance"] ?? ""), String(args["implementorPane"] ?? ""), String(args["implementorHostScope"] ?? "default"), String(args["implementorName"] ?? ""));
+    const implementorBinding = validateBinding("local", String(args["implementorSession"] ?? ""), String(args["implementorInstance"] ?? ""), String(args["implementorPane"] ?? ""), String(args["implementorHostScope"] ?? "default"));
     const next = structuredClone(ledger);
     const observer = sasuObserver(args, next, at);
-    const implementor = execute(next, "agent.register", { machine: "local", hostScope: args["implementorHostScope"], session: args["implementorSession"], instance: args["implementorInstance"], name: args["implementorName"], pane: args["implementorPane"], project, parent: observer.id, runtime: implementorBinding.runtime }, at).value as { id: string };
+    const implementor = execute(next, "agent.register", { machine: "local", hostScope: args["implementorHostScope"], session: args["implementorSession"], instance: implementorBinding.instance, name: args["implementorName"], pane: args["implementorPane"], project, parent: observer.id, runtime: implementorBinding.runtime }, at).value as { id: string };
     const prior = own(next.sasuRuns, run);
     if (prior && (prior.observer !== observer.id || prior.implementor !== implementor.id || prior.project !== project)) throw new HcoordError("intent_conflict", "Sasu run is already bound to another execution", { run });
     const current = next.watches[implementor.id];
@@ -320,9 +321,9 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
       const machine = String(args["machine"] ?? "");
       // A remote pane is addressed through its saved machine's own session, never this host's socket.
       if (!isLocalMachine(machine)) args = { ...args, hostScope: "default" };
-      const binding = validateBinding(machine, String(args["session"] ?? ""), String(args["instance"] ?? ""), typeof args["pane"] === "string" ? args["pane"] : null, String(args["hostScope"] ?? "default"), String(args["name"] ?? ""));
+      const binding = validateBinding(machine, String(args["session"] ?? ""), String(args["instance"] ?? ""), typeof args["pane"] === "string" ? args["pane"] : null, String(args["hostScope"] ?? "default"));
       if (!isLocalMachine(machine)) remoteCall(machine, ["hello", "--hq", os.hostname()]);
-      args = { ...args, runtime: binding.runtime };
+      args = { ...args, runtime: binding.runtime, instance: binding.instance };
     }
     return commit(operation, args, at, letter);
   };

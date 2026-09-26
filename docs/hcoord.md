@@ -22,6 +22,10 @@ An agent runtime must allow access to that user-local socket; `permission_denied
 The service reserves an unknown outcome before sending external input and never blindly repeats such submissions after a restart.
 
 Register an existing exact Herdr pane with `hcoord agent register --machine local --session <session> --instance <terminal-id> --pane <pane-id> --name <name>`.
+A participant is the execution on one machine, pane, and session.
+Its terminal id and name are recorded but never required to match, because a Herdr restart gives every pane a new terminal id and clears names while panes and sessions stay; registering the same pane and session again returns the same participant and records its current terminal and name.
+Only an agent Herdr reports without a session is told apart by its terminal id.
+Another session in the recorded pane, or the same session in another pane, is a different execution.
 Use the returned participant ID in `hcoord agent spawn --parent <id> --session <session> --name worker --intent <stable-key> -- <Herdr agent-start args>`; without `--machine` the child opens beside its parent.
 The spawn intent must remain the same on retry; an uncertain tab or start requires inspection of the saved pane before a new external effect.
 Spawn admission also checks event slots and ledger byte headroom before tab creation, agent start, and the first prompt, so capacity refusal does not start new external work.
@@ -118,7 +122,7 @@ Do not run that command while an older implementation run is still active.
 
 The macOS daemon's local socket and ledger are restricted to the user; remote machines are reached only through Herdr's saved SSH machine and never expose a network API.
 The installed Herdr 0.9.1 has no confirmed atomic input guard.
-The coordinator checks the exact recipient session, terminal, lifecycle, and interactive readiness immediately before submitting through official `agent prompt`.
+The coordinator checks that the recipient's recorded pane still hosts its session (the terminal id only for an agent without a session), its lifecycle, and its interactive readiness immediately before submitting through official `agent prompt`.
 Herdr 0.9.1 reports `interactive_ready` only for agents it started, so for a hand-started agent with no flag an idle or done lifecycle counts as ready, while a flag of `false` still holds the submission.
 Known working, blocked, unknown, or changed executions are deferred; an uncertain submission is never blindly retried.
 Herdr cannot atomically bind submission to that preflight or protect human typing between the check and the prompt, so a residual race remains.

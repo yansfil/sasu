@@ -1,30 +1,31 @@
 import path from "node:path";
 import { CODEX_INITIALIZATION_PROMPT, getAgent, initializedCodex, prepareCodexFirstTurn, promptAgent, runHerdrCommand, startAgentWhenPaneReady } from "../implement/herdr";
-import { HcoordError, validateSpawnSpec, type Delivery, type Participant, type Request, type SpawnIntent } from "./model";
+import { HcoordError, sameExecution, validateSpawnSpec, type Delivery, type Participant, type Request, type SpawnIntent } from "./model";
 import { herdrRoute, isLocalMachine, requireRemoteHerdr } from "./remote";
 
 /** Herdr routing for a record that names its machine and socket scope. */
 const at = (record: { machine: string; hostScope: string }) => herdrRoute(record.machine, record.hostScope);
 
 /**
- * Confirms an exact execution before registration. A remote machine must be a
- * saved, enabled Herdr machine whose server answers (PRD B2, B16).
+ * Confirms the pane hosts the named execution before registration (D-18: the
+ * same pane and session; the terminal only for a sessionless agent). The
+ * terminal Herdr reports now is what registration records. A remote machine
+ * must be a saved, enabled Herdr machine whose server answers (PRD B2, B16).
  */
-export function validateBinding(machine: string, session: string, instance: string, pane: string | null, hostScope = "default", expectedName?: string): { pane: string; runtime: Participant["runtime"] } {
+export function validateBinding(machine: string, session: string, instance: string, pane: string | null, hostScope = "default"): { pane: string; runtime: Participant["runtime"]; instance: string } {
   if (!isLocalMachine(machine)) requireRemoteHerdr(machine);
   if (pane === null) throw new HcoordError("invalid_argument", "registration requires an exact --pane execution target");
   const found = getAgent(pane, herdrRoute(machine, hostScope), 2000);
   if (found.kind !== "found") throw new HcoordError("runtime_unavailable", `Herdr did not confirm the specified pane: ${found.detail}`);
-  if (found.agent.sessionId !== session || found.agent.terminalId !== instance || found.agent.paneId !== pane) throw new HcoordError("identity_conflict", "pane execution identity changed; select its current session and instance", { current: { pane: found.agent.paneId, session: found.agent.sessionId, instance: found.agent.terminalId } });
-  if (expectedName !== undefined && found.agent.name !== expectedName) throw new HcoordError("identity_conflict", "pane agent name differs from the requested registration", { current: { pane, name: found.agent.name } });
-  return { pane, runtime: found.agent.status === "blocked" ? "unknown" : found.agent.status };
+  if (!sameExecution({ machine, hostScope, pane, session, instance }, { machine, hostScope, pane: found.agent.paneId, session: found.agent.sessionId, instance: found.agent.terminalId })) throw new HcoordError("identity_conflict", "the pane hosts a different execution; select its current session", { current: { pane: found.agent.paneId, session: found.agent.sessionId, instance: found.agent.terminalId } });
+  return { pane, runtime: found.agent.status === "blocked" ? "unknown" : found.agent.status, instance: found.agent.terminalId ?? instance };
 }
 
-type LocalBinding = Pick<Participant, "machine" | "hostScope" | "session" | "instance" | "pane"> & { name?: string };
+type LocalBinding = Pick<Participant, "machine" | "hostScope" | "session" | "instance" | "pane">;
 type ParticipantInspection = { runtime: Participant["runtime"]; connection: Participant["connection"]; reason: string; interactiveReady: boolean | null };
 export const OFFICIAL_PROMPT_BOUNDARY = {
   transport: "Herdr 0.9.1 agent.prompt",
-  preflight: "exact pane, session, terminal, idle or done lifecycle, and interactive readiness unless Herdr reports none",
+  preflight: "same pane and session (the terminal only for a sessionless agent), idle or done lifecycle, and interactive readiness unless Herdr reports none",
   atomicInputProtection: false,
   limitation: "Herdr 0.9.1 does not atomically bind prompt submission to the preflight identity or protect human typing between inspection and submission",
 } as const;
@@ -34,8 +35,8 @@ export function inspectParticipant(participant: LocalBinding): ParticipantInspec
   const found = getAgent(participant.pane, at(participant), 1000);
   if (found.kind !== "found") return { runtime: "unknown", connection: "unavailable", reason: found.detail, interactiveReady: null };
   const agent = found.agent;
-  if (agent.sessionId !== participant.session || agent.terminalId !== participant.instance || agent.paneId !== participant.pane || (participant.name !== undefined && agent.name !== participant.name)) return { runtime: "unknown", connection: "unavailable", reason: "execution identity changed", interactiveReady: null };
-  return { runtime: agent.status === "blocked" ? "unknown" : agent.status, connection: "connected", reason: agent.status === "blocked" ? "recipient is blocked" : "exact Herdr execution observed", interactiveReady: agent.interactiveReady };
+  if (!sameExecution(participant, { machine: participant.machine, hostScope: participant.hostScope, pane: agent.paneId, session: agent.sessionId, instance: agent.terminalId })) return { runtime: "unknown", connection: "unavailable", reason: "execution identity changed", interactiveReady: null };
+  return { runtime: agent.status === "blocked" ? "unknown" : agent.status, connection: "connected", reason: agent.status === "blocked" ? "recipient is blocked" : "the recorded execution observed in its pane", interactiveReady: agent.interactiveReady };
 }
 
 /**
@@ -70,7 +71,7 @@ export function officialDeliveryAvailable(participant: LocalBinding): { ready: b
   const observed = inspectParticipant(participant);
   if (observed.connection !== "connected") return { ready: false, reason: observed.reason };
   const support = officialPromptSupport(participant.hostScope);
-  return support.ready ? { ready: true, reason: "exact Observer binding and official agent.prompt API confirmed; delivery remains non-atomic" } : support;
+  return support.ready ? { ready: true, reason: "Observer execution and official agent.prompt API confirmed; delivery remains non-atomic" } : support;
 }
 
 export function officialPromptSupport(hostScope?: string): { ready: boolean; reason: string } {
@@ -275,7 +276,7 @@ export function discoverAgents(registered: Participant[], project: string | null
       const instance = agent["terminal_id"];
       if (typeof pane !== "string" || typeof session !== "string" || typeof instance !== "string") continue;
       if (project !== null && (typeof cwd !== "string" || path.resolve(cwd) !== path.resolve(project))) continue;
-      if (registered.some((p) => p.machine === machine && p.hostScope === hostScope && p.pane === pane && p.session === session && p.instance === instance)) continue;
+      if (registered.some((p) => sameExecution(p, { machine, hostScope, pane, session, instance }))) continue;
       items.push({ id: `discovered:${machine}:${hostScope}:${session}:${instance}`, registered: false, watch: null, machine, hostScope, session, instance, pane, name: agent["name"] ?? null, project: cwd ?? null, runtime: agent["agent_status"] ?? "unknown", connection: "connected", observedAt: new Date().toISOString() });
     }
     return { items, partialFailures: [] };

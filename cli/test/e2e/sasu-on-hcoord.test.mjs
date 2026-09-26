@@ -162,9 +162,9 @@ test("B1, B4, B13, B16: dispatch registers both participants with the patrol int
 });
 
 test("B3: a coordinator refusal after the implementor started is completed by --resume-handoff", async (t) => {
-  // The Observer's terminal changes at the exact moment the implementor
-  // starts, so preflight passed and registration then refuses.
-  const run = await hcoordProject(t, { env: { HERDR_FAKE_ON_START_PATCH: JSON.stringify({ [OBSERVER_PANE]: { terminal_id: "term_elsewhere" } }) } });
+  // Another session takes the Observer's pane at the exact moment the
+  // implementor starts, so preflight passed and registration then refuses.
+  const run = await hcoordProject(t, { env: { HERDR_FAKE_ON_START_PATCH: JSON.stringify({ [OBSERVER_PANE]: { agent_session: { value: "observer-elsewhere" } } }) } });
   const failed = run.dispatch();
   assert.equal(failed.status, 1, failed.text);
   assert.match(failed.json.message, /identity_conflict/);
@@ -172,7 +172,7 @@ test("B3: a coordinator refusal after the implementor started is completed by --
   assert.equal(pending.phase, "started", "the implementor's exact identity was recorded before registration");
   assert.equal(pending.implementor.paneId, IMPL_PANE);
   assert.equal(run.herdr.prompts().filter((prompt) => prompt.target === IMPL_PANE).length, 0, "no handoff was sent unregistered");
-  run.herdr.patchAgent(OBSERVER_PANE, { terminal_id: "term_observer" });
+  run.herdr.patchAgent(OBSERVER_PANE, { agent_session: { value: OBSERVER } });
   const resumed = run.sasu(["implement", "dispatch", "--resume-handoff"], { input: PACKET });
   assert.equal(resumed.status, 0, resumed.text);
   const record = run.state().supervision;
@@ -393,4 +393,45 @@ test("B22: a hand-started Observer without a readiness flag is accepted, held wh
   assert.match(delivered(flaggedFalse).reason, /not interactive-ready/);
   run.herdr.patchAgent(OBSERVER_PANE, { agent_status: "done", interactive_ready: true });
   await run.until(() => delivered(flaggedFalse)?.status === "accepted", "the notice delivered once Herdr reports ready");
+});
+
+test("B23: a rotated terminal with a cleared name stays the same participant; another session, another pane, or a sessionless rotation holds", async (t) => {
+  const run = await dispatchedRun(t);
+  fs.mkdirSync(path.join(run.root, "agents", "runs", "fixture"), { recursive: true });
+  const plan = (text) => { fs.writeFileSync(path.join(run.root, "agents", "runs", "fixture", "plan.md"), text); const sent = run.implementor(["plan", "--path", "agents/runs/fixture/plan.md"]); assert.equal(sent.status, 0, sent.text); return sent.json.detail.hcoord.requestId; };
+  const delivered = (requestId) => run.hcoord("request", "show", requestId).value.deliveries.find((delivery) => delivery.recipient === run.observerId);
+  const agents = () => JSON.parse(fs.readFileSync(run.herdr.agentsFile, "utf8"));
+  const { name: _cleared, ...observer } = agents()[OBSERVER_PANE];
+
+  // A Herdr restart: the same pane and session under a new terminal, with its name cleared.
+  run.herdr.setAgents({ ...agents(), [OBSERVER_PANE]: { ...observer, terminal_id: "term_observer_rotated" } });
+  const rotated = plan("# plan one\n");
+  await run.until(() => delivered(rotated)?.status === "accepted", "the notice at the rotated, unnamed Observer");
+  // Registering that execution again, under a name Herdr now reports, is the same participant.
+  run.herdr.patchAgent(OBSERVER_PANE, { name: "observer-renamed" });
+  const again = run.hcoord("agent", "register", "--machine", "local", "--session", OBSERVER, "--instance", "term_observer_rotated", "--pane", OBSERVER_PANE, "--name", "observer-renamed");
+  assert.equal(again.ok, true, JSON.stringify(again));
+  assert.equal(again.value.id, run.observerId);
+
+  // Another session in the recorded pane holds.
+  run.herdr.patchAgent(OBSERVER_PANE, { agent_session: { value: "someone-else" } });
+  const otherSession = plan("# plan two\n");
+  await run.until(() => delivered(otherSession)?.status === "deferred", "the notice held for another session in the pane");
+  assert.match(delivered(otherSession).reason, /execution identity changed/);
+
+  // The same session in another pane holds; the recorded pane is gone.
+  const { [OBSERVER_PANE]: _moved, ...rest } = agents();
+  run.herdr.setAgents({ ...rest, "w4G:p99": { ...observer, pane_id: "w4G:p99", terminal_id: "term_observer_rotated" } });
+  const otherPane = plan("# plan three\n");
+  await run.until(() => delivered(otherPane)?.status === "deferred", "the notice held for the session in another pane");
+
+  // An execution Herdr reports without a session is matched by terminal: a rotated one holds.
+  const { agent_session: _none, ...sessionless } = observer;
+  run.herdr.setAgents({ ...rest, [OBSERVER_PANE]: { ...sessionless, terminal_id: "term_observer_third" } });
+  const noSession = plan("# plan four\n");
+  await run.until(() => delivered(noSession)?.status === "deferred", "the notice held for a sessionless rotated terminal");
+  assert.match(delivered(noSession).reason, /execution identity changed/);
+  // The terminal recorded by the latest registration identifies it, and the held notices go out.
+  run.herdr.setAgents({ ...rest, [OBSERVER_PANE]: { ...sessionless, terminal_id: "term_observer_rotated" } });
+  for (const held of [otherSession, otherPane, noSession]) await run.until(() => delivered(held)?.status === "accepted", "a held notice once the recorded terminal returns");
 });
