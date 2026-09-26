@@ -108,17 +108,17 @@ test("a remote child's request reaches the local parent, and the human answer re
   const request = await until(() => fake.prompts("local").find((entry) => entry.target === "parent-pane" && entry.text.startsWith("HCOORD_REQUEST")), "the collected request wakes the parent");
   assert.match(request.text, /Use library A or B\?/);
   await until(() => child.outbox().length === 0, "the collected letter leaves the remote outbox");
-  const requestId = /request: (r_\S+)/.exec(request.text)[1];
+  const requestId = /^HCOORD_REQUEST (r_\S+)/.exec(request.text)[1];
   coordinator.ok("request", "escalate", requestId, "--actor", parent.id);
   coordinator.ok("request", "reply", requestId, "--as", "human", "--body", "A");
   const answer = await until(() => fake.prompts("local").find((entry) => entry.text.startsWith("HCOORD_ANSWER")), "the human answer wakes the parent");
-  assert.match(answer.text, /question from .*:\nUse library A or B\?\nanswer: A/);
+  assert.match(answer.text, new RegExp(`^HCOORD_ANSWER ${requestId}\nrelay: hcoord request relay ${requestId} --actor ${parent.id} --body <text>\nanswer: A$`));
   coordinator.ok("request", "relay", requestId, "--actor", parent.id, "--body", "Go with A");
   const relay = await until(() => fake.prompts("mini").find((entry) => entry.target === "w1:p1" && entry.text.startsWith("HCOORD_RELAY")), "the relay reaches the remote pane through --machine");
   assert.ok(fake.calls("mini").some((argv) => argv[0] === "agent" && argv[1] === "prompt" && argv[2] === "w1:p1"));
   // B8: the remote child can act on the notice alone.
-  const delivery = /delivery: (d_\S+)/.exec(relay.text)[1];
-  assert.match(relay.text, /Go with A\nThis relays the answer to your question:\nUse library A or B\?\nAcknowledge with hcoord request ack \S+ --actor \S+ --delivery d_/);
+  const delivery = /--delivery (d_\S+)/.exec(relay.text)[1];
+  assert.match(relay.text, new RegExp(`^HCOORD_RELAY ${requestId}\nack: hcoord request ack ${requestId} --actor ${worker.id} --delivery d_\\S+\nGo with A$`));
   assert.equal(child.json("request", "show", requestId).error.code, "hq_only");
   assert.equal(child.json("request", "ack", requestId, "--actor", worker.id, "--delivery", delivery).delivery, "pending");
   await until(() => coordinator.ok("request", "show", requestId).deliveries.find((entry) => entry.id === delivery)?.status === "acknowledged", "the remote ack is collected");

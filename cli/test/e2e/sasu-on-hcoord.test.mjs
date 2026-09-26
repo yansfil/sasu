@@ -69,8 +69,11 @@ test("daemon start that reloads a changed plist waits for the bootout to settle 
 async function hcoordProject(t, { observerName = "observer", observerReady, daemon = true, env: extraEnv = {} } = {}) {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
-  // Fakes and HOME live beside the project so the digest never sees their logs.
-  const outside = fs.mkdtempSync(`${root}-hc-`);
+  // Fakes and HOME live outside the project so the digest never sees their
+  // logs, under a short name: beside a macOS temp project the daemon socket
+  // path reached 114 bytes, past the 104-byte socket path limit, and every
+  // coordinator call failed as a transport error.
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hc-")));
   const herdr = installFakeHerdr(outside);
   const launchctl = installFakeLaunchctl(outside);
   const home = path.join(outside, "home");
@@ -200,7 +203,7 @@ async function dispatchedRun(t, options = {}) {
   const record = run.state().supervision;
   run.implementorEnv.SASU_RUN_INSTANCE_ID = record.runInstanceId;
   const implementor = (args) => run.sasu(["implement", ...args], { env: run.implementorEnv });
-  const field = (text, name) => new RegExp(`^${name}: (\\S+)$`, "m").exec(text)?.[1];
+  const field = (text, name) => (name === "request" ? /^HCOORD_\w+ (r_\S+)/ : /--delivery (d_\S+)/).exec(text)?.[1];
   return { ...run, record, implementor, field, observerId: record.hcoord.observer, implementorId: record.hcoord.implementor };
 }
 
@@ -212,9 +215,8 @@ test("B7, B12: a registered plan reaches the Observer at once as a notice, and r
   assert.equal(first.status, 0, first.text);
   assert.match(first.json.message, /sent as hcoord request r_/);
   const notice = await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.includes("SASU_PLAN")), "the plan notice");
-  assert.match(notice.text, /^HCOORD_NOTICE\n/);
+  assert.match(notice.text, /^HCOORD_NOTICE r_\S+ from \S+ \(a_\S+\)\nno reply needed\n/);
   assert.match(notice.text, new RegExp(`plan: ${path.join(run.root, "agents/runs/fixture/plan.md").replaceAll("/", "\\/")} \\(`));
-  assert.match(notice.text, /No reply is needed/);
   assert.doesNotMatch(notice.text, /request reply/, "a notice does not invite an answer");
   const again = run.implementor(["plan", "--path", "agents/runs/fixture/plan.md"]);
   assert.equal(again.status, 0, again.text);
@@ -230,7 +232,7 @@ test("B8, B9: a block asks the Observer, its answer reaches the implementor, and
   assert.equal(blocked.status, 0, blocked.text);
   assert.match(blocked.json.message, /end your turn now/);
   const asked = await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.includes("SASU_BLOCK")), "the block question");
-  assert.match(asked.text, /^HCOORD_REQUEST\n/);
+  assert.match(asked.text, /^HCOORD_REQUEST r_\S+ from /);
   assert.match(asked.text, /question: Which retry bound\?\nrecommendation: 3, matching the queue\nreversible: yes\nscope_or_requirement_impact: none\nexternal_effect: none/);
   const requestId = run.field(asked.text, "request");
   assert.equal(run.hcoord("request", "reply", requestId, "--as", run.observerId, "--body", "3").ok, true);
@@ -269,7 +271,7 @@ test("B11, B12: a report names the current verdict; a stopped daemon delivers it
   const reported = run.implementor(["report"]);
   assert.equal(reported.status, 0, reported.text);
   const notice = await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.includes("SASU_REPORT")), "the report notice");
-  assert.match(notice.text, /^HCOORD_NOTICE\n/);
+  assert.match(notice.text, /^HCOORD_NOTICE r_\S+ from \S+ \(a_\S+\)\nno reply needed\n/);
   assert.match(notice.text, /verification: NOT_RUN; no report generated/);
   assert.match(notice.text, /declares nothing/);
 
@@ -360,6 +362,8 @@ test("B17: retiring an hcoord run stops its watch and cancels what it left open"
 
 test("B4-B6, B18: a Sasu watch cycle names the digest, reminds once, reaches the inbox, and the digest and supervisor status show the coordinator's record", async (t) => {
   const run = await dispatchedRun(t);
+  // A working implementor is patrolled every cycle; a resting one would get one check (D-20).
+  run.herdr.patchAgent(IMPL_PANE, { agent_status: "working" });
   // A two-second cycle and short reminder bounds stand in for 15 and 30 minutes.
   assert.equal(run.hcoord("watch", "stop", run.implementorId, "--actor", "human").ok, true);
   assert.equal(run.hcoord("watch", "start", run.implementorId, "--observer", run.observerId, "--actor", "human", "--interval", "2s").ok, true);
@@ -367,8 +371,8 @@ test("B4-B6, B18: a Sasu watch cycle names the digest, reminds once, reaches the
   assert.equal(run.hcoord("config", "set", "--key", "escalateMs", "--value", "6s").ok, true);
   const check = await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.startsWith("HCOORD_WATCH_CHECK")), "the first watch cycle");
   assert.match(check.text, /Sasu run: fixture; read sasu implement status --slug fixture --digest before the pane\./);
-  const cycle = run.field(check.text, "cycle");
-  await run.until(() => run.noticesTo(OBSERVER_PANE).filter((prompt) => prompt.text.includes(`cycle: ${cycle}`)).length >= 2, "one reminder for the unchecked cycle");
+  const cycle = /cycle (c_\S+)/.exec(check.text)[1];
+  await run.until(() => run.noticesTo(OBSERVER_PANE).filter((prompt) => prompt.text.includes(`cycle ${cycle}`)).length >= 2, "one reminder for the unchecked cycle");
   await run.until(() => run.hcoord("inbox").value.find((item) => item.kind === "question"), "the unchecked cycle in the human inbox", 20_000);
   const open = run.sasu(["implement", "status", "--digest"]);
   assert.equal(open.status, 0, open.text);

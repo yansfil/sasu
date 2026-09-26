@@ -305,6 +305,22 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
     saveLedger(next, home); ledger = next;
     return value;
   };
+  /**
+   * `agent register --check`: what registration would decide, saved nowhere
+   * (D-19). The execution must be the one in its pane (D-18), registering it
+   * must not conflict with a recorded participant, and it must take official
+   * delivery, so a caller can refuse before it creates anything (PRD B3).
+   */
+  const checkRegistration = (args: Record<string, unknown>, at: string): unknown => {
+    const machine = String(args["machine"] ?? "");
+    const hostScope = isLocalMachine(machine) ? String(args["hostScope"] ?? "default") : "default";
+    const session = String(args["session"] ?? ""), pane = typeof args["pane"] === "string" ? args["pane"] : null;
+    const binding = validateBinding(machine, session, String(args["instance"] ?? ""), pane, hostScope);
+    const decided = execute(structuredClone(ledger), "agent.register", { ...args, hostScope, runtime: binding.runtime, instance: binding.instance }, at).value as { id: string };
+    const delivery = officialDeliveryAvailable({ machine, hostScope, session, instance: binding.instance, pane: binding.pane });
+    if (!delivery.ready) throw new HcoordError("unsupported_runtime", `official delivery to this execution is unavailable: ${delivery.reason}`);
+    return { ready: true, saved: false, participant: own(ledger.participants, decided.id) ? decided.id : null, pane: binding.pane, session, instance: binding.instance, runtime: binding.runtime, delivery: delivery.reason };
+  };
   const recordOnly = (letter: LetterRecord): void => {
     const next = structuredClone(ledger);
     recordLetter(next, letter);
@@ -554,7 +570,7 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
           saveLedger(deferred, home); ledger = deferred;
           continue;
         }
-        const outcome = submitOfficial(item, delivery, recipient, watch?.cycle ?? null, own(ledger.participants, item.from), sasuRunWatching(ledger, item.from)?.binding.slug);
+        const outcome = submitOfficial(item, delivery, recipient, watch, own(ledger.participants, item.from), sasuRunWatching(ledger, item.from)?.binding.slug);
         const finished = structuredClone(ledger);
         const recorded = finished.requests[item.id]!.deliveries.find((entry) => entry.id === delivery.id)!;
         recorded.status = outcome.status;
@@ -617,7 +633,7 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
               socket.end(`${JSON.stringify({ ...resolved, delivery: "delivered" })}\n`);
               return;
             }
-            const sasu = { "sasu.register": registerSasuRun, "sasu.preflight": preflightSasuRun, "sasu.handover": handoverSasuRun } as Record<string, (args: Record<string, unknown>, at: string) => unknown>;
+            const sasu = { "agent.check": checkRegistration, "sasu.register": registerSasuRun, "sasu.preflight": preflightSasuRun, "sasu.handover": handoverSasuRun } as Record<string, (args: Record<string, unknown>, at: string) => unknown>;
             let value = own(sasu, decoded.operation) ? sasu[decoded.operation]!(decoded.args, at) : LETTER_OPERATIONS.has(decoded.operation) ? performWrite(decoded.operation, decoded.args, at) : commit(decoded.operation, decoded.args, at);
             if (decoded.operation === "status") {
               value = { ...(value as object), deliverySafety: OFFICIAL_PROMPT_BOUNDARY, usage: { uncollectedLocalLetters: outboxCount(home), ledgerBytes: fs.existsSync(ledgerPath(home)) ? fs.statSync(ledgerPath(home)).size : 0,

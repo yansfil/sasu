@@ -105,6 +105,13 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(daemonErrors.includes("SECRET_ABC"), false, "a parser failure does not copy request text to logs");
   assert.equal(ok("daemon", "status").platform.macos.localSocket, "verified_isolated");
   const parent = ok("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "parent", "--pane", "parent-pane");
+  // D-19, B3: --check answers what registration would decide and saves nothing.
+  const checkChild = ["agent", "register", "--check", "--machine", "local", "--session", "two", "--instance", "b", "--name", "child", "--parent", parent.id, "--pane", "child-pane"];
+  const checked = ok(...checkChild);
+  assert.deepEqual([checked.ready, checked.saved, checked.participant, checked.pane], [true, false, null, "child-pane"]);
+  assert.equal(ok("agent", "register", "--check", "--machine", "local", "--session", "one", "--instance", "a", "--name", "parent", "--pane", "parent-pane").participant, parent.id, "a registered execution is named");
+  assert.equal(JSON.parse(command("agent", "register", "--check", "--machine", "local", "--session", "other", "--instance", "b", "--name", "child", "--pane", "child-pane").stdout).error.code, "identity_conflict", "another session in the pane is refused");
+  assert.equal(ok("status").counts.agents, 1, "a check registers nobody");
   const child = ok("agent", "register", "--machine", "local", "--session", "two", "--instance", "b", "--name", "child", "--parent", parent.id, "--pane", "child-pane");
   assert.equal(JSON.parse(command("agent", "register", "--machine", "remote", "--session", "one", "--instance", "a", "--name", "remote", "--pane", "parent-pane").stdout).error.code, "unsupported_runtime", "a Herdr without --machine forwarding cannot host remote participants");
   assert.equal(ok("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "renamed", "--pane", "parent-pane").id, parent.id, "the same pane and session under another name is the same participant (D-18)");
@@ -372,7 +379,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   cycleRequest = ok("request", "show", cycleRequestId);
   assert.equal(cycleRequest.deliveries[0].status, "deferred", "a stopped watch holds its unsent check even when the old observer is idle");
   assert.match(cycleRequest.nextAction, /watch is stopped/);
-  assert.equal(fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").includes(cycleRequestId), false, "a stopped watch sends no misleading request prompt");
+  assert.equal(fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").includes(watch.cycle), false, "a stopped watch sends no misleading request prompt");
   ok("config", "set", "--key", "escalateMs", "--value", "1s");
   for (let attempt = 0; attempt < 100; attempt += 1) {
     cycleRequest = ok("request", "show", cycleRequestId);
@@ -392,10 +399,8 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
     await wait(100);
   }
   assert.equal(cycleRequest.deliveries[0].status, "accepted");
-  const watchPrompt = fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)).find((entry) => entry.text.includes(cycleRequestId));
-  assert.match(watchPrompt.text, new RegExp(`HCOORD_WATCH_CHECK[\\s\\S]*target: ${child.id}[\\s\\S]*cycle: ${watch.cycle}`));
-  assert.match(watchPrompt.text, /Inspect the target's current exact Herdr execution before confirming this cycle/);
-  assert.match(watchPrompt.text, /Do not use request reply for a watch cycle/);
+  const watchPrompt = fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)).find((entry) => entry.text.startsWith("HCOORD_WATCH_CHECK") && entry.text.includes(watch.cycle));
+  assert.ok(watchPrompt.text.startsWith(`HCOORD_WATCH_CHECK child (${child.id}) cycle ${watch.cycle}\nclose: hcoord watch check ${child.id} --cycle ${watch.cycle} --actor ${parent.id}`), watchPrompt.text);
   assert.equal(fs.existsSync(path.join(home, "UNSUPPORTED_GUARD")), false);
   const decoy = ok("request", "send", "--from", child.id, "--to", parent.id, "--body", "Which option should I choose?", "--intent", `watch:${child.id}:999:${watch.cycle}`);
   let decoyPrompt;

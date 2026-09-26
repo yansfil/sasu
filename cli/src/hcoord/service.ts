@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_LETTER_RECORDS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, sameExecution, validateSpawnSpec, type Delivery, type Ledger, type LetterRecord, type Participant, type Request, type SasuRun, type SpawnIntent, type Watch } from "./model";
+import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_LETTER_RECORDS, MAX_BODY_BYTES, MAX_BRIEF_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, sameExecution, validateSpawnSpec, type Delivery, type Ledger, type LetterRecord, type Participant, type Request, type SasuRun, type SpawnIntent, type Watch } from "./model";
 
 type Args = Record<string, unknown>;
 const isHere = (machine: string): boolean => machine === "local" || machine === require("node:os").hostname();
@@ -18,6 +18,12 @@ const optional = (args: Args, key: string): string | null => {
 const body = (args: Args, key = "body"): string => {
   const value = required(args, key);
   if (Buffer.byteLength(value) > MAX_BODY_BYTES) throw new HcoordError("capacity", `${key} exceeds ${MAX_BODY_BYTES} bytes`);
+  return value;
+};
+const brief = (args: Args): string | null => {
+  const value = optional(args, "brief");
+  if (value === null || value.trim() === "") return null;
+  if (Buffer.byteLength(value) > MAX_BRIEF_BYTES) throw new HcoordError("capacity", `brief exceeds ${MAX_BRIEF_BYTES} bytes`);
   return value;
 };
 const person = (state: Ledger, agentId: string): Participant => {
@@ -80,6 +86,31 @@ const retireUnsent = (item: Request, reason: string, phase?: Delivery["phase"]):
     delivery.reason = reason;
   }
 };
+/**
+ * Questions the target asked the old observer, and answers a person gave
+ * through the old observer that it has not relayed yet, move to the new
+ * observer with the watch, so none waits on a session that left (PRD B15).
+ */
+function moveLetters(state: Ledger, target: string, from: string, to: string, at: string): number {
+  let moved = 0;
+  for (const item of Object.values(state.requests)) {
+    if (item.from !== target || uncheckedWatchRequest(state, item)) continue;
+    if (item.status === "open" && item.to === from) {
+      retireUnsent(item, "watch assigned to another observer before submission");
+      item.to = to;
+      queueDelivery(item, to, at);
+      moved += 1;
+    } else if (pendingRelay(item) && item.intermediary === from) {
+      retireUnsent(item, "watch assigned to another observer before the answer was relayed", "answer");
+      retireUnsent(item, "watch assigned to another observer before the answer was relayed", "relay_problem");
+      item.intermediary = to;
+      queueDelivery(item, to, at, "answer");
+      moved += 1;
+    }
+  }
+  return moved;
+}
+
 /**
  * Records a letter in the same ledger save as its effect, so a crash before the
  * outbox deletion re-reads a letter the ledger already knows (PRD B10).
@@ -312,6 +343,30 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const participant = person(state, required(args, "id"));
     return { changed: false, value: { ...participant, watch: state.watches[participant.id] ?? null, requests: Object.values(state.requests).filter((r) => r.from === participant.id || r.to === participant.id).map((r) => ({ id: r.id, status: r.status })) } };
   }
+  if (operation === "agent.end") {
+    // A participant leaves (D-20): its watch stops, an unchecked cycle is
+    // dropped, and every question it still has open is canceled, so no wake,
+    // reminder or inbox item outlives it. Ending it again changes nothing.
+    const participant = person(state, required(args, "id")), actor = required(args, "actor");
+    const watch = own(state.watches, participant.id);
+    authority(actor, [participant.id, participant.parent, watch?.observer ?? null]);
+    let watchStopped = false, cycleDropped = false;
+    const canceled: string[] = [];
+    if (watch?.status === "active") { watch.status = "stopped"; watch.stoppedAt = at; watchStopped = true; event(state, at, "watch.stopped", watch.target, null, { generation: watch.generation }); }
+    // A watch stopped earlier keeps its unchecked cycle for a restart; its request is canceled below.
+    if (watch && watch.cycle !== null) { watch.cycle = null; watch.requestId = null; cycleDropped = true; }
+    for (const item of Object.values(state.requests)) {
+      if (item.from !== participant.id || item.status !== "open") continue;
+      item.status = "canceled"; item.canceledAt = at;
+      for (const delivery of item.deliveries) if (delivery.status === "pending" || delivery.status === "deferred") { delivery.status = "failed"; delivery.reason = "participant ended before submission"; }
+      event(state, at, "request.canceled", item.id, item.intent);
+      canceled.push(item.id);
+    }
+    const value = { participant: participant.id, watchStopped, canceled };
+    if (!watchStopped && !cycleDropped && canceled.length === 0) return { changed: false, value };
+    event(state, at, "agent.ended", participant.id, null, { by: actor, watchStopped, canceled: canceled.length });
+    return { changed: true, value };
+  }
   if (operation === "watch.start" || operation === "watch.assign") {
     const target = person(state, required(args, "target"));
     const observer = person(state, required(args, "observer"));
@@ -333,10 +388,12 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       state.watchHistory.push({ ...previous, status: "stopped", stoppedAt: previous.stoppedAt ?? at });
     }
     const carryCycle = previous !== undefined && previous.cycle !== null && carriedRequest !== undefined && carriedRequest.status !== "canceled";
+    // A new observer starts outside quiet, so it hears once about a target that is already resting.
     const watch: Watch = { target: target.id, observer: observer.id, generation: (previous?.generation ?? 0) + 1, status: "active", intervalMs,
       dueAt: carryCycle ? previous!.dueAt : timed(at, intervalMs),
       cycle: carryCycle ? previous!.cycle : null, requestId: carryCycle ? carriedRequest!.id : null,
-      checkedAt: previous?.checkedAt ?? null, startedAt: at, stoppedAt: null, observation: previous?.observation ?? null };
+      checkedAt: previous?.checkedAt ?? null, startedAt: at, stoppedAt: null, observation: previous?.observation ?? null,
+      brief: brief(args) ?? previous?.brief ?? null, quietSince: null };
     if (carryCycle && carriedRequest) {
       const sameObserver = previous!.observer === observer.id;
       if (!sameObserver) retireUnsent(carriedRequest, "watch assigned to another observer");
@@ -346,8 +403,9 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       const existingWake = sameObserver && carriedRequest.deliveries.some((delivery) => delivery.recipient === observer.id && (delivery.phase ?? "request") === phase && ["pending", "deferred", "unknown", "accepted", "acknowledged"].includes(delivery.status));
       if (!existingWake) queueDelivery(carriedRequest, observer.id, at, phase);
     }
+    const moved = operation === "watch.assign" && previous?.observer != null && previous.observer !== observer.id ? moveLetters(state, target.id, previous.observer, observer.id, at) : 0;
     put(state.watches, target.id, watch);
-    event(state, at, previous ? "watch.assigned" : "watch.started", target.id, null, { observer: observer.id, generation: watch.generation });
+    event(state, at, previous ? "watch.assigned" : "watch.started", target.id, null, { observer: observer.id, generation: watch.generation, movedRequests: moved });
     return { changed: true, value: watch };
   }
   if (operation === "watch.stop") {
@@ -619,6 +677,11 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       if (watch.status !== "active" || Date.parse(watch.dueAt) > Date.parse(at)) continue;
       if (observed !== null && !observed.has(watch.target)) continue;
       changed = true;
+      const target = own(state.participants, watch.target);
+      const resting = target !== undefined && target.runtime !== "working";
+      if (resting && watch.quietSince) { watch.dueAt = timed(at, watch.intervalMs); continue; }
+      if (resting) { watch.quietSince = at; event(state, at, "watch.quiet", watch.target, null, { runtime: target!.runtime }); }
+      else if (watch.quietSince) { watch.quietSince = null; event(state, at, "watch.resumed", watch.target); }
       if (watch.cycle === null) {
         watch.cycle = id("c"); cycles += 1;
         if (watch.observer !== null) {
@@ -663,6 +726,8 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
         }
       }
       if (item.status !== "open" || !item.requiresReply) continue;
+      const quiet = own(state.watches, item.from);
+      if (quiet?.status === "active" && quiet.quietSince && uncheckedWatchRequest(state, item)) continue;
       const age = Date.parse(at) - Date.parse(item.createdAt);
       if (age >= state.config.escalateMs && item.escalatedAt === null) {
         if (item.remindedAt === null) { item.remindedAt = at; event(state, at, "request.reminder_coalesced", item.id, item.intent); }

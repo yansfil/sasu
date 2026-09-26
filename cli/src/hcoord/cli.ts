@@ -39,12 +39,13 @@ function route(args: Parsed): { operation: string; data: Record<string, unknown>
   if (topic === "status") return { operation: "status", data: {} };
   if (topic === "config" && action === "show") return { operation: "status", data: {} };
   if (topic === "config" && action === "set") return { operation: "config.set", data: { key: needed(args, "key"), value: duration(needed(args, "value")) } };
-  if (topic === "agent" && action === "register") return { operation: "agent.register", data: { machine: needed(args, "machine"), hostScope: flag(args, "host-scope") ?? process.env["HERDR_SOCKET_PATH"] ?? "default", session: needed(args, "session"), instance: needed(args, "instance"), name: needed(args, "name"), project: flag(args, "project"), parent: flag(args, "parent"), pane: flag(args, "pane") } };
+  if (topic === "agent" && action === "register") return { operation: args.flags.has("check") ? "agent.check" : "agent.register", data: { machine: needed(args, "machine"), hostScope: flag(args, "host-scope") ?? process.env["HERDR_SOCKET_PATH"] ?? "default", session: needed(args, "session"), instance: needed(args, "instance"), name: needed(args, "name"), project: flag(args, "project"), parent: flag(args, "parent"), pane: flag(args, "pane") } };
   if (topic === "agent" && action === "spawn") return { operation: "agent.spawn", data: { parent: needed(args, "parent"), machine: flag(args, "machine"), repo: flag(args, "repo"), branch: flag(args, "branch"), path: flag(args, "path"), session: needed(args, "session"), name: needed(args, "name"), kind: flag(args, "kind") ?? "codex", intent: needed(args, "intent"), noWatch: args.flags.has("no-watch"), reconcilePane: flag(args, "reconcile-pane"), resumeStart: args.flags.has("resume-start"), nativeArgs: args.tail } };
   if (topic === "agent" && action === "list") return { operation: "agent.list", data: { project: flag(args, "project") } };
   if (topic === "agent" && action === "show") return { operation: "agent.show", data: { id: target } };
-  if (topic === "watch" && action === "start") return { operation: "watch.start", data: { target, observer: needed(args, "observer"), actor: flag(args, "actor") ?? needed(args, "observer"), intervalMs: flag(args, "interval") ? duration(needed(args, "interval")) : undefined } };
-  if (topic === "watch" && action === "assign") return { operation: "watch.assign", data: { target, observer: needed(args, "observer"), actor: needed(args, "actor"), expectedGeneration: flag(args, "expected-generation") } };
+  if (topic === "agent" && action === "end") return { operation: "agent.end", data: { id: target, actor: needed(args, "actor") } };
+  if (topic === "watch" && action === "start") return { operation: "watch.start", data: { target, observer: needed(args, "observer"), actor: flag(args, "actor") ?? needed(args, "observer"), intervalMs: flag(args, "interval") ? duration(needed(args, "interval")) : undefined, brief: flag(args, "brief") } };
+  if (topic === "watch" && action === "assign") return { operation: "watch.assign", data: { target, observer: needed(args, "observer"), actor: needed(args, "actor"), expectedGeneration: flag(args, "expected-generation"), brief: flag(args, "brief") } };
   if (topic === "watch" && action === "stop") return { operation: "watch.stop", data: { target, actor: needed(args, "actor") } };
   if (topic === "watch" && action === "check") return { operation: "watch.check", data: { target, cycle: needed(args, "cycle"), actor: needed(args, "actor") } };
   if (topic === "watch" && action === "list") return { operation: "watch.list", data: {} };
@@ -68,7 +69,7 @@ function route(args: Parsed): { operation: string; data: Record<string, unknown>
     if (action === "list") return { operation: "sasu.list", data: {} };
     if (action === "end") return { operation: "sasu.end", data: { run: needed(args, "run"), reason: needed(args, "reason") } };
   }
-  throw new HcoordError("invalid_argument", "usage: hcoord status | agent register/list/show | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status | sasu enable/status/preflight/register/handover/show/list/end");
+  throw new HcoordError("invalid_argument", "usage: hcoord status | agent register [--check]/list/show/end | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status | sasu enable/status/preflight/register/handover/show/list/end");
 }
 
 /**

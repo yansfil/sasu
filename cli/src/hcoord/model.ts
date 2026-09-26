@@ -7,6 +7,8 @@ export const MAX_EVENTS = 20000;
 // first-turn submission without stranding the saved intent at the event cap.
 export const SPAWN_EVENT_SLOTS = { reserve: 7, beforeExternalStart: 4, beforeFirstTurn: 4, beforeRegistration: 2 } as const;
 export const MAX_BODY_BYTES = 16 * 1024;
+/** A watch brief rides on every watch check, so it stays a few lines (D-21). */
+export const MAX_BRIEF_BYTES = 2 * 1024;
 export const MAX_LEDGER_BYTES = 64 * 1024 * 1024;
 export const MAX_CONNECTIONS = 64;
 export const MAX_SPAWN_INTENTS = 4096;
@@ -21,7 +23,7 @@ export const LETTER_SCHEMA = "hcoord.letter.v1" as const;
 export const REMOTE_PROTOCOL = 1;
 export const MAX_OUTBOX_LETTERS = 1024;
 export const MAX_LETTER_RECORDS = 20000;
-export const LETTER_OPERATIONS = new Set(["config.set", "agent.register", "agent.spawn", "watch.start", "watch.assign", "watch.stop", "watch.check", "request.send", "request.reply", "request.relay", "request.ack", "request.cancel", "request.escalate", "sasu.end"]);
+export const LETTER_OPERATIONS = new Set(["config.set", "agent.register", "agent.spawn", "watch.start", "watch.assign", "watch.stop", "watch.check", "request.send", "request.reply", "request.relay", "request.ack", "request.cancel", "request.escalate", "agent.end", "sasu.end"]);
 export const DEFAULTS = { watchMs: 5 * 60_000, remindMs: 15 * 60_000, escalateMs: 30 * 60_000, retentionMs: 30 * 24 * 60 * 60_000 };
 
 export type RequestStatus = "open" | "answered" | "canceled";
@@ -56,6 +58,14 @@ export interface Watch {
   target: string; observer: string | null; generation: number; status: "active" | "stopped";
   intervalMs: number; dueAt: string; cycle: string | null; requestId?: string | null; checkedAt: string | null;
   startedAt: string; stoppedAt: string | null; observation: string | null;
+  /** The watcher's own note, carried verbatim on every watch check; hcoord never reads it (D-21). */
+  brief?: string | null;
+  /**
+   * When the target was first seen not working. The one check for that
+   * change was opened then; later due cycles are skipped, and the open one is
+   * neither reminded nor escalated, until the target works again (D-20).
+   */
+  quietSince?: string | null;
 }
 export interface Delivery {
   id: string; requestId: string; recipient: string; status: DeliveryStatus; reason: string | null;

@@ -4,6 +4,7 @@
 // live pane, no real launchd domain (B20).
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
@@ -62,7 +63,9 @@ function dispatchedRun(extraDispatchArgs = []) {
 test("hcoord transition registers a new run without legacy enrollment or wake", async (t) => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
-  const outside = fs.mkdtempSync(`${root}-hcoord-fakes-`);
+  // A short name outside the project: beside a macOS temp project the daemon
+  // socket path passed the 104-byte socket path limit.
+  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hc-")));
   const herdr = installFakeHerdr(outside);
   const launchctl = installFakeLaunchctl(outside);
   const home = path.join(outside, "home");
