@@ -24,7 +24,7 @@ type LocalBinding = Pick<Participant, "machine" | "hostScope" | "session" | "ins
 type ParticipantInspection = { runtime: Participant["runtime"]; connection: Participant["connection"]; reason: string; interactiveReady: boolean | null };
 export const OFFICIAL_PROMPT_BOUNDARY = {
   transport: "Herdr 0.9.1 agent.prompt",
-  preflight: "exact pane, session, terminal, lifecycle and interactive readiness",
+  preflight: "exact pane, session, terminal, idle or done lifecycle, and interactive readiness unless Herdr reports none",
   atomicInputProtection: false,
   limitation: "Herdr 0.9.1 does not atomically bind prompt submission to the preflight identity or protect human typing between inspection and submission",
 } as const;
@@ -38,15 +38,34 @@ export function inspectParticipant(participant: LocalBinding): ParticipantInspec
   return { runtime: agent.status === "blocked" ? "unknown" : agent.status, connection: "connected", reason: agent.status === "blocked" ? "recipient is blocked" : "exact Herdr execution observed", interactiveReady: agent.interactiveReady };
 }
 
+/**
+ * Whether a connected execution may take typed input now. The recipient must
+ * be idle or done; a readiness flag of false holds it. Herdr 0.9.1 reports
+ * `interactive_ready` only for agents it started, so a hand-started Observer
+ * has no flag at all, and requiring `true` held every delivery to such an
+ * Observer for six hours of a live run (2026-09-26, sasu-on-hcoord D-17).
+ * Without a flag, idle or done is the readiness evidence Herdr gives.
+ */
+export function inputReadiness(runtime: Participant["runtime"], interactiveReady: boolean | null): { ready: boolean; reason: string } {
+  if (runtime !== "idle" && runtime !== "done") return { ready: false, reason: `recipient is ${runtime}; submission deferred` };
+  if (interactiveReady === false) return { ready: false, reason: "Herdr reports the recipient is not interactive-ready; submission deferred" };
+  return { ready: true, reason: interactiveReady === true ? "exact idle or done execution is interactive-ready" : "exact idle or done execution; Herdr reports no readiness flag for it" };
+}
+
 export function inspectDelivery(recipient: Participant): { ready: boolean; reason: string; runtime: Participant["runtime"]; connection: Participant["connection"] } {
   const observed = inspectParticipant(recipient);
   const { runtime, connection } = observed;
   if (connection !== "connected") return { ready: false, ...observed };
-  if (runtime !== "idle" && runtime !== "done") return { ready: false, reason: observed.reason === "recipient is blocked" ? observed.reason : `recipient is ${runtime}; submission deferred`, runtime, connection };
-  if (observed.interactiveReady !== true) return { ready: false, reason: "Herdr has not confirmed interactive readiness; submission deferred", runtime, connection };
-  return { ready: true, reason: "exact idle or done execution is interactive-ready", runtime, connection };
+  if (observed.reason === "recipient is blocked") return { ready: false, reason: observed.reason, runtime, connection };
+  return { ...inputReadiness(runtime, observed.interactiveReady), runtime, connection };
 }
 
+/**
+ * The dispatch preflight and registration check. Under `inputReadiness` no
+ * connected execution is permanently unready: a working or unflagged one
+ * receives input once it is idle, so the check is the exact identity and the
+ * official prompt API, and a hand-started Observer is accepted (D-17, B22).
+ */
 export function officialDeliveryAvailable(participant: LocalBinding): { ready: boolean; reason: string } {
   const observed = inspectParticipant(participant);
   if (observed.connection !== "connected") return { ready: false, reason: observed.reason };

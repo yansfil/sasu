@@ -119,6 +119,7 @@ Do not run that command while an older implementation run is still active.
 The macOS daemon's local socket and ledger are restricted to the user; remote machines are reached only through Herdr's saved SSH machine and never expose a network API.
 The installed Herdr 0.9.1 has no confirmed atomic input guard.
 The coordinator checks the exact recipient session, terminal, lifecycle, and interactive readiness immediately before submitting through official `agent prompt`.
+Herdr 0.9.1 reports `interactive_ready` only for agents it started, so for a hand-started agent with no flag an idle or done lifecycle counts as ready, while a flag of `false` still holds the submission.
 Known working, blocked, unknown, or changed executions are deferred; an uncertain submission is never blindly retried.
 Herdr cannot atomically bind submission to that preflight or protect human typing between the check and the prompt, so a residual race remains.
 `hcoord request show <id>` gives the exact reason and next action.

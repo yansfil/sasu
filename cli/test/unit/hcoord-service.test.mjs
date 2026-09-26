@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { emptyLedger, MAX_EVENTS } from "../../dist/hcoord/model.js";
 import { execute } from "../../dist/hcoord/service.js";
+import { inputReadiness } from "../../dist/hcoord/herdr.js";
 import { loadLedger } from "../../dist/hcoord/store.js";
 import { callDaemon } from "../../dist/hcoord/transport.js";
 
@@ -525,4 +526,14 @@ test("ending a Sasu run whose watch was stopped mid-cycle leaves no open cycle b
   const ended = execute(state, "sasu.end", { run: "run-1", reason: "retired" }, at).value;
   assert.equal(ended.watch.openCycle, null);
   assert.equal(state.requests[Object.keys(state.requests)[0]].status, "canceled");
+});
+
+test("D-17: an idle or done recipient without a readiness flag takes input; working or a false flag holds it", () => {
+  assert.equal(inputReadiness("idle", null).ready, true, "a hand-started idle Observer");
+  assert.equal(inputReadiness("done", null).ready, true);
+  assert.equal(inputReadiness("working", null).ready, false);
+  assert.equal(inputReadiness("unknown", null).ready, false);
+  assert.equal(inputReadiness("idle", false).ready, false, "a false flag still holds");
+  assert.equal(inputReadiness("idle", true).ready, true);
+  assert.equal(inputReadiness("working", true).ready, false);
 });

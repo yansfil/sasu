@@ -44,7 +44,7 @@ test("daemon start after a manual stop kickstarts the still-loaded label instead
  * A project with a started run, a fake herdr whose Observer pane is idle and
  * interactive-ready, and a daemon this test owns. `sasu enable` is on.
  */
-async function hcoordProject(t, { observerName = "observer", daemon = true, env: extraEnv = {} } = {}) {
+async function hcoordProject(t, { observerName = "observer", observerReady, daemon = true, env: extraEnv = {} } = {}) {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
   // Fakes and HOME live beside the project so the digest never sees their logs.
@@ -56,7 +56,8 @@ async function hcoordProject(t, { observerName = "observer", daemon = true, env:
   const base = { HOME: home, ...herdr.env, PATH: herdr.env.PATH, LAUNCHCTL_FAKE_LOG: launchctl.env.LAUNCHCTL_FAKE_LOG, LAUNCHCTL_FAKE_STATE: launchctl.env.LAUNCHCTL_FAKE_STATE, ...extraEnv };
   const observerEnv = { ...base, HERDR_ENV: "1", HERDR_PANE_ID: OBSERVER_PANE, HERDR_WORKSPACE_ID: "w4G", CLAUDE_SESSION_ID: OBSERVER };
   const implementorEnv = { ...base, HERDR_ENV: "1", HERDR_PANE_ID: IMPL_PANE, HERDR_WORKSPACE_ID: "w4G", CLAUDE_SESSION_ID: "impl-session", SASU_HERDR_ROLE: "implementor" };
-  herdr.setAgents({ [OBSERVER_PANE]: { ...(observerName === null ? {} : { name: observerName }), agent: "claude", agent_status: "idle", interactive_ready: true, pane_id: OBSERVER_PANE, terminal_id: "term_observer", agent_session: { value: OBSERVER }, tokens: { activity: String(Date.now()) }, state_change_seq: 1 } });
+  // The default Observer is hand-started, as in real use: Herdr 0.9.1 reports no interactive_ready for it (D-17).
+  herdr.setAgents({ [OBSERVER_PANE]: { ...(observerName === null ? {} : { name: observerName }), ...(observerReady === undefined ? {} : { interactive_ready: observerReady }), agent: "claude", agent_status: "idle", pane_id: OBSERVER_PANE, terminal_id: "term_observer", agent_session: { value: OBSERVER }, tokens: { activity: String(Date.now()) }, state_change_seq: 1 } });
   let child = null, daemonError = "";
   const startDaemon = async () => {
     child = spawn(process.execPath, [HCOORD, "daemon", "run"], { cwd: home, env: isolatedEnv(base), stdio: ["ignore", "ignore", "pipe"] });
@@ -350,4 +351,27 @@ test("B4-B6, B18: a Sasu watch cycle names the digest, reminds once, reaches the
   assert.ok(closed.json.summary.some((line) => /last closed cycle 0m ago/.test(line)), closed.text);
   const supervisor = run.sasu(["supervisor", "status"]);
   assert.ok(supervisor.json.summary.some((line) => line.startsWith(`  fixture ${run.record.runInstanceId}: hcoord owns this run; Observer observer (${run.observerId}); implementor impl (${run.implementorId})`)), supervisor.text);
+});
+
+test("B22: a hand-started Observer without a readiness flag is accepted, held while working or flagged false, and reached once idle", async (t) => {
+  // Preflight and registration accept the idle, unflagged Observer.
+  const run = await dispatchedRun(t);
+  assert.equal(run.state().supervision.coordinationOwner, "hcoord");
+  assert.equal("interactive_ready" in JSON.parse(fs.readFileSync(run.herdr.agentsFile, "utf8"))[OBSERVER_PANE], false, "the Observer carries no readiness flag");
+  fs.mkdirSync(path.join(run.root, "agents", "runs", "fixture"), { recursive: true });
+  const plan = (text) => { fs.writeFileSync(path.join(run.root, "agents", "runs", "fixture", "plan.md"), text); const sent = run.implementor(["plan", "--path", "agents/runs/fixture/plan.md"]); assert.equal(sent.status, 0, sent.text); return sent.json.detail.hcoord.requestId; };
+  const delivered = (requestId) => run.hcoord("request", "show", requestId).value.deliveries.find((delivery) => delivery.recipient === run.observerId);
+
+  run.herdr.patchAgent(OBSERVER_PANE, { agent_status: "working" });
+  const whileWorking = plan("# plan one\n");
+  await run.until(() => delivered(whileWorking)?.status === "deferred", "the notice held while the Observer works");
+  run.herdr.patchAgent(OBSERVER_PANE, { agent_status: "idle" });
+  await run.until(() => delivered(whileWorking)?.status === "accepted", "the notice delivered once the Observer is idle");
+
+  run.herdr.patchAgent(OBSERVER_PANE, { interactive_ready: false });
+  const flaggedFalse = plan("# plan two\n");
+  await run.until(() => delivered(flaggedFalse)?.status === "deferred", "the notice held while Herdr reports not ready");
+  assert.match(delivered(flaggedFalse).reason, /not interactive-ready/);
+  run.herdr.patchAgent(OBSERVER_PANE, { agent_status: "done", interactive_ready: true });
+  await run.until(() => delivered(flaggedFalse)?.status === "accepted", "the notice delivered once Herdr reports ready");
 });
