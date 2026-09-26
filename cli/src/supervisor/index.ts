@@ -53,7 +53,15 @@ export interface SupervisorIndex {
   tickExecutor: { operationId: string; pid: number; processIncarnation: string | null; startedAt: string } | null;
   /** Bounded operation ids make a linked write recognizable under a newer head. */
   appliedWrites: string[];
+  /**
+   * Runs hcoord supervises, listed so `status` finds every run in one place
+   * (PRD B1, B18). The tick reads only `entries`, so it never wakes these;
+   * their participants live in each run's own state.json.
+   */
+  coordinated: CoordinatedRun[];
 }
+
+export interface CoordinatedRun { statePath: string; runInstanceId: string; addedAt: string }
 
 export const REMOVED_HISTORY_CAP = 50;
 export const UNDELIVERED_TERMINAL_CAP = 50;
@@ -66,7 +74,7 @@ const REVISION_PREFIX = ".revision-";
 const READ_RETRIES = 4;
 
 export function emptyIndex(): SupervisorIndex {
-  return { schema: INDEX_SCHEMA, lastTickAt: null, lastHerdr: null, entries: [], removed: [], undeliveredTerminal: [], tickExecutor: null, appliedWrites: [] };
+  return { schema: INDEX_SCHEMA, lastTickAt: null, lastHerdr: null, entries: [], removed: [], undeliveredTerminal: [], tickExecutor: null, appliedWrites: [], coordinated: [] };
 }
 
 const legacyEnrollmentId = (entry: Record<string, unknown>): string =>
@@ -152,6 +160,10 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
       startedAt: String(lease["startedAt"]),
     };
   }
+  const coordinated = candidate["coordinated"] === undefined ? [] : candidate["coordinated"];
+  if (!Array.isArray(coordinated) || coordinated.length > MAX_INDEX_ENTRIES || coordinated.some((entry) => entry === null || typeof entry !== "object" || typeof entry.statePath !== "string" || !path.isAbsolute(entry.statePath) || typeof entry.runInstanceId !== "string" || entry.runInstanceId === "" || typeof entry.addedAt !== "string")) {
+    throw new Error(`supervisor index has invalid coordinated runs: ${file}`);
+  }
   const undeliveredTerminal = candidate["undeliveredTerminal"] === undefined ? [] : candidate["undeliveredTerminal"];
   if (!Array.isArray(undeliveredTerminal) || undeliveredTerminal.length > UNDELIVERED_TERMINAL_CAP) throw new Error(`supervisor index has invalid undeliveredTerminal history: ${file}`);
   return {
@@ -163,6 +175,7 @@ function assertIndex(value: unknown, file: string): SupervisorIndex {
     undeliveredTerminal: undeliveredTerminal as SupervisorIndex["undeliveredTerminal"],
     tickExecutor: parsedTickExecutor,
     appliedWrites: appliedWrites as string[],
+    coordinated: (coordinated as CoordinatedRun[]).map((entry) => ({ statePath: entry.statePath, runInstanceId: entry.runInstanceId, addedAt: entry.addedAt })),
   };
 }
 
@@ -394,6 +407,19 @@ export function reconcileEnrollmentAuthority(file: string, input: {
     expectedEnrollmentId = captureEnrollmentGeneration(file, input.statePath);
   }
   throw new Error(`supervisor enrollment authority kept changing for ${input.statePath}; retry against the current run`);
+}
+
+/** Lists an hcoord run for `status`, replacing an older dispatch of the same state path. */
+export function recordCoordinatedRun(file: string, entry: CoordinatedRun): SupervisorIndex {
+  return updateIndex(file, (index) => {
+    const others = index.coordinated.filter((existing) => existing.statePath !== entry.statePath);
+    if (others.length >= MAX_INDEX_ENTRIES) throw new Error(`supervisor index coordinated-run cap ${MAX_INDEX_ENTRIES} reached; retire finished hcoord runs before dispatching another`);
+    index.coordinated = [...others, entry];
+  });
+}
+
+export function forgetCoordinatedRun(file: string, statePath: string): SupervisorIndex {
+  return updateIndex(file, (index) => { index.coordinated = index.coordinated.filter((existing) => existing.statePath !== statePath); });
 }
 
 export function unenrollRun(file: string, entry: { statePath: string; runInstanceId: string; at: string; cause: string }): SupervisorIndex {

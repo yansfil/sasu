@@ -296,7 +296,7 @@ export function parseImplementState(text: string): ImplementState {
     if (supervision["hcoord"] !== undefined) {
       const hcoord = supervision["hcoord"] as Record<string, unknown>;
       assertRecord(hcoord, "supervision.hcoord");
-      for (const field of ["run", "observer", "implementor"] as const) assertString(hcoord[field], `supervision.hcoord.${field}`);
+      for (const field of ["observer", "implementor"] as const) assertString(hcoord[field], `supervision.hcoord.${field}`);
       positiveInteger(hcoord["intervalMs"], "supervision.hcoord.intervalMs");
       enumValue(hcoord["recoveryOwner"], ["supervisor", "task-factory"], "supervision.hcoord.recoveryOwner");
       assertIsoTimestamp(hcoord["registeredAt"], "supervision.hcoord.registeredAt");
@@ -329,7 +329,7 @@ export function parseImplementState(text: string): ImplementState {
     positiveInteger(pending["patrolIntervalMs"], "pendingDispatch.patrolIntervalMs");
     enumValue(pending["recoveryOwner"], ["supervisor", "task-factory"], "pendingDispatch.recoveryOwner");
     if (pending["coordinationOwner"] !== undefined) enumValue(pending["coordinationOwner"], ["legacy", "hcoord"], "pendingDispatch.coordinationOwner");
-    if (pending["hcoordReplaces"] !== undefined) assertNullableString(pending["hcoordReplaces"], "pendingDispatch.hcoordReplaces");
+    if (pending["hcoordReplacedImplementor"] !== undefined) assertNullableString(pending["hcoordReplacedImplementor"], "pendingDispatch.hcoordReplacedImplementor");
     const observer = pending["observer"] as Record<string, unknown>;
     assertRecord(observer, "pendingDispatch.observer");
     for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(observer[field], `pendingDispatch.observer.${field}`);

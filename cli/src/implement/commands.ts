@@ -22,12 +22,11 @@ import { assertNoActiveVerification, recoverVerification, cancelVerificationExec
 import { assertEscalateBudget, buildHandoffBriefing, EscalateRejected, recordEscalation, renderDiagnosis, solverPrompt, validateDiagnosis } from "./solver";
 import { closePreparedSpawn, getAgent, herdrCapabilities, isAgentAlive, promptAgent, readPane, spawnImplementor, type SpawnPlacement } from "./herdr";
 import { currentObserverIdentity, newRunInstanceId } from "../supervisor/commands";
-import { captureEnrollmentGeneration, readIndex, reconcileEnrollmentAuthority, recipientAuthorityKey, type SupervisorIndex } from "../supervisor/index";
-import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
+import { captureEnrollmentGeneration, forgetCoordinatedRun, readIndex, reconcileEnrollmentAuthority, recipientAuthorityKey, recordCoordinatedRun, type SupervisorIndex } from "../supervisor/index";
+import { hcoordSelected, indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest, type CoordinatorFacts } from "../supervisor/digest";
 import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
-import { sasuEnabledPath } from "../hcoord/store";
-import { HcoordCallFailed, endRun, observerParticipantName, preflightRun, registerRun, sendRunNotice, showRun, type ObserverRegistration, type RunNoticeKind, type RunRegistration, type SentNotice } from "./hcoord";
+import { HcoordCallFailed, checkObserver, endParticipant, observerParticipantName, registerRun, sendRunNotice, showParticipant, type ObserverRegistration, type RunNoticeKind, type RunSupervision, type SentNotice } from "./hcoord";
 import { DispatchRejected, assertDispatchablePrd, assertNotImplementor, dispatchImplementor, parseEnvPairs, placementFor } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
@@ -45,13 +44,13 @@ const ARTIFACT_KINDS = new Set(["screenshot", "image", "browser", "api", "db", "
 
 /**
  * The coordinator registration inputs of one dispatch. A replacement of an
- * hcoord run names the dispatch it replaces so the coordinator stops watching
- * the gone implementor in the same save (PRD B14).
+ * hcoord run names the implementor participant it replaces, so registration
+ * ends it and hcoord stops watching the gone implementor (PRD B14).
  */
-function hcoordRunRegistration(state: ImplementState, statePath: string, run: string, project: string, patrolIntervalMs: number, recoveryOwner: "supervisor" | "task-factory"): RunRegistration {
+function hcoordRunSupervision(state: ImplementState, run: string, project: string, patrolIntervalMs: number, recoveryOwner: "supervisor" | "task-factory"): RunSupervision {
   const previous = state.supervision ?? null;
-  const replaces = previous !== null && previous.coordinationOwner === "hcoord" && previous.runInstanceId !== run ? previous.runInstanceId : null;
-  return { run, project, slug: state.topicSlug, statePath, patrolIntervalMs, recoveryOwner, replaces };
+  const replacedImplementor = previous !== null && previous.coordinationOwner === "hcoord" && previous.runInstanceId !== run ? previous.hcoord?.implementor ?? null : null;
+  return { slug: state.topicSlug, project, patrolIntervalMs, recoveryOwner, replacedImplementor };
 }
 
 /** The Observer as the coordinator registers it: its identity and the name it is recorded under. */
@@ -66,14 +65,20 @@ function hcoordRefusal(error: unknown): never {
   throw error;
 }
 
-/** Registers the started implementor and mirrors the registration into the supervision record. */
-function registerDispatchWithHcoord(statePath: string, state: ImplementState, registration: RunRegistration, observer: ObserverIdentity, implementor: SupervisionRecord["implementor"]): void {
+/**
+ * Registers the started implementor with hcoord and records the participant
+ * IDs in the supervision record, which is the only place a run's
+ * participants are written down (D-19). The run is listed in the supervisor
+ * index as hcoord's, where the tick never wakes it (PRD B1).
+ */
+function registerDispatchWithHcoord(statePath: string, state: ImplementState, runInstanceId: string, registration: RunSupervision, observer: ObserverIdentity, implementor: SupervisionRecord["implementor"]): void {
   let registered: NonNullable<SupervisionRecord["hcoord"]>;
   try { registered = registerRun(registration, hcoordObserver(observer), { paneId: implementor.paneId, name: implementor.agent, sessionId: implementor.sessionId, terminalId: implementor.terminalId, hostScope: implementor.hostScope }); }
   catch (error) { hcoordRefusal(error); }
-  if (state.supervision === undefined || state.supervision === null || state.supervision.runInstanceId !== registration.run) throw new DispatchRejected(`supervision record for ${registration.run} disappeared before hcoord registration was mirrored`);
+  if (state.supervision === undefined || state.supervision === null || state.supervision.runInstanceId !== runInstanceId) throw new DispatchRejected(`supervision record for ${runInstanceId} disappeared before its hcoord participants were recorded`);
   state.supervision.hcoord = registered;
   persistState(statePath, state);
+  recordCoordinatedRun(indexPath(), { statePath: path.resolve(statePath), runInstanceId, addedAt: nowIso() });
 }
 
 /**
@@ -543,26 +548,29 @@ function recordDispatch(
 }
 
 /**
- * Ends the coordinator's watch of a retired hcoord run (B17). The ledger
- * letter is idempotent, so running `retire` again on a retired run is the
- * retry after a refusal.
+ * Ends the implementor participant of a retired hcoord run (B17, D-20): its
+ * watch stops and its open questions are canceled. `agent end` changes
+ * nothing the second time, so running `retire` again is the retry.
  */
-function endCoordination(state: ImplementState, reason: string, base: ImplementCommandResult): ImplementCommandResult {
-  const run = hcoordRunKey(state);
-  if (run === null) return base;
+function endCoordination(statePath: string, state: ImplementState, base: ImplementCommandResult): ImplementCommandResult {
+  const participants = hcoordParticipants(state);
+  if (participants === null) return base;
+  const retry = `sasu implement retire --slug ${state.topicSlug}`;
+  if ("problem" in participants) return { ...base, ok: false, exitCode: 1, message: `${base.message}, but hcoord may still watch it: ${participants.problem}; then run \`${retry}\` again`, detail: { ...(base.detail ?? {}), hcoord: { ended: false, problem: participants.problem } } };
   try {
-    const ended = endRun(run, reason);
-    return { ...base, message: `${base.message}; hcoord watch ${ended.delivery === "pending" ? "end is waiting in the hcoord outbox until its daemon runs" : "ended"}`, detail: { ...(base.detail ?? {}), hcoord: { ended: true, run, delivery: ended.delivery } } };
+    const ended = endParticipant(participants.implementor, participants.observer);
+    forgetCoordinatedRun(indexPath(), path.resolve(statePath));
+    return { ...base, message: `${base.message}; hcoord watch ${ended.delivery === "pending" ? "end is waiting in the hcoord outbox until its daemon runs" : "ended"}`, detail: { ...(base.detail ?? {}), hcoord: { ended: true, implementor: participants.implementor, delivery: ended.delivery } } };
   } catch (error) {
     if (!(error instanceof HcoordCallFailed)) throw error;
-    return { ...base, ok: false, exitCode: 1, message: `${base.message}, but hcoord still watches it: ${error.message}; run \`sasu implement retire --slug ${state.topicSlug}\` again to retry`, detail: { ...(base.detail ?? {}), hcoord: { ended: false, run, problem: error.message } } };
+    return { ...base, ok: false, exitCode: 1, message: `${base.message}, but hcoord still watches it: ${error.message}; run \`${retry}\` again to retry`, detail: { ...(base.detail ?? {}), hcoord: { ended: false, implementor: participants.implementor, problem: error.message } } };
   }
 }
 
 function retire(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   if (state.status === "retired") {
-    return endCoordination(state, "retired", result("retire", true, `implement run is already retired: ${state.topicSlug}`, {
+    return endCoordination(statePath, state, result("retire", true, `implement run is already retired: ${state.topicSlug}`, {
       status: state.status,
       retirement: state.retirement,
       occupancyReleased: true,
@@ -585,7 +593,7 @@ function retire(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   };
   state.verificationReport = null;
   persistState(statePath, state);
-  return endCoordination(state, "retired", result("retire", true, `implement run retired and tree occupancy released: ${state.topicSlug}`, {
+  return endCoordination(statePath, state, result("retire", true, `implement run retired and tree occupancy released: ${state.topicSlug}`, {
     status: state.status,
     retirement: state.retirement,
     occupancyReleased: true,
@@ -851,8 +859,8 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       // behind; the registration is idempotent, so the retry completes it
       // before the handoff is submitted (B3).
       if (pending.coordinationOwner === "hcoord" && state.supervision?.runInstanceId === pending.runInstanceId && state.supervision.hcoord === undefined) {
-        const registration: RunRegistration = { run: pending.runInstanceId, project: pending.prepared?.cwd ?? state.worktree?.path ?? state.projectRoot, slug: state.topicSlug, statePath, patrolIntervalMs: pending.patrolIntervalMs, recoveryOwner: pending.recoveryOwner, replaces: pending.hcoordReplaces ?? null };
-        registerDispatchWithHcoord(statePath, state, registration, pending.observer, implementor);
+        const registration: RunSupervision = { slug: state.topicSlug, project: pending.prepared?.cwd ?? state.worktree?.path ?? state.projectRoot, patrolIntervalMs: pending.patrolIntervalMs, recoveryOwner: pending.recoveryOwner, replacedImplementor: pending.hcoordReplacedImplementor ?? null };
+        registerDispatchWithHcoord(statePath, state, pending.runInstanceId, registration, pending.observer, implementor);
       }
       const sent = promptAgent({ target: implementor.paneId, text: packet, expectedInputGuard: finalLooked.agent.inputGuard }, resumeHerdr);
       if (sent.outcome !== "accepted") return result("dispatch", false, `handoff was not confirmed (${sent.outcome}, ${sent.code}): ${sent.detail}; pending dispatch remains for an explicit retry`, { pendingDispatch: pending, prompt: sent });
@@ -894,15 +902,15 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     if (RUN_INSTANCE_ENV_KEY in extraEnv) throw new DispatchRejected(`${RUN_INSTANCE_ENV_KEY} is minted by the dispatch; it cannot be passed as --env`);
     const observer = currentObserverIdentity();
     if (observer.identity === null) throw new DispatchRejected(`the Observer cannot be recorded: ${observer.problem}`);
-    const coordinationOwner = state.supervision?.coordinationOwner ?? (state.supervision ? "legacy" : fs.existsSync(sasuEnabledPath()) ? "hcoord" : "legacy");
+    const coordinationOwner = state.supervision?.coordinationOwner ?? (state.supervision ? "legacy" : hcoordSelected() ? "hcoord" : "legacy");
     const runInstanceId = newRunInstanceId();
     const name = requiredFlag(args, "name");
     // Every coordinator check that does not need the implementor runs before
     // any pane exists (B3): a refusal after start left a started pane no
     // recovery path owned (2026-09-26).
-    const registration = coordinationOwner === "hcoord" ? hcoordRunRegistration(state, statePath, runInstanceId, placed.placement.cwd, patrolIntervalMs, recoveryOwner) : null;
+    const registration = coordinationOwner === "hcoord" ? hcoordRunSupervision(state, runInstanceId, placed.placement.cwd, patrolIntervalMs, recoveryOwner) : null;
     if (registration !== null) {
-      try { preflightRun(registration, hcoordObserver(observer.identity)); }
+      try { checkObserver(hcoordObserver(observer.identity)); }
       catch (error) { hcoordRefusal(error); }
     }
     const dispatchedAt = nowIso();
@@ -910,7 +918,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       runInstanceId, observer: observer.identity, plannedAgent: name, phase: "planned", prepared: null, implementor: null,
       canonicalRepository: canonicalRepository(placed.placement.cwd), prdPath: state.prdPath,
       dispatchHead: repositoryHead(placed.placement.cwd), dispatchedAt, patrolIntervalMs, recoveryOwner, coordinationOwner, handovers: [],
-      ...(registration === null ? {} : { hcoordReplaces: registration.replaces }),
+      ...(registration === null ? {} : { hcoordReplacedImplementor: registration.replacedImplementor }),
     };
     // The durable intent and enrollment exist before a pane is created. A
     // tick during this short window reports the partial dispatch rather than
@@ -970,7 +978,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
         // Registered only after the implementor's exact identity is durable, so
         // a coordinator refusal here leaves a started record that
         // --resume-handoff can register and hand off (B3).
-        if (registration !== null) registerDispatchWithHcoord(statePath, state, registration, observer.identity!, implementor);
+        if (registration !== null) registerDispatchWithHcoord(statePath, state, runInstanceId, registration, observer.identity!, implementor);
       },
       beforeSubmit: () => {
         const ready = revalidatePendingHandoff(projectRoot, statePath, pending, "run or dispatch authority changed during the final target lookup");
@@ -1593,15 +1601,25 @@ function currentInputs(state: ImplementState) {
   return { source, held, contract, context, intentInput, fingerprint };
 }
 
-/** The coordinator's record of an hcoord run for the digest; a stopped daemon answers from its saved ledger. */
-function coordinatorFacts(run: string): CoordinatorFacts {
-  try {
-    const { value, stale } = showRun(run);
-    return { run, observer: value.observer?.id ?? null, implementor: value.implementor?.id ?? null, intervalMs: value.watch?.intervalMs ?? null, watchStatus: value.watch?.status ?? null, openCycle: value.watch?.openCycle ?? null, lastCheckedAt: value.watch?.lastCheckedAt ?? null, endedAt: value.endedAt, stale };
-  } catch (error) {
-    if (error instanceof HcoordCallFailed) return { run, problem: error.message };
-    throw error;
-  }
+/**
+ * The coordinator's record of an hcoord run for the digest, read by the
+ * participant IDs state.json records (B18); a stopped daemon answers from its
+ * saved ledger.
+ */
+function coordinatorFacts(state: ImplementState): (run: string) => CoordinatorFacts {
+  return (run) => {
+    const participants = hcoordParticipants(state);
+    if (participants === null) return { run, problem: "this run is not supervised by hcoord" };
+    if ("problem" in participants) return { run, problem: participants.problem };
+    try {
+      const { value, stale } = showParticipant(participants.implementor);
+      const watch = value.watch;
+      return { run, observer: participants.observer, implementor: participants.implementor, intervalMs: watch?.intervalMs ?? null, watchStatus: watch?.status ?? null, openCycle: watch?.cycle ?? null, lastCheckedAt: watch?.checkedAt ?? null, quietSince: watch?.quietSince ?? null, stale };
+    } catch (error) {
+      if (error instanceof HcoordCallFailed) return { run, problem: error.message };
+      throw error;
+    }
+  };
 }
 
 /**
@@ -1626,7 +1644,7 @@ function digest(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   if (session !== supervision.observer.sessionId) {
     throw new Error(`digest refused: run '${state.topicSlug}' is observed by session ${supervision.observer.sessionId}, and this session is ${session ?? "unidentified"}; nothing was changed. \`sasu implement status --json\` remains readable`);
   }
-  const built = buildDigest(state, supervision, { coordinator: coordinatorFacts });
+  const built = buildDigest(state, supervision, { coordinator: coordinatorFacts(state) });
   return result("status", true, `${state.topicSlug}: digest since dispatch`, { digest: built }, renderDigest(built));
 }
 
@@ -1643,9 +1661,9 @@ function supervisionLine(state: ImplementState): string[] {
   const registered = supervision?.hcoord ?? null;
   if (registered === null) {
     const record = (supervision ?? pending)!;
-    return [`Supervision: hcoord run ${record.runInstanceId}; registration not mirrored here (dispatched before it was recorded, or pending --resume-handoff); recovery owner ${record.recoveryOwner}; \`hcoord sasu show --run ${record.runInstanceId}\` shows the coordinator's record`];
+    return [`Supervision: hcoord run ${record.runInstanceId}; participants not recorded (pending --resume-handoff, or dispatched before they were recorded: \`sasu supervisor migrate-hcoord\` rebuilds them); recovery owner ${record.recoveryOwner}`];
   }
-  return [`Supervision: hcoord run ${registered.run}; Observer ${registered.observer}, implementor ${registered.implementor}; watch every ${Math.round(registered.intervalMs / 60_000)} min; recovery owner ${registered.recoveryOwner}`];
+  return [`Supervision: hcoord run ${supervision!.runInstanceId}; Observer ${registered.observer}, implementor ${registered.implementor}; watch every ${Math.round(registered.intervalMs / 60_000)} min; recovery owner ${registered.recoveryOwner}`];
 }
 
 /** The one move `status` names for the run's current verification verdict. */
@@ -1706,10 +1724,21 @@ function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   return result("amend", true, `amendment ${outcome.record.id} sealed; full review freshness invalidated`, { amendment: outcome.record });
 }
 
-/** The run key hcoord knows this run by, or null when the legacy supervisor owns it. */
+/** The run instance id of an hcoord run, or null when the legacy supervisor owns it. */
 function hcoordRunKey(state: ImplementState): string | null {
   const supervision = state.supervision ?? null;
   return supervision !== null && supervision.coordinationOwner === "hcoord" ? supervision.runInstanceId : null;
+}
+
+/**
+ * The hcoord participants state.json records for an hcoord run (D-19): null
+ * for a legacy run, a problem when they were never recorded.
+ */
+function hcoordParticipants(state: ImplementState): { observer: string; implementor: string } | { problem: string } | null {
+  if (hcoordRunKey(state) === null) return null;
+  const recorded = state.supervision?.hcoord;
+  if (recorded === undefined) return { problem: `run ${state.topicSlug} records no hcoord participants; \`sasu supervisor migrate-hcoord --state <state.json>\` rebuilds them from hcoord agent list` };
+  return { observer: recorded.observer, implementor: recorded.implementor };
 }
 
 /**
@@ -1730,12 +1759,16 @@ function recordNoticeEvent(state: ImplementState, kind: "plan" | "block" | "repo
  * later; a refusal fails the command with its reason and the retry, and the
  * Sasu record stays.
  */
-function sendNotice(action: string, run: string, kind: RunNoticeKind, body: string, recorded: string, retry: string, detail: Record<string, unknown>, sentLine: (sent: SentNotice) => string): ImplementCommandResult {
+function sendNotice(action: string, state: ImplementState, kind: RunNoticeKind, body: string, recorded: string, retry: string, detail: Record<string, unknown>, sentLine: (sent: SentNotice) => string): ImplementCommandResult {
   let sent: SentNotice;
-  try { sent = sendRunNotice(run, kind, body); }
+  const participants = hcoordParticipants(state);
+  const failed = (problem: string): ImplementCommandResult => result(action, false, `${recorded}, but the Observer was not notified: ${problem}. The Sasu record stays; retry with \`${retry}\`, which sends the same notice once.`, { ...detail, hcoord: { sent: false, problem, retry } });
+  if (participants === null) throw new Error("a notice is sent only for an hcoord run");
+  if ("problem" in participants) return failed(participants.problem);
+  try { sent = sendRunNotice(state.supervision!.runInstanceId, participants, kind, body); }
   catch (error) {
     if (!(error instanceof HcoordCallFailed)) throw error;
-    return result(action, false, `${recorded}, but the Observer was not notified: ${error.message}. The Sasu record stays; retry with \`${retry}\`, which sends the same notice once.`, { ...detail, hcoord: { sent: false, problem: error.message, retry } });
+    return failed(error.message);
   }
   const where = sent.delivery === "pending" ? `waiting in the hcoord outbox as letter ${sent.letter}; the coordinator delivers it when its daemon runs again` : `sent as hcoord request ${sent.requestId}`;
   return result(action, true, `${recorded}; ${where}; ${sentLine(sent)}`, { ...detail, hcoord: { sent: true, ...sent } });
@@ -1768,7 +1801,7 @@ function plan(projectRoot: string, args: ImplementArgs): ImplementCommandResult 
     `plan: ${target.absolute} (${digest})`,
     "Read it. Answer only a \"What I decide and go with\" item you disagree with, or a structure that differs from the approved PRD; the implementor is not waiting.",
   ].join("\n");
-  return sendNotice("plan", run, "plan", body, `plan ${event.id} registered: ${target.relative}`, `sasu implement plan --path ${target.relative}`, { event }, () => "keep working; the Observer answers only if it disagrees");
+  return sendNotice("plan", state, "plan", body, `plan ${event.id} registered: ${target.relative}`, `sasu implement plan --path ${target.relative}`, { event }, () => "keep working; the Observer answers only if it disagrees");
 }
 
 const BLOCK_KINDS = ["implementation", "product", "authority", "runtime"] as const;
@@ -1808,7 +1841,7 @@ function block(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   const { event, reused } = recordNoticeEvent(state, "block", `block@${hash}`, `${kind} block: ${question.slice(0, 200)}`, resolveIssuer(flag(args, "issuer")));
   if (!reused) persistState(statePath, state);
   const retry = ["sasu implement block", ...["kind", "question", "recommendation", "reversible", "scope-impact"].map((name) => `--${name} ${quote(field(name))}`), ...(flag(args, "external-effect")?.trim() ? [`--external-effect ${quote(flag(args, "external-effect")!.trim())}`] : [])].join(" ");
-  return sendNotice("block", run, "block", body, `block ${event.id} recorded`, retry, { event },
+  return sendNotice("block", state, "block", body, `block ${event.id} recorded`, retry, { event },
     () => "end your turn now and do not poll; the answer arrives as HCOORD_ANSWER or HCOORD_RELAY, and you acknowledge it with the exact hcoord request ack command it names");
 }
 
@@ -1835,7 +1868,7 @@ function report(projectRoot: string, args: ImplementArgs): ImplementCommandResul
   const hash = sha256(Buffer.from(body)).slice(0, 12);
   const { event, reused } = recordNoticeEvent(state, "report", `report@${hash}`, `completion report with verification ${current.verdict}`, resolveIssuer(flag(args, "issuer")));
   if (!reused) persistState(statePath, state);
-  return sendNotice("report", run, "report", body, `report ${event.id} recorded with verification ${current.verdict}`, `sasu implement report${summary === "" ? "" : ` --summary ${quote(summary)}`}`, { event, verdict: current.verdict },
+  return sendNotice("report", state, "report", body, `report ${event.id} recorded with verification ${current.verdict}`, `sasu implement report${summary === "" ? "" : ` --summary ${quote(summary)}`}`, { event, verdict: current.verdict },
     () => "write the final report; the Observer checks the current verification itself");
 }
 

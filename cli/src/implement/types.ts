@@ -289,14 +289,15 @@ export interface SupervisionRecord {
   patrolIntervalMs: number;
   /** Who replaces a dead Observer: only one loop may input into a session (D-15). */
   recoveryOwner: "supervisor" | "task-factory";
-  /** Existing runs remain on the Sasu supervisor; newly enabled runs belong only to hcoord. */
+  /** Existing runs remain on the Sasu supervisor; runs dispatched with `sasu supervisor use hcoord` belong only to hcoord. */
   coordinationOwner?: "legacy" | "hcoord";
   /**
-   * The coordinator's registration of this dispatch, mirrored for status and
-   * digest. The coordinator's run binding stays the authority for sending;
-   * runs dispatched before this field existed have none.
+   * The hcoord participants this run is made of (D-19). hcoord knows only
+   * participants and their parent and watch relations, so this record is the
+   * one place that says which of them belong to the run; notices, status,
+   * handover, retire and delivery all address hcoord by these IDs.
    */
-  hcoord?: { run: string; observer: string; implementor: string; intervalMs: number; recoveryOwner: "supervisor" | "task-factory"; registeredAt: string };
+  hcoord?: { observer: string; implementor: string; intervalMs: number; recoveryOwner: "supervisor" | "task-factory"; registeredAt: string };
   handovers: ObserverHandover[];
 }
 
@@ -327,8 +328,8 @@ export interface PendingDispatch {
   coordinationOwner?: "legacy" | "hcoord";
   /** Human-approved recovery-authority transfers before supervision exists. */
   handovers?: ObserverHandover[];
-  /** The hcoord dispatch this one replaces, kept so a resumed registration still ends it. */
-  hcoordReplaces?: string | null;
+  /** The hcoord implementor participant this dispatch replaces, kept so a resumed registration still ends it. */
+  hcoordReplacedImplementor?: string | null;
 }
 
 export type PrdJudgeRecord =

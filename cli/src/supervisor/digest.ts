@@ -63,7 +63,7 @@ export interface RunDigest {
 
 /** The coordinator's view of an hcoord run, read by the caller; `problem` when it could not be read. */
 export type CoordinatorFacts =
-  | { run: string; observer: string | null; implementor: string | null; intervalMs: number | null; watchStatus: string | null; openCycle: string | null; lastCheckedAt: string | null; endedAt: string | null; stale: boolean }
+  | { run: string; observer: string | null; implementor: string | null; intervalMs: number | null; watchStatus: string | null; openCycle: string | null; lastCheckedAt: string | null; quietSince: string | null; stale: boolean }
   | { run: string; problem: string };
 
 const RECENT_COMMITS = 10;
@@ -286,6 +286,6 @@ export function renderDigest(digest: RunDigest): string[] {
   if (digest.supervision.owner === "legacy") lines.push(`Supervision: legacy supervisor tick; patrol every ${Math.round(digest.supervision.patrolIntervalMs / 60_000)} min`);
   else if (coordinator === null) lines.push("Supervision: hcoord; coordinator record not read");
   else if ("problem" in coordinator) lines.push(`Supervision: hcoord run ${coordinator.run}; coordinator record unavailable: ${coordinator.problem}`);
-  else lines.push(`Supervision: hcoord run ${coordinator.run}${coordinator.stale ? " (daemon stopped; saved record)" : ""}; Observer ${coordinator.observer ?? "none"}, implementor ${coordinator.implementor ?? "none"}; watch ${coordinator.watchStatus ?? "none"} every ${coordinator.intervalMs === null ? "unknown" : `${Math.round(coordinator.intervalMs / 60_000)} min`}; open cycle ${coordinator.openCycle ?? "none"}; last closed cycle ${coordinator.lastCheckedAt === null ? "never" : `${ago(coordinator.lastCheckedAt, now)} (${coordinator.lastCheckedAt})`}${coordinator.endedAt === null ? "" : `; ended ${coordinator.endedAt}`}`);
+  else lines.push(`Supervision: hcoord run ${coordinator.run}${coordinator.stale ? " (daemon stopped; saved record)" : ""}; Observer ${coordinator.observer ?? "none"}, implementor ${coordinator.implementor ?? "none"}; watch ${coordinator.watchStatus ?? "none"} every ${coordinator.intervalMs === null ? "unknown" : `${Math.round(coordinator.intervalMs / 60_000)} min`}; open cycle ${coordinator.openCycle ?? "none"}; last closed cycle ${coordinator.lastCheckedAt === null ? "never" : `${ago(coordinator.lastCheckedAt, now)} (${coordinator.lastCheckedAt})`}${coordinator.quietSince === null ? "" : `; quiet since ${coordinator.quietSince}`}`);
   return lines;
 }

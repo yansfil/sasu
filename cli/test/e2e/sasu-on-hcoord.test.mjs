@@ -107,8 +107,8 @@ async function hcoordProject(t, { observerName = "observer", observerReady, daem
     return { ...result, json, text: result.stdout + result.stderr };
   };
   if (daemon) await startDaemon();
-  fs.mkdirSync(path.join(home, ".hcoord"), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(home, ".hcoord", "sasu-enabled"), "test\n");
+  fs.mkdirSync(path.join(home, ".sasu", "supervisor"), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(home, ".sasu", "supervisor", "use-hcoord"), "test\n");
   const started = sasu(["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"]);
   assert.equal(started.status, 0, started.text);
   const state = () => JSON.parse(fs.readFileSync(path.join(root, STATE_PATH), "utf8"));
@@ -137,12 +137,12 @@ test("B3: dispatch refuses a stopped coordinator before any pane or agent exists
 
 test("D-18: an unnamed Observer is registered under a name derived from its session, at dispatch and at handover, and its pane is never renamed", async (t) => {
   const run = await dispatchedRun(t, { observerName: null });
-  assert.equal(run.hcoord("sasu", "show", "--run", run.record.runInstanceId).value.observer.name, `observer-${OBSERVER.slice(0, 8)}`);
+  assert.equal(run.hcoord("agent", "show", run.observerId).value.name, `observer-${OBSERVER.slice(0, 8)}`);
   const next = "7c1d2e3f-0000-4000-8000-00000000000b";
   run.herdr.patchAgent(OBSERVER_PANE, { agent_session: { value: next } });
   const handed = run.sasu(["supervisor", "handover", "--slug", "fixture", "--approval", "넘겨"], { env: { ...run.observerEnv, CLAUDE_SESSION_ID: next } });
   assert.equal(handed.status, 0, handed.text);
-  assert.equal(run.hcoord("sasu", "show", "--run", run.record.runInstanceId).value.observer.name, "observer-7c1d2e3f");
+  assert.equal(run.hcoord("agent", "show", run.state().supervision.hcoord.observer).value.name, "observer-7c1d2e3f");
   assert.equal(run.herdr.argv().filter((args) => args[1] === "rename").length, 0, "the Observer's pane keeps no name");
 });
 
@@ -155,21 +155,22 @@ test("B1, B4, B13, B16: dispatch registers both participants with the patrol int
   assert.equal(record.hcoord.intervalMs, 7 * 60_000);
   assert.equal(record.hcoord.recoveryOwner, "task-factory");
   assert.match(dispatched.json.message, /coordinated by hcoord .*watch every 7 min, recovery owner task-factory/);
-  const shown = run.hcoord("sasu", "show", "--run", record.runInstanceId).value;
+  // D-19: hcoord holds only participants and relations; state.json names which ones make up the run.
+  const shown = run.hcoord("agent", "show", record.hcoord.implementor).value;
+  assert.equal(shown.parent, record.hcoord.observer);
+  assert.equal(shown.watch.observer, record.hcoord.observer);
   assert.equal(shown.watch.intervalMs, 7 * 60_000);
-  assert.equal(shown.slug, "fixture");
-  assert.equal(shown.recoveryOwner, "task-factory");
-  assert.equal(shown.observer.id, record.hcoord.observer);
-  assert.equal(shown.implementor.id, record.hcoord.implementor);
-  const listed = run.hcoord("watch", "list").value;
-  assert.equal(listed.find((watch) => watch.target === record.hcoord.implementor).sasuRun.slug, "fixture", "watch list names the run");
+  assert.equal(shown.watch.brief, "sasu implement status --slug fixture --digest (recovery owner task-factory)\n  -> verify PASS and PR merged: sasu implement retire --slug fixture\n  -> otherwise: close this cycle");
+  assert.equal(run.hcoord("agent", "show", record.hcoord.observer).value.pane, OBSERVER_PANE);
   const status = run.sasu(["implement", "status"]);
   assert.ok(status.json.summary.some((line) => line.includes(`Supervision: hcoord run ${record.runInstanceId}; Observer ${record.hcoord.observer}, implementor ${record.hcoord.implementor}; watch every 7 min; recovery owner task-factory`)), status.text);
   const handoff = run.herdr.prompts().find((prompt) => prompt.target === IMPL_PANE);
   assert.match(handoff.text, /^ROLE: Implementor\./);
   assert.match(handoff.text, /HCOORD NOTICES: .*not an injection/);
   assert.match(handoff.text, /sasu implement block/);
-  assert.equal(readIndex(path.join(run.home, ".sasu", "supervisor", "index.json")).entries.length, 0, "never enrolled with the legacy supervisor");
+  const index = readIndex(path.join(run.home, ".sasu", "supervisor", "index.json"));
+  assert.equal(index.entries.length, 0, "never enrolled with the legacy supervisor");
+  assert.deepEqual(index.coordinated.map((entry) => entry.runInstanceId), [record.runInstanceId], "listed as hcoord's");
 });
 
 test("B3: a coordinator refusal after the implementor started is completed by --resume-handoff", async (t) => {
@@ -188,7 +189,7 @@ test("B3: a coordinator refusal after the implementor started is completed by --
   assert.equal(resumed.status, 0, resumed.text);
   const record = run.state().supervision;
   assert.equal(run.state().pendingDispatch, null);
-  assert.equal(run.hcoord("sasu", "show", "--run", record.runInstanceId).value.implementor.id, record.hcoord.implementor);
+  assert.equal(run.hcoord("agent", "show", record.hcoord.implementor).value.watch.status, "active");
   const handoffs = run.herdr.prompts().filter((prompt) => prompt.target === IMPL_PANE);
   assert.equal(handoffs.length, 1);
   assert.match(handoffs[0].text, /HCOORD NOTICES/);
@@ -283,19 +284,22 @@ test("B11, B12: a report names the current verdict; a stopped daemon delivers it
   await run.startDaemon();
   await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.includes("summary: all rows done")), "the pending report after restart");
 
-  assert.equal(run.hcoord("sasu", "end", "--run", run.record.runInstanceId, "--reason", "test").ok, true);
+  // A refusal: the recorded Observer is not a participant hcoord knows.
+  const saved = run.state();
+  saved.supervision.hcoord.observer = "a_gone";
+  fs.writeFileSync(path.join(run.root, STATE_PATH), `${JSON.stringify(saved, null, 2)}\n`);
   fs.mkdirSync(path.join(run.root, "agents", "runs", "fixture"), { recursive: true });
   fs.writeFileSync(path.join(run.root, "agents", "runs", "fixture", "plan.md"), "# plan\n");
   const refused = run.implementor(["plan", "--path", "agents/runs/fixture/plan.md"]);
   assert.equal(refused.status, 1, refused.text);
-  assert.match(refused.json.message, /Observer was not notified: .*ended/);
+  assert.match(refused.json.message, /Observer was not notified: .*not_found/);
   assert.match(refused.json.message, /retry with `sasu implement plan --path agents\/runs\/fixture\/plan.md`/);
   assert.equal(run.state().events.filter((event) => event.kind === "plan").length, 1, "the Sasu record stays");
 });
 
 test("legacy runs keep OBSERVER_BLOCK: block and report refuse without an hcoord registration", async (t) => {
   const run = await hcoordProject(t);
-  fs.rmSync(path.join(run.home, ".hcoord", "sasu-enabled"));
+  assert.equal(run.sasu(["supervisor", "use", "legacy"]).status, 0);
   const dispatched = run.dispatch();
   assert.equal(dispatched.status, 0, dispatched.text);
   assert.equal(run.state().supervision.coordinationOwner, "legacy");
@@ -315,13 +319,15 @@ test("B15: a new Observer session receives nothing until the handover, then gets
   assert.equal(run.noticesTo(OBSERVER_PANE).length, 0, "the old Observer's place receives nothing");
   const handed = run.sasu(["supervisor", "handover", "--slug", "fixture", "--approval", "넘겨"], { env: { ...run.observerEnv, CLAUDE_SESSION_ID: "observer-two" } });
   assert.equal(handed.status, 0, handed.text);
-  const shown = run.hcoord("sasu", "show", "--run", run.record.runInstanceId).value;
-  assert.notEqual(shown.observer.id, run.observerId);
-  assert.equal(shown.watch.observer, shown.observer.id);
-  assert.equal(run.state().supervision.hcoord.observer, shown.observer.id);
+  const next = run.state().supervision.hcoord.observer;
+  assert.notEqual(next, run.observerId);
+  assert.equal(run.hcoord("agent", "show", run.implementorId).value.watch.observer, next, "watch assign moved the watch");
   assert.equal(run.state().supervision.observer.sessionId, "observer-two");
   const asked = await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.includes("SASU_BLOCK")), "the waiting question at the new Observer");
-  assert.match(asked.text, new RegExp(`--as ${shown.observer.id}`));
+  assert.match(asked.text, new RegExp(`--as ${next}`));
+  const again = run.sasu(["supervisor", "handover", "--slug", "fixture", "--approval", "넘겨"], { env: { ...run.observerEnv, CLAUDE_SESSION_ID: "observer-two" } });
+  assert.equal(again.status, 0, again.text);
+  assert.equal(run.hcoord("agent", "show", run.implementorId).value.watch.generation, 2, "a repeated handover finds the watch moved");
 });
 
 test("B14: a replacement dispatch registers the new implementor in the same run and stops watching the gone one", async (t) => {
@@ -334,13 +340,11 @@ test("B14: a replacement dispatch registers the new implementor in the same run 
   assert.equal(replaced.status, 0, replaced.text);
   const second = run.state().supervision;
   assert.notEqual(second.runInstanceId, first.runInstanceId);
-  const old = run.hcoord("sasu", "show", "--run", first.runInstanceId).value;
-  assert.match(old.endReason, new RegExp(`replaced by ${second.runInstanceId}`));
-  assert.equal(old.watch.status, "stopped");
-  const current = run.hcoord("sasu", "show", "--run", second.runInstanceId).value;
-  assert.equal(current.replaces, first.runInstanceId);
-  assert.equal(current.slug, "fixture");
-  assert.equal(current.observer.id, first.hcoord.observer, "the same Observer participant");
+  assert.equal(run.hcoord("agent", "show", first.hcoord.implementor).value.watch.status, "stopped", "the gone implementor was ended");
+  assert.notEqual(second.hcoord.implementor, first.hcoord.implementor);
+  assert.equal(second.hcoord.observer, first.hcoord.observer, "the same Observer participant");
+  const current = run.hcoord("agent", "show", second.hcoord.implementor).value;
+  assert.equal(current.parent, first.hcoord.observer);
   assert.equal(current.watch.status, "active");
 });
 
@@ -351,9 +355,8 @@ test("B17: retiring an hcoord run stops its watch and cancels what it left open"
   const retired = run.sasu(["implement", "retire", "--adopt", "test cleanup"]);
   assert.equal(retired.status, 0, retired.text);
   assert.match(retired.json.message, /hcoord watch ended/);
-  const shown = run.hcoord("sasu", "show", "--run", run.record.runInstanceId).value;
-  assert.equal(shown.endReason, "retired");
-  assert.equal(shown.watch.status, "stopped");
+  assert.equal(run.hcoord("agent", "show", run.implementorId).value.watch.status, "stopped");
+  assert.equal(readIndex(path.join(run.home, ".sasu", "supervisor", "index.json")).coordinated.length, 0, "the retired run leaves the hcoord list");
   assert.equal(run.hcoord("request", "show", blocked.json.detail.hcoord.requestId).value.status, "canceled");
   assert.equal(run.hcoord("inbox").value.length, 0, "nothing of the retired run waits on anyone");
   const again = run.sasu(["implement", "retire"]);
@@ -370,7 +373,7 @@ test("B4-B6, B18: a Sasu watch cycle names the digest, reminds once, reaches the
   assert.equal(run.hcoord("config", "set", "--key", "remindMs", "--value", "3s").ok, true);
   assert.equal(run.hcoord("config", "set", "--key", "escalateMs", "--value", "6s").ok, true);
   const check = await run.until(() => run.noticesTo(OBSERVER_PANE).find((prompt) => prompt.text.startsWith("HCOORD_WATCH_CHECK")), "the first watch cycle");
-  assert.match(check.text, /Sasu run: fixture; read sasu implement status --slug fixture --digest before the pane\./);
+  assert.match(check.text, /\nsasu implement status --slug fixture --digest \(recovery owner supervisor\)\n  -> verify PASS and PR merged: sasu implement retire --slug fixture\n/, "the brief rides on the check");
   const cycle = /cycle (c_\S+)/.exec(check.text)[1];
   await run.until(() => run.noticesTo(OBSERVER_PANE).filter((prompt) => prompt.text.includes(`cycle ${cycle}`)).length >= 2, "one reminder for the unchecked cycle");
   await run.until(() => run.hcoord("inbox").value.find((item) => item.kind === "question"), "the unchecked cycle in the human inbox", 20_000);
@@ -381,7 +384,7 @@ test("B4-B6, B18: a Sasu watch cycle names the digest, reminds once, reaches the
   const closed = run.sasu(["implement", "status", "--digest"]);
   assert.ok(closed.json.summary.some((line) => /last closed cycle 0m ago/.test(line)), closed.text);
   const supervisor = run.sasu(["supervisor", "status"]);
-  assert.ok(supervisor.json.summary.some((line) => line.startsWith(`  fixture ${run.record.runInstanceId}: hcoord owns this run; Observer observer (${run.observerId}); implementor impl (${run.implementorId})`)), supervisor.text);
+  assert.ok(supervisor.json.summary.some((line) => line.startsWith(`  fixture ${run.record.runInstanceId}: hcoord owns this run; Observer ${run.observerId}; implementor impl (${run.implementorId})`)), supervisor.text);
 });
 
 test("B22: a hand-started Observer without a readiness flag is accepted, held while working or flagged false, and reached once idle", async (t) => {
@@ -446,4 +449,23 @@ test("B23: a rotated terminal with a cleared name stays the same participant; an
   // The terminal recorded by the latest registration identifies it, and the held notices go out.
   run.herdr.setAgents({ ...rest, [OBSERVER_PANE]: { ...sessionless, terminal_id: "term_observer_rotated" } });
   for (const held of [otherSession, otherPane, noSession]) await run.until(() => delivered(held)?.status === "accepted", "a held notice once the recorded terminal returns");
+});
+
+test("B27: migrate-hcoord records participant IDs found by pane and session, and reports a run it cannot match", async (t) => {
+  const run = await dispatchedRun(t);
+  const statePath = path.join(run.root, STATE_PATH);
+  const rewrite = (change) => { const saved = run.state(); change(saved.supervision); fs.writeFileSync(statePath, `${JSON.stringify(saved, null, 2)}\n`); };
+  // A run registered before state.json recorded its participants.
+  rewrite((supervision) => { delete supervision.hcoord; });
+  const migrated = run.sasu(["supervisor", "migrate-hcoord", "--state", statePath]);
+  assert.equal(migrated.status, 0, migrated.text);
+  assert.deepEqual([run.state().supervision.hcoord.observer, run.state().supervision.hcoord.implementor], [run.observerId, run.implementorId]);
+  assert.equal(migrated.json.detail.runs[0].outcome, "recorded");
+  const again = run.sasu(["supervisor", "migrate-hcoord", "--state", statePath]);
+  assert.equal(again.json.detail.runs[0].outcome, "unchanged");
+  rewrite((supervision) => { delete supervision.hcoord; supervision.implementor.paneId = "w4G:p77"; });
+  const unmatched = run.sasu(["supervisor", "migrate-hcoord", "--state", statePath]);
+  assert.equal(unmatched.status, 1, unmatched.text);
+  assert.match(unmatched.json.detail.runs[0].reason, /implementor: no registered participant in pane w4G:p77/);
+  assert.equal(run.state().supervision.hcoord, undefined, "an unmatched run is left as it was");
 });

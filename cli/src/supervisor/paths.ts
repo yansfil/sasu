@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -54,6 +55,24 @@ export function launchAgentPlistPath(env: NodeJS.ProcessEnv = process.env): stri
  */
 export const TICK_INTERVAL_SECONDS = 30;
 export const TICK_INTERVAL_MS = TICK_INTERVAL_SECONDS * 1000;
+
+/**
+ * The machine-wide switch that gives new dispatches to hcoord (D-08, D-19).
+ * It lives with Sasu's own supervisor files, because the choice is Sasu's;
+ * hcoord knows nothing about it. Present means hcoord, absent means legacy.
+ */
+export function hcoordSwitchPath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(supervisorHome(env), "use-hcoord");
+}
+
+export function hcoordSelected(env: NodeJS.ProcessEnv = process.env): boolean {
+  return fs.existsSync(hcoordSwitchPath(env));
+}
+
+/** Written by `retire-legacy` after the final legacy run, so no later install restores the LaunchAgent or Stop hook. */
+export function legacyRetiredPath(env: NodeJS.ProcessEnv = process.env): string {
+  return path.join(supervisorHome(env), "legacy-retired");
+}
 
 /** The variable a dispatched pane carries so its first claim binds to exactly this dispatch (D-04). */
 export const RUN_INSTANCE_ENV_KEY = "SASU_RUN_INSTANCE_ID";

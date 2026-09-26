@@ -279,7 +279,7 @@ function runInstaller() {
   // The Stop hook confirms an Observer handover to the supervisor tick and
   // never blocks a stop; it is the same entry on both runtimes.
   const supervisorStopCommand = `node ${path.join(repoRoot, "scripts", "supervisor_stop.mjs")}`;
-  const legacyRetired = fs.existsSync(path.join(home, ".hcoord", "legacy-supervisor-retired"));
+  const legacyRetired = fs.existsSync(path.join(home, ".sasu", "supervisor", "legacy-retired"));
   const lifecycleHooks = { UserPromptSubmit: challengeTriggerCommand, PostToolUse: commitReminderCommand, ...(legacyRetired ? {} : { Stop: supervisorStopCommand }) };
   const files = runtimeHookFiles(home);
   const hooks = {
