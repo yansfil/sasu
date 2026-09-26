@@ -14,8 +14,6 @@ export function socketPath(home = os.homedir()): string {
   return path.join(dataDir(home), "api.sock");
 }
 export function stopMarkerPath(home = os.homedir()): string { return path.join(dataDir(home), "manual-stop"); }
-export function sasuEnabledPath(home = os.homedir()): string { return path.join(dataDir(home), "sasu-enabled"); }
-export function legacyRetiredPath(home = os.homedir()): string { return path.join(dataDir(home), "legacy-supervisor-retired"); }
 
 export function loadLedger(home = os.homedir()): Ledger {
   const file = ledgerPath(home);
@@ -33,17 +31,22 @@ export function loadLedger(home = os.homedir()): Ledger {
   const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
   if (!Number.isSafeInteger(ledger.seq) || !Array.isArray(ledger.events) || !record(ledger.config) ||
       !record(ledger.requests) || !record(ledger.participants) || !record(ledger.watches) ||
-      !record(ledger.spawnIntents) || (ledger.letters !== undefined && !record(ledger.letters)) || (ledger.machines !== undefined && !record(ledger.machines)) || (ledger.sasuRuns !== undefined && !record(ledger.sasuRuns)) ||
+      !record(ledger.spawnIntents) || (ledger.letters !== undefined && !record(ledger.letters)) || (ledger.machines !== undefined && !record(ledger.machines)) ||
       (ledger.watchHistory !== undefined && !Array.isArray(ledger.watchHistory)) ||
       Object.values(ledger.requests).some((request) => !record(request) || !Array.isArray(request.deliveries) || !Array.isArray(request.lateAnswers)) ||
       Object.values(ledger.watches).some((watch) => !record(watch) || typeof watch.target !== "string" || typeof watch.generation !== "number")) {
     throw new HcoordError("corrupt_ledger", "ledger structure is invalid; no data was changed");
   }
-  ledger.watchHistory ??= [];
-  ledger.sasuRuns ??= {};
-  ledger.letters ??= {};
-  ledger.machines ??= {};
-  return ledger;
+  // Only the fields this version knows are kept. A ledger from a version that
+  // also kept a table of one client's runs loads without it, and the next
+  // save no longer carries it: hcoord knows participants and the relations
+  // between them, never a client's units of work.
+  return {
+    schema: ledger.schema, seq: ledger.seq, updatedAt: ledger.updatedAt, config: ledger.config,
+    participants: ledger.participants, watches: ledger.watches, watchHistory: ledger.watchHistory ?? [], requests: ledger.requests,
+    spawnIntents: ledger.spawnIntents, events: ledger.events, prunedBefore: ledger.prunedBefore ?? null,
+    letters: ledger.letters ?? {}, machines: ledger.machines ?? {},
+  };
 }
 
 export function saveLedger(state: Ledger, home = os.homedir()): void {

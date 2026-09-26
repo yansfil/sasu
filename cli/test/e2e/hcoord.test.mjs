@@ -116,12 +116,12 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(JSON.parse(command("agent", "register", "--machine", "remote", "--session", "one", "--instance", "a", "--name", "remote", "--pane", "parent-pane").stdout).error.code, "unsupported_runtime", "a Herdr without --machine forwarding cannot host remote participants");
   assert.equal(ok("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "renamed", "--pane", "parent-pane").id, parent.id, "the same pane and session under another name is the same participant (D-18)");
   assert.equal(ok("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "parent", "--pane", "parent-pane").name, "parent");
-  env.HCOORD_FAKE_PROMPT_API = "0";
-  assert.equal(command("sasu", "enable").status, 1, "Sasu cannot opt into an unsupported wake path");
-  assert.equal(fs.existsSync(path.join(home, ".hcoord", "sasu-enabled")), false);
-  delete env.HCOORD_FAKE_PROMPT_API;
-  ok("sasu", "enable");
-  const sasuArgs = ["sasu", "register", "--run", "run-one", "--project", home, "--slug", "run-one", "--state", path.join(home, "state.json"), "--observer-name", "parent", "--observer-pane", "parent-pane", "--observer-session", "one", "--observer-instance", "a", "--implementor-name", "child", "--implementor-pane", "child-pane", "--implementor-session", "two", "--implementor-instance", "b"];
+  // B24: hcoord has no client-specific commands.
+  const retired = command("sasu", "list");
+  assert.equal(retired.status, 2);
+  assert.equal(JSON.parse(retired.stdout).error.code, "invalid_argument");
+  assert.doesNotMatch(JSON.parse(retired.stdout).error.message, /sasu/);
+  const checkParent = ["agent", "register", "--check", "--machine", "local", "--session", "one", "--instance", "a", "--name", "parent", "--pane", "parent-pane"];
   await stop();
   env.HCOORD_FAKE_OBSERVER_REPLACED = "1";
   fs.writeFileSync(path.join(home, ".hcoord", "api.sock.lock"), "99999999\n");
@@ -129,15 +129,19 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   fs.writeFileSync(path.join(home, ".hcoord", "api.sock.lock.recovery", "owner"), "99999999\n");
   await start();
   assert.equal(ok("daemon", "status").stale, undefined, "abandoned lock recovery does not block restart");
-  assert.equal(command(...sasuArgs).status, 1, "another session in the Observer's pane is refused before ownership transfer");
-  assert.equal(ok("status").counts.sasuRuns, 0);
+  assert.equal(JSON.parse(command(...checkParent).stdout).error.code, "identity_conflict", "another session in the parent's pane is refused");
   await stop();
   delete env.HCOORD_FAKE_OBSERVER_REPLACED;
+  env.HCOORD_FAKE_PROMPT_API = "0";
   await start();
-  const registeredRun = ok(...sasuArgs);
-  assert.equal(registeredRun.owner, "hcoord");
-  assert.equal(ok(...sasuArgs).watch.generation, registeredRun.watch.generation);
-  assert.equal(ok("status").counts.sasuRuns, 1);
+  assert.equal(JSON.parse(command(...checkParent).stdout).error.code, "unsupported_runtime", "no official delivery, no ready answer");
+  await stop();
+  delete env.HCOORD_FAKE_PROMPT_API;
+  await start();
+  assert.equal(ok(...checkParent).participant, parent.id);
+  const watched = ok("watch", "start", child.id, "--observer", parent.id, "--actor", parent.id, "--brief", "read the log");
+  assert.equal(watched.brief, "read the log");
+  assert.equal(JSON.parse(command("watch", "start", child.id, "--observer", parent.id, "--actor", parent.id).stdout).error.code, "conflict", "one active watch per target");
   assert.ok(ok("status").usage.ledgerBytes > 0);
   ok("config", "set", "--key", "remindMs", "--value", "1s");
   ok("config", "set", "--key", "escalateMs", "--value", "2m");
@@ -400,7 +404,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   }
   assert.equal(cycleRequest.deliveries[0].status, "accepted");
   const watchPrompt = fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)).find((entry) => entry.text.startsWith("HCOORD_WATCH_CHECK") && entry.text.includes(watch.cycle));
-  assert.ok(watchPrompt.text.startsWith(`HCOORD_WATCH_CHECK child (${child.id}) cycle ${watch.cycle}\nclose: hcoord watch check ${child.id} --cycle ${watch.cycle} --actor ${parent.id}`), watchPrompt.text);
+  assert.equal(watchPrompt.text, `HCOORD_WATCH_CHECK child (${child.id}) cycle ${watch.cycle}\nclose: hcoord watch check ${child.id} --cycle ${watch.cycle} --actor ${parent.id}\nread the log`);
   assert.equal(fs.existsSync(path.join(home, "UNSUPPORTED_GUARD")), false);
   const decoy = ok("request", "send", "--from", child.id, "--to", parent.id, "--body", "Which option should I choose?", "--intent", `watch:${child.id}:999:${watch.cycle}`);
   let decoyPrompt;

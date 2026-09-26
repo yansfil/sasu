@@ -7,7 +7,7 @@ import test from "node:test";
 import { emptyLedger, MAX_EVENTS } from "../../dist/hcoord/model.js";
 import { execute } from "../../dist/hcoord/service.js";
 import { inputReadiness, messageForDelivery } from "../../dist/hcoord/herdr.js";
-import { loadLedger } from "../../dist/hcoord/store.js";
+import { loadLedger, saveLedger } from "../../dist/hcoord/store.js";
 import { callDaemon } from "../../dist/hcoord/transport.js";
 
 test("a denied local socket gives the caller a permission cause and next action", { skip: process.platform === "win32" }, async (t) => {
@@ -487,47 +487,6 @@ test("completed spawn progress clears old pending guidance and same-intent retry
   assert.equal(repaired.value.participant, complete.participant.id);
 });
 
-/** A ledger with one Sasu run: Observer, implementor, a second Observer, and an active watch. */
-function sasuLedger(at) {
-  const state = emptyLedger(at);
-  const register = (name, session, parent = null) => execute(state, "agent.register", { machine: "local", hostScope: "default", session, instance: `${session}-term`, name, pane: `${session}-pane`, parent }, at).value.id;
-  const observer = register("observer", "s-obs");
-  const implementor = register("impl", "s-impl", observer);
-  const next = register("observer", "s-obs-2");
-  execute(state, "watch.start", { target: implementor, observer, actor: "human", intervalMs: 60_000 }, at);
-  state.sasuRuns["run-1"] = { observer, implementor, project: "/p", registeredAt: at, slug: "fixture", statePath: "/p/state.json", recoveryOwner: "supervisor", replaces: null, endedAt: null, endReason: null };
-  return { state, observer, implementor, next };
-}
-
-test("a Sasu handover moves a person's recorded but unrelayed answer to the new Observer", () => {
-  const at = "2026-09-26T00:00:00.000Z";
-  const { state, observer, implementor, next } = sasuLedger(at);
-  const asked = execute(state, "request.send", { from: implementor, to: observer, body: "which?", intent: "sasu:run-1:block:x", waiting: true }, at).value;
-  execute(state, "request.escalate", { id: asked.id, actor: observer }, at);
-  execute(state, "request.reply", { id: asked.id, body: "A", respondent: "human", recordedBy: observer }, at);
-  assert.equal(state.requests[asked.id].intermediary, observer);
-  execute(state, "sasu.handover.apply", { run: "run-1", observer: next }, at);
-  const moved = state.requests[asked.id];
-  assert.equal(moved.intermediary, next, "the new Observer relays it");
-  assert.ok(moved.deliveries.some((delivery) => delivery.phase === "answer" && delivery.recipient === next && delivery.status === "pending"));
-  assert.equal(moved.deliveries.some((delivery) => delivery.phase === "answer" && delivery.recipient === observer && delivery.status === "pending"), false, "nothing is still owed to the old Observer");
-  assert.throws(() => execute(state, "request.relay", { id: asked.id, actor: observer, body: "A" }, at), /authority/);
-  execute(state, "request.relay", { id: asked.id, actor: next, body: "A" }, at);
-  assert.equal(state.requests[asked.id].relayBody, "A");
-});
-
-test("ending a Sasu run whose watch was stopped mid-cycle leaves no open cycle behind", () => {
-  const at = "2026-09-26T00:00:00.000Z";
-  const { state, implementor } = sasuLedger(at);
-  execute(state, "tick", { runRetention: false }, "2026-09-26T00:02:00.000Z");
-  const cycle = state.watches[implementor].cycle;
-  assert.notEqual(cycle, null);
-  execute(state, "watch.stop", { target: implementor, actor: "human" }, at);
-  const ended = execute(state, "sasu.end", { run: "run-1", reason: "retired" }, at).value;
-  assert.equal(ended.watch.openCycle, null);
-  assert.equal(state.requests[Object.keys(state.requests)[0]].status, "canceled");
-});
-
 test("D-17: an idle or done recipient without a readiness flag takes input; working or a false flag holds it", () => {
   assert.equal(inputReadiness("idle", null).ready, true, "a hand-started idle Observer");
   assert.equal(inputReadiness("done", null).ready, true);
@@ -654,4 +613,21 @@ test("D-21: every hcoord message is an identifier line, the command that closes 
   execute(state, "request.reply", { id: asked.id, body: "B", respondent: observer, recordedBy: observer }, at);
   const answer = state.requests[asked.id].deliveries.at(-1);
   assert.deepEqual(messageForDelivery(state.requests[asked.id], answer, null).split("\n"), [`HCOORD_ANSWER ${asked.id}`, `ack: hcoord request ack ${asked.id} --actor ${target} --delivery ${answer.id}`, "answer: B"]);
+});
+
+// Older ledgers kept a table of Sasu runs; the loader keeps only fields it knows, so any such table is dropped.
+test("B24: a ledger field this version does not know, such as an old table of one client's runs, loads away and the next save drops it", (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "hcoord-old-ledger-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const previous = process.env.HCOORD_HOME;
+  process.env.HCOORD_HOME = path.join(home, "data");
+  t.after(() => { if (previous === undefined) delete process.env.HCOORD_HOME; else process.env.HCOORD_HOME = previous; });
+  const old = { ...emptyLedger("2026-09-26T00:00:00.000Z"), clientRuns: { "run-1": { observer: "a_1", implementor: "a_2" } } };
+  fs.mkdirSync(path.join(home, "data"), { recursive: true });
+  fs.writeFileSync(path.join(home, "data", "ledger.json"), JSON.stringify(old));
+  const loaded = loadLedger();
+  assert.equal(Object.hasOwn(loaded, "clientRuns"), false);
+  saveLedger(loaded);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(path.join(home, "data", "ledger.json"), "utf8")), "clientRuns"), false);
+  assert.deepEqual(Object.keys(execute(loaded, "status", {}, "2026-09-26T00:00:00.000Z").value.counts).sort(), ["agents", "events", "requests", "watches"]);
 });

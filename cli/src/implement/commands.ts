@@ -1007,7 +1007,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
       [
         ...(dispatched.parentLineage === "reported" ? [] : [`Lineage was not recorded: ${dispatched.parentLineage.unreported}`]),
         coordinationOwner === "hcoord"
-          ? "hcoord wakes this session with HCOORD_WATCH_CHECK every watch interval, and at once with HCOORD_NOTICE for a plan or a report and HCOORD_REQUEST for a block. End this turn while waiting; the legacy supervisor is not enrolled for this run."
+          ? "hcoord wakes this session with HCOORD_WATCH_CHECK every watch interval while the implementor works and once when it stops, and at once with HCOORD_NOTICE for a plan or a report and HCOORD_REQUEST for a block. End this turn while waiting; the legacy supervisor is not enrolled for this run."
           : "The supervisor tick wakes this session when the implementor settles, blocks, escalates, registers a plan, stalls, disappears or finishes, and on patrol; nothing else needs arming.",
         `On a wake, read \`sasu implement status --slug ${state.topicSlug} --digest\` and \`herdr agent read ${dispatched.agent} --source recent-unwrapped --lines 120\` for diagnosis only.`,
       ],

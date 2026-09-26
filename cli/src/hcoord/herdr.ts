@@ -44,7 +44,7 @@ export function inspectParticipant(participant: LocalBinding): ParticipantInspec
  * be idle or done; a readiness flag of false holds it. Herdr 0.9.1 reports
  * `interactive_ready` only for agents it started, so a hand-started Observer
  * has no flag at all, and requiring `true` held every delivery to such an
- * Observer for six hours of a live run (2026-09-26, sasu-on-hcoord D-17).
+ * Observer for six hours of a live run (2026-09-26).
  * Without a flag, idle or done is the readiness evidence Herdr gives.
  */
 export function inputReadiness(runtime: Participant["runtime"], interactiveReady: boolean | null): { ready: boolean; reason: string } {
@@ -89,15 +89,13 @@ export function officialPromptSupport(route?: { machine: string; hostScope: stri
  * HQ (PRD B8, B9). `peer` is the participant the notice is about, and a watch
  * brief is the watcher's note, carried verbatim.
  */
-export function messageForDelivery(item: Request, delivery: Delivery, watch: Pick<Watch, "cycle" | "brief"> | null, peer?: Participant, sasuSlug?: string): string {
+export function messageForDelivery(item: Request, delivery: Delivery, watch: Pick<Watch, "cycle" | "brief"> | null, peer?: Participant): string {
   const me = delivery.recipient;
   const from = peer ? `${peer.name} (${item.from})` : item.from;
   const lines = (...parts: Array<string | null | undefined>): string => parts.filter((part): part is string => typeof part === "string" && part !== "").join("\n");
-  // A Sasu run's facts live in its state.json, which only Sasu reads (PRD B5, D-02).
-  const sasu = sasuSlug ? `Sasu run: ${sasuSlug}; read sasu implement status --slug ${sasuSlug} --digest before the pane.` : null;
   const cycle = watch?.cycle ?? null;
   if (cycle !== null && (delivery.phase === "request" || delivery.phase === "watch_check" || delivery.phase === undefined)) {
-    return lines(`HCOORD_WATCH_CHECK ${from} cycle ${cycle}`, `close: hcoord watch check ${item.from} --cycle ${cycle} --actor ${me}`, sasu, watch?.brief);
+    return lines(`HCOORD_WATCH_CHECK ${from} cycle ${cycle}`, `close: hcoord watch check ${item.from} --cycle ${cycle} --actor ${me}`, watch?.brief);
   }
   if (delivery.phase === "relay_problem") return lines(`HCOORD_RELAY_PROBLEM ${item.id}`, `relay: hcoord request relay ${item.id} --actor ${me} --body <text>`, `answer from ${item.respondent ?? "unknown"}: ${item.answer ?? ""}`);
   if (delivery.phase === "delivery_problem") {
@@ -106,13 +104,13 @@ export function messageForDelivery(item: Request, delivery: Delivery, watch: Pic
   }
   if (delivery.phase === "relay") return lines(`HCOORD_RELAY ${item.id}`, `ack: hcoord request ack ${item.id} --actor ${me} --delivery ${delivery.id}`, item.relayBody);
   if (delivery.phase === "answer") return lines(`HCOORD_ANSWER ${item.id}`, item.intermediary === me ? `relay: hcoord request relay ${item.id} --actor ${me} --body <text>` : `ack: hcoord request ack ${item.id} --actor ${me} --delivery ${delivery.id}`, `answer: ${item.answer ?? ""}`);
-  if (!item.requiresReply) return lines(`HCOORD_NOTICE ${item.id} from ${from}`, "no reply needed", sasu, item.body, item.context === null ? null : `context: ${item.context}`);
+  if (!item.requiresReply) return lines(`HCOORD_NOTICE ${item.id} from ${from}`, "no reply needed", item.body, item.context === null ? null : `context: ${item.context}`);
   return lines(`HCOORD_REQUEST ${item.id} from ${from}`, `reply: hcoord request reply ${item.id} --as ${me} --body <answer> | escalate: hcoord request escalate ${item.id} --actor ${me}`, item.body, item.context === null ? null : `context: ${item.context}`);
 }
 
-export function submitOfficial(item: Request, delivery: Delivery, recipient: Participant, watch: Pick<Watch, "cycle" | "brief"> | null, peer?: Participant, sasuSlug?: string): { status: Delivery["status"]; code: string; reason: string } {
+export function submitOfficial(item: Request, delivery: Delivery, recipient: Participant, watch: Pick<Watch, "cycle" | "brief"> | null, peer?: Participant): { status: Delivery["status"]; code: string; reason: string } {
   if (recipient.pane === null) throw new HcoordError("invalid_state", "recipient pane missing at submission");
-  const result = promptAgent({ target: recipient.pane, text: messageForDelivery(item, delivery, watch, peer, sasuSlug), expectedInputGuard: null }, at(recipient), 2000);
+  const result = promptAgent({ target: recipient.pane, text: messageForDelivery(item, delivery, watch, peer), expectedInputGuard: null }, at(recipient), 2000);
   if (result.path !== "session-match") throw new HcoordError("runtime_unavailable", "Herdr adapter returned an unexpected prompt path; inspect the delivery outcome");
   return { status: result.outcome === "accepted" ? "accepted" : result.outcome === "rejected" ? "deferred" : "unknown", code: result.code, reason: result.detail };
 }
