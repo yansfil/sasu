@@ -283,7 +283,7 @@ export function parseImplementState(text: string): ImplementState {
     assertIsoTimestamp(artifact.observedAt, "artifacts[].observedAt");
   }
   ledger(candidate.events, "events");
-  for (const event of candidate.events) enumValue(event.kind, ["amendment", "escalate", "artifact", "verify", "dispatch", "handover", "plan"], "events[].kind");
+  for (const event of candidate.events) enumValue(event.kind, ["amendment", "escalate", "artifact", "verify", "dispatch", "handover", "plan", "block", "report"], "events[].kind");
   if (candidate.supervision !== undefined && candidate.supervision !== null) {
     const supervision = candidate.supervision as unknown as Record<string, unknown>;
     assertRecord(supervision, "supervision");
@@ -293,6 +293,14 @@ export function parseImplementState(text: string): ImplementState {
     positiveInteger(supervision["patrolIntervalMs"], "supervision.patrolIntervalMs");
     enumValue(supervision["recoveryOwner"], ["supervisor", "task-factory"], "supervision.recoveryOwner");
     if (supervision["coordinationOwner"] !== undefined) enumValue(supervision["coordinationOwner"], ["legacy", "hcoord"], "supervision.coordinationOwner");
+    if (supervision["hcoord"] !== undefined) {
+      const hcoord = supervision["hcoord"] as Record<string, unknown>;
+      assertRecord(hcoord, "supervision.hcoord");
+      for (const field of ["observer", "implementor"] as const) assertString(hcoord[field], `supervision.hcoord.${field}`);
+      positiveInteger(hcoord["intervalMs"], "supervision.hcoord.intervalMs");
+      enumValue(hcoord["recoveryOwner"], ["supervisor", "task-factory"], "supervision.hcoord.recoveryOwner");
+      assertIsoTimestamp(hcoord["registeredAt"], "supervision.hcoord.registeredAt");
+    }
     const identity = (value: unknown, label: string): void => {
       assertRecord(value, label);
       for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(value[field], `${label}.${field}`);
@@ -321,6 +329,7 @@ export function parseImplementState(text: string): ImplementState {
     positiveInteger(pending["patrolIntervalMs"], "pendingDispatch.patrolIntervalMs");
     enumValue(pending["recoveryOwner"], ["supervisor", "task-factory"], "pendingDispatch.recoveryOwner");
     if (pending["coordinationOwner"] !== undefined) enumValue(pending["coordinationOwner"], ["legacy", "hcoord"], "pendingDispatch.coordinationOwner");
+    if (pending["hcoordReplacedImplementor"] !== undefined) assertNullableString(pending["hcoordReplacedImplementor"], "pendingDispatch.hcoordReplacedImplementor");
     const observer = pending["observer"] as Record<string, unknown>;
     assertRecord(observer, "pendingDispatch.observer");
     for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(observer[field], `pendingDispatch.observer.${field}`);

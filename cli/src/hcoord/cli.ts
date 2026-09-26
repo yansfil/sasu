@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import os from "node:os";
-import { officialPromptSupport } from "./herdr";
 import { HcoordError, LETTER_OPERATIONS, LETTER_SCHEMA, MAX_OUTBOX_LETTERS, REMOTE_PROTOCOL } from "./model";
 import { outboxCount, readOutboxRaw, removeLetters, writeLetter } from "./outbox";
 import { readHq, writeHq } from "./remote";
@@ -10,7 +9,7 @@ import { platformSupport, REMOTE_SETUP, startDaemon } from "./platform";
 import { callDaemon, lastDaemonContact, runDaemon, staleRead, type WireResult } from "./transport";
 import { readAlert, reconcileAlert, warningLine } from "./health";
 import { notifyText } from "./platform";
-import { dataDir, legacyRetiredPath, loadLedger, sasuEnabledPath, stopMarkerPath } from "./store";
+import { dataDir, loadLedger, stopMarkerPath } from "./store";
 
 interface Parsed { words: string[]; flags: Map<string, string | true>; tail: string[] }
 function parse(argv: string[]): Parsed {
@@ -39,12 +38,13 @@ function route(args: Parsed): { operation: string; data: Record<string, unknown>
   if (topic === "status") return { operation: "status", data: {} };
   if (topic === "config" && action === "show") return { operation: "status", data: {} };
   if (topic === "config" && action === "set") return { operation: "config.set", data: { key: needed(args, "key"), value: duration(needed(args, "value")) } };
-  if (topic === "agent" && action === "register") return { operation: "agent.register", data: { machine: needed(args, "machine"), hostScope: flag(args, "host-scope") ?? process.env["HERDR_SOCKET_PATH"] ?? "default", session: needed(args, "session"), instance: needed(args, "instance"), name: needed(args, "name"), project: flag(args, "project"), parent: flag(args, "parent"), pane: flag(args, "pane") } };
+  if (topic === "agent" && action === "register") return { operation: args.flags.has("check") ? "agent.check" : "agent.register", data: { machine: needed(args, "machine"), hostScope: flag(args, "host-scope") ?? process.env["HERDR_SOCKET_PATH"] ?? "default", session: needed(args, "session"), instance: needed(args, "instance"), name: needed(args, "name"), project: flag(args, "project"), parent: flag(args, "parent"), pane: flag(args, "pane") } };
   if (topic === "agent" && action === "spawn") return { operation: "agent.spawn", data: { parent: needed(args, "parent"), machine: flag(args, "machine"), repo: flag(args, "repo"), branch: flag(args, "branch"), path: flag(args, "path"), session: needed(args, "session"), name: needed(args, "name"), kind: flag(args, "kind") ?? "codex", intent: needed(args, "intent"), noWatch: args.flags.has("no-watch"), reconcilePane: flag(args, "reconcile-pane"), resumeStart: args.flags.has("resume-start"), nativeArgs: args.tail } };
   if (topic === "agent" && action === "list") return { operation: "agent.list", data: { project: flag(args, "project") } };
   if (topic === "agent" && action === "show") return { operation: "agent.show", data: { id: target } };
-  if (topic === "watch" && action === "start") return { operation: "watch.start", data: { target, observer: needed(args, "observer"), actor: flag(args, "actor") ?? needed(args, "observer"), intervalMs: flag(args, "interval") ? duration(needed(args, "interval")) : undefined } };
-  if (topic === "watch" && action === "assign") return { operation: "watch.assign", data: { target, observer: needed(args, "observer"), actor: needed(args, "actor"), expectedGeneration: flag(args, "expected-generation") } };
+  if (topic === "agent" && action === "end") return { operation: "agent.end", data: { id: target, actor: needed(args, "actor") } };
+  if (topic === "watch" && action === "start") return { operation: "watch.start", data: { target, observer: needed(args, "observer"), actor: flag(args, "actor") ?? needed(args, "observer"), intervalMs: flag(args, "interval") ? duration(needed(args, "interval")) : undefined, brief: flag(args, "brief") } };
+  if (topic === "watch" && action === "assign") return { operation: "watch.assign", data: { target, observer: needed(args, "observer"), actor: needed(args, "actor"), expectedGeneration: flag(args, "expected-generation"), brief: flag(args, "brief") } };
   if (topic === "watch" && action === "stop") return { operation: "watch.stop", data: { target, actor: needed(args, "actor") } };
   if (topic === "watch" && action === "check") return { operation: "watch.check", data: { target, cycle: needed(args, "cycle"), actor: needed(args, "actor") } };
   if (topic === "watch" && action === "list") return { operation: "watch.list", data: {} };
@@ -58,8 +58,7 @@ function route(args: Parsed): { operation: string; data: Record<string, unknown>
   if (topic === "inbox") return { operation: "inbox", data: {} };
   if (topic === "graph") return { operation: "graph", data: {} };
   if (topic === "events") return { operation: "events", data: { cursor: flag(args, "cursor") ?? "0" } };
-  if (topic === "sasu" && action === "register") return { operation: "sasu.register", data: { run: needed(args, "run"), project: needed(args, "project"), observerName: needed(args, "observer-name"), observerPane: needed(args, "observer-pane"), observerSession: needed(args, "observer-session"), observerInstance: needed(args, "observer-instance"), observerHostScope: flag(args, "observer-host-scope") ?? "default", implementorName: needed(args, "implementor-name"), implementorPane: needed(args, "implementor-pane"), implementorSession: needed(args, "implementor-session"), implementorInstance: needed(args, "implementor-instance"), implementorHostScope: flag(args, "implementor-host-scope") ?? "default" } };
-  throw new HcoordError("invalid_argument", "usage: hcoord status | agent register/list/show | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status");
+  throw new HcoordError("invalid_argument", "usage: hcoord status | agent register [--check]/list/show/end | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status");
 }
 
 /**
@@ -177,25 +176,10 @@ export async function main(argv: string[]): Promise<number> {
     if (args.words[0] === "config" && args.words[1] === "set" && args.words[2] === "hq") { const result = await setHq(args.words[3]); print(result, json); return 0; }
     const hq = readHq();
     if (hq !== "local") {
-      const { operation, data } = args.words[0] === "daemon" || args.words[0] === "sasu" ? { operation: `${args.words[0]}.${args.words[1]}`, data: {} } : route(args);
+      const { operation, data } = args.words[0] === "daemon" ? { operation: `${args.words[0]}.${args.words[1]}`, data: {} } : route(args);
       if (!LETTER_OPERATIONS.has(operation)) throw new HcoordError("hq_only", `${operation} runs only at the coordinator HQ (${hq}); this machine keeps no conversation record`, { hq });
       const letter = writeLetter(operation, data);
       print({ ok: true, delivery: "pending", value: { letter: letter.id, operation, reason: `the coordinator at ${hq} applies it when it next collects this machine's letters; nothing else to do`, hq }, observedAt: new Date().toISOString() }, json);
-      return 0;
-    }
-    if (args.words[0] === "sasu" && args.words[1] === "enable") {
-      const status = await callDaemon("status");
-      if (!status.ok) { print(status, json); return 1; }
-      const capability = officialPromptSupport();
-      if (!capability.ready) throw new HcoordError("unsupported_runtime", `Herdr agent delivery is unsupported or unconfirmed: ${capability.reason}; Sasu transition remains disabled`);
-      fs.mkdirSync(dataDir(), { recursive: true, mode: 0o700 });
-      fs.writeFileSync(sasuEnabledPath(), `${new Date().toISOString()}\n`, { mode: 0o600 });
-      print({ ok: true, value: { enabled: true, newRunsOnly: true, existingRuns: "legacy supervisor retains ownership" }, observedAt: new Date().toISOString() }, json);
-      return 0;
-    }
-    if (args.words[0] === "sasu" && args.words[1] === "status") {
-      const enabled = fs.existsSync(sasuEnabledPath());
-      print({ ok: true, value: { enabled, transition: "new runs only", legacySupervisorRetired: fs.existsSync(legacyRetiredPath()), existingRuns: "legacy supervisor until explicitly retired after its final run" }, observedAt: new Date().toISOString() }, json);
       return 0;
     }
     if (args.words[0] === "daemon") {

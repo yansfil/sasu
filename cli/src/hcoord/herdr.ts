@@ -1,30 +1,31 @@
 import path from "node:path";
 import { CODEX_INITIALIZATION_PROMPT, getAgent, initializedCodex, prepareCodexFirstTurn, promptAgent, runHerdrCommand, startAgentWhenPaneReady } from "../implement/herdr";
-import { HcoordError, validateSpawnSpec, type Delivery, type Participant, type Request, type SpawnIntent } from "./model";
+import { HcoordError, sameExecution, validateSpawnSpec, type Delivery, type Participant, type Request, type SpawnIntent, type Watch } from "./model";
 import { herdrRoute, isLocalMachine, requireRemoteHerdr } from "./remote";
 
 /** Herdr routing for a record that names its machine and socket scope. */
 const at = (record: { machine: string; hostScope: string }) => herdrRoute(record.machine, record.hostScope);
 
 /**
- * Confirms an exact execution before registration. A remote machine must be a
- * saved, enabled Herdr machine whose server answers (PRD B2, B16).
+ * Confirms the pane hosts the named execution before registration (D-18: the
+ * same pane and session; the terminal only for a sessionless agent). The
+ * terminal Herdr reports now is what registration records. A remote machine
+ * must be a saved, enabled Herdr machine whose server answers (PRD B2, B16).
  */
-export function validateBinding(machine: string, session: string, instance: string, pane: string | null, hostScope = "default", expectedName?: string): { pane: string; runtime: Participant["runtime"] } {
+export function validateBinding(machine: string, session: string, instance: string, pane: string | null, hostScope = "default"): { pane: string; runtime: Participant["runtime"]; instance: string } {
   if (!isLocalMachine(machine)) requireRemoteHerdr(machine);
   if (pane === null) throw new HcoordError("invalid_argument", "registration requires an exact --pane execution target");
   const found = getAgent(pane, herdrRoute(machine, hostScope), 2000);
   if (found.kind !== "found") throw new HcoordError("runtime_unavailable", `Herdr did not confirm the specified pane: ${found.detail}`);
-  if (found.agent.sessionId !== session || found.agent.terminalId !== instance || found.agent.paneId !== pane) throw new HcoordError("identity_conflict", "pane execution identity changed; select its current session and instance", { current: { pane: found.agent.paneId, session: found.agent.sessionId, instance: found.agent.terminalId } });
-  if (expectedName !== undefined && found.agent.name !== expectedName) throw new HcoordError("identity_conflict", "pane agent name differs from the requested registration", { current: { pane, name: found.agent.name } });
-  return { pane, runtime: found.agent.status === "blocked" ? "unknown" : found.agent.status };
+  if (!sameExecution({ machine, hostScope, pane, session, instance }, { machine, hostScope, pane: found.agent.paneId, session: found.agent.sessionId, instance: found.agent.terminalId })) throw new HcoordError("identity_conflict", "the pane hosts a different execution; select its current session", { current: { pane: found.agent.paneId, session: found.agent.sessionId, instance: found.agent.terminalId } });
+  return { pane, runtime: found.agent.status === "blocked" ? "unknown" : found.agent.status, instance: found.agent.terminalId ?? instance };
 }
 
-type LocalBinding = Pick<Participant, "machine" | "hostScope" | "session" | "instance" | "pane"> & { name?: string };
+type LocalBinding = Pick<Participant, "machine" | "hostScope" | "session" | "instance" | "pane">;
 type ParticipantInspection = { runtime: Participant["runtime"]; connection: Participant["connection"]; reason: string; interactiveReady: boolean | null };
 export const OFFICIAL_PROMPT_BOUNDARY = {
   transport: "Herdr 0.9.1 agent.prompt",
-  preflight: "exact pane, session, terminal, lifecycle and interactive readiness",
+  preflight: "same pane and session (the terminal only for a sessionless agent), idle or done lifecycle, and interactive readiness unless Herdr reports none",
   atomicInputProtection: false,
   limitation: "Herdr 0.9.1 does not atomically bind prompt submission to the preflight identity or protect human typing between inspection and submission",
 } as const;
@@ -34,60 +35,82 @@ export function inspectParticipant(participant: LocalBinding): ParticipantInspec
   const found = getAgent(participant.pane, at(participant), 1000);
   if (found.kind !== "found") return { runtime: "unknown", connection: "unavailable", reason: found.detail, interactiveReady: null };
   const agent = found.agent;
-  if (agent.sessionId !== participant.session || agent.terminalId !== participant.instance || agent.paneId !== participant.pane || (participant.name !== undefined && agent.name !== participant.name)) return { runtime: "unknown", connection: "unavailable", reason: "execution identity changed", interactiveReady: null };
-  return { runtime: agent.status === "blocked" ? "unknown" : agent.status, connection: "connected", reason: agent.status === "blocked" ? "recipient is blocked" : "exact Herdr execution observed", interactiveReady: agent.interactiveReady };
+  if (!sameExecution(participant, { machine: participant.machine, hostScope: participant.hostScope, pane: agent.paneId, session: agent.sessionId, instance: agent.terminalId })) return { runtime: "unknown", connection: "unavailable", reason: "execution identity changed", interactiveReady: null };
+  return { runtime: agent.status === "blocked" ? "unknown" : agent.status, connection: "connected", reason: agent.status === "blocked" ? "recipient is blocked" : "the recorded execution observed in its pane", interactiveReady: agent.interactiveReady };
+}
+
+/**
+ * Whether a connected execution may take typed input now. The recipient must
+ * be idle or done; a readiness flag of false holds it. Herdr 0.9.1 reports
+ * `interactive_ready` only for agents it started, so a hand-started Observer
+ * has no flag at all, and requiring `true` held every delivery to such an
+ * Observer for six hours of a live run (2026-09-26).
+ * Without a flag, idle or done is the readiness evidence Herdr gives.
+ */
+export function inputReadiness(runtime: Participant["runtime"], interactiveReady: boolean | null): { ready: boolean; reason: string } {
+  if (runtime !== "idle" && runtime !== "done") return { ready: false, reason: `recipient is ${runtime}; submission deferred` };
+  if (interactiveReady === false) return { ready: false, reason: "Herdr reports the recipient is not interactive-ready; submission deferred" };
+  return { ready: true, reason: interactiveReady === true ? "exact idle or done execution is interactive-ready" : "exact idle or done execution; Herdr reports no readiness flag for it" };
 }
 
 export function inspectDelivery(recipient: Participant): { ready: boolean; reason: string; runtime: Participant["runtime"]; connection: Participant["connection"] } {
   const observed = inspectParticipant(recipient);
   const { runtime, connection } = observed;
   if (connection !== "connected") return { ready: false, ...observed };
-  if (runtime !== "idle" && runtime !== "done") return { ready: false, reason: observed.reason === "recipient is blocked" ? observed.reason : `recipient is ${runtime}; submission deferred`, runtime, connection };
-  if (observed.interactiveReady !== true) return { ready: false, reason: "Herdr has not confirmed interactive readiness; submission deferred", runtime, connection };
-  return { ready: true, reason: "exact idle or done execution is interactive-ready", runtime, connection };
+  if (observed.reason === "recipient is blocked") return { ready: false, reason: observed.reason, runtime, connection };
+  return { ...inputReadiness(runtime, observed.interactiveReady), runtime, connection };
 }
 
+/**
+ * The dispatch preflight and registration check. Under `inputReadiness` no
+ * connected execution is permanently unready: a working or unflagged one
+ * receives input once it is idle, so the check is the exact identity and the
+ * official prompt API, and a hand-started Observer is accepted (D-17, B22).
+ */
 export function officialDeliveryAvailable(participant: LocalBinding): { ready: boolean; reason: string } {
   const observed = inspectParticipant(participant);
   if (observed.connection !== "connected") return { ready: false, reason: observed.reason };
-  const support = officialPromptSupport(participant.hostScope);
-  return support.ready ? { ready: true, reason: "exact Observer binding and official agent.prompt API confirmed; delivery remains non-atomic" } : support;
+  const support = officialPromptSupport(participant);
+  return support.ready ? { ready: true, reason: "Observer execution and official agent.prompt API confirmed; delivery remains non-atomic" } : support;
 }
 
-export function officialPromptSupport(hostScope?: string): { ready: boolean; reason: string } {
-  const help = hostScope === undefined ? runHerdrCommand(["agent", "prompt", "--help"], 2000) : herdrRoute("local", hostScope).run!(["agent", "prompt", "--help"], undefined, 2000);
+export function officialPromptSupport(route?: { machine: string; hostScope: string }): { ready: boolean; reason: string } {
+  const help = route === undefined ? runHerdrCommand(["agent", "prompt", "--help"], 2000) : at(route).run!(["agent", "prompt", "--help"], undefined, 2000);
   if (help.status !== 0 || !/herdr agent prompt <TARGET> <TEXT>/.test(`${help.stdout}${help.stderr}`)) return { ready: false, reason: "official Herdr agent.prompt API could not be confirmed" };
   return { ready: true, reason: "official Herdr agent.prompt API confirmed; delivery remains non-atomic" };
 }
 
 /**
- * The complete notice a recipient acts on. It carries the question, the
- * answer, the delivery ID, and the next command, because a remote agent
- * cannot query the HQ (PRD B8, B9); local agents receive the same text.
- * `peer` is the participant the notice is about: the watched target for a
- * watch check, the child for a delivery problem.
+ * The notice a recipient acts on: an identifier line, the one command that
+ * closes it, and the content it carries (D-21). How to handle each kind lives
+ * in the recipient's own instructions, not in every message; a live run
+ * found the repeated explanations long and read past them (2026-09-26). The
+ * command names every ID it needs, because a remote agent cannot query the
+ * HQ (PRD B8, B9). `peer` is the participant the notice is about, and a watch
+ * brief is the watcher's note, carried verbatim.
  */
-export function messageForDelivery(item: Request, delivery: Delivery, watchCycle: string | null, peer?: Participant): string {
+export function messageForDelivery(item: Request, delivery: Delivery, watch: Pick<Watch, "cycle" | "brief"> | null, peer?: Participant): string {
   const me = delivery.recipient;
-  const header = (kind: string): string => `${kind}\nrequest: ${item.id}\ndelivery: ${delivery.id}`;
-  const question = `question from ${item.from}:\n${item.body}`;
-  const inspect = peer?.pane ? `herdr ${isLocalMachine(peer.machine) ? "" : `--machine ${peer.machine} `}agent read ${peer.pane} --source recent-unwrapped --lines 80` : null;
-  if (watchCycle !== null && (delivery.phase === "request" || delivery.phase === "watch_check" || delivery.phase === undefined)) {
-    return `HCOORD_WATCH_CHECK\nrequest: ${item.id}\ndelivery: ${delivery.id}\ntarget: ${item.from}${peer ? ` (${peer.name} on ${peer.machine})` : ""}\ncycle: ${watchCycle}\nRecorded observation: ${item.context ?? "none"}\nInspect the target's current exact Herdr execution before confirming this cycle${inspect ? `, for example with ${inspect}` : ""}. Then run hcoord watch check ${item.from} --cycle ${watchCycle} --actor ${me}. Do not use request reply for a watch cycle. If inspection is unavailable, leave the cycle unchecked and end this turn; hcoord will remind you.`;
+  const from = peer ? `${peer.name} (${item.from})` : item.from;
+  const lines = (...parts: Array<string | null | undefined>): string => parts.filter((part): part is string => typeof part === "string" && part !== "").join("\n");
+  const cycle = watch?.cycle ?? null;
+  if (cycle !== null && (delivery.phase === "request" || delivery.phase === "watch_check" || delivery.phase === undefined)) {
+    return lines(`HCOORD_WATCH_CHECK ${from} cycle ${cycle}`, `close: hcoord watch check ${item.from} --cycle ${cycle} --actor ${me}`, watch?.brief);
   }
-  if (delivery.phase === "relay_problem") return `${header("HCOORD_RELAY_PROBLEM")}\n${question}\nrecorded answer from ${item.respondent ?? "unknown"}:\n${item.answer ?? ""}\nThe answer still needs relay. Relay it within its scope with hcoord request relay ${item.id} --actor ${me} --body <text>.`;
+  if (delivery.phase === "relay_problem") return lines(`HCOORD_RELAY_PROBLEM ${item.id}`, `relay: hcoord request relay ${item.id} --actor ${me} --body <text>`, `answer from ${item.respondent ?? "unknown"}: ${item.answer ?? ""}`);
   if (delivery.phase === "delivery_problem") {
-    const relay = [...item.deliveries].reverse().find((entry) => entry.phase === "relay");
-    return `${header("HCOORD_DELIVERY_PROBLEM")}\n${question}\nrelayed answer:\n${item.relayBody ?? ""}\nThe child ${item.from} has not acknowledged it (relay delivery ${relay?.id ?? "unknown"}: ${relay?.status ?? "unknown"}${relay?.reason ? `, ${relay.reason}` : ""}).\nInspect the child${inspect ? ` with ${inspect}` : ""}; the relay is recorded and hcoord does not resend it. If the child is gone, tell the human.`;
+    const inspect = peer?.pane ? `herdr ${isLocalMachine(peer.machine) ? "" : `--machine ${peer.machine} `}agent read ${peer.pane} --source recent-unwrapped --lines 80` : `hcoord request show ${item.id}`;
+    return lines(`HCOORD_DELIVERY_PROBLEM ${item.id} ${from} has not acknowledged the relay`, `inspect: ${inspect}`);
   }
-  if (delivery.phase === "relay") return `${header("HCOORD_RELAY")}\n${item.relayBody}\nThis relays the answer to your question:\n${item.body}\nAcknowledge with hcoord request ack ${item.id} --actor ${me} --delivery ${delivery.id}`;
-  if (delivery.phase === "answer") return `${header("HCOORD_ANSWER")}\n${question}\nanswer: ${item.answer}\n${item.intermediary === me ? `Relay within the answer's scope with hcoord request relay ${item.id} --body <text> --actor ${me}` : `Acknowledge with hcoord request ack ${item.id} --actor ${me} --delivery ${delivery.id}`}`;
-  return `${header("HCOORD_REQUEST")}\nfrom: ${item.from}\n${item.body}${item.context ? `\ncontext: ${item.context}` : ""}\nIf you can answer, use hcoord request reply ${item.id} --as ${me} --body <answer>. If a human must decide, use hcoord request escalate ${item.id} --actor ${me}, then end this turn. Do not poll: hcoord will wake you with HCOORD_ANSWER when the human reply is ready. Relay only the recorded answer.`;
+  if (delivery.phase === "relay") return lines(`HCOORD_RELAY ${item.id}`, `ack: hcoord request ack ${item.id} --actor ${me} --delivery ${delivery.id}`, item.relayBody);
+  if (delivery.phase === "answer") return lines(`HCOORD_ANSWER ${item.id}`, item.intermediary === me ? `relay: hcoord request relay ${item.id} --actor ${me} --body <text>` : `ack: hcoord request ack ${item.id} --actor ${me} --delivery ${delivery.id}`, `answer: ${item.answer ?? ""}`);
+  if (!item.requiresReply) return lines(`HCOORD_NOTICE ${item.id} from ${from}`, "no reply needed", item.body, item.context === null ? null : `context: ${item.context}`);
+  return lines(`HCOORD_REQUEST ${item.id} from ${from}`, `reply: hcoord request reply ${item.id} --as ${me} --body <answer> | escalate: hcoord request escalate ${item.id} --actor ${me}`, item.body, item.context === null ? null : `context: ${item.context}`);
 }
 
-export function submitOfficial(item: Request, delivery: Delivery, recipient: Participant, watchCycle: string | null, peer?: Participant): { status: Delivery["status"]; code: string; reason: string } {
+export function submitOfficial(item: Request, delivery: Delivery, recipient: Participant, watch: Pick<Watch, "cycle" | "brief"> | null, peer?: Participant): { status: Delivery["status"]; code: string; reason: string } {
   if (recipient.pane === null) throw new HcoordError("invalid_state", "recipient pane missing at submission");
-  const result = promptAgent({ target: recipient.pane, text: messageForDelivery(item, delivery, watchCycle, peer), expectedInputGuard: null }, at(recipient), 2000);
+  const result = promptAgent({ target: recipient.pane, text: messageForDelivery(item, delivery, watch, peer), expectedInputGuard: null }, at(recipient), 2000);
   if (result.path !== "session-match") throw new HcoordError("runtime_unavailable", "Herdr adapter returned an unexpected prompt path; inspect the delivery outcome");
   return { status: result.outcome === "accepted" ? "accepted" : result.outcome === "rejected" ? "deferred" : "unknown", code: result.code, reason: result.detail };
 }
@@ -252,7 +275,7 @@ export function discoverAgents(registered: Participant[], project: string | null
       const instance = agent["terminal_id"];
       if (typeof pane !== "string" || typeof session !== "string" || typeof instance !== "string") continue;
       if (project !== null && (typeof cwd !== "string" || path.resolve(cwd) !== path.resolve(project))) continue;
-      if (registered.some((p) => p.machine === machine && p.hostScope === hostScope && p.pane === pane && p.session === session && p.instance === instance)) continue;
+      if (registered.some((p) => sameExecution(p, { machine, hostScope, pane, session, instance }))) continue;
       items.push({ id: `discovered:${machine}:${hostScope}:${session}:${instance}`, registered: false, watch: null, machine, hostScope, session, instance, pane, name: agent["name"] ?? null, project: cwd ?? null, runtime: agent["agent_status"] ?? "unknown", connection: "connected", observedAt: new Date().toISOString() });
     }
     return { items, partialFailures: [] };

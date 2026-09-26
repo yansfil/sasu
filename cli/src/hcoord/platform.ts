@@ -1,9 +1,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { HcoordError } from "./model";
 import { runHerdrCommand } from "../implement/herdr";
+import { convergeLaunchAgent, kickstartLabel, type LaunchdEnvironment } from "../support/launchd";
 import { dataDir, stopMarkerPath } from "./store";
 
 const LABEL = "com.hcoord.daemon";
@@ -48,20 +48,23 @@ export function daemonPlist(home: string, args: string[], label = LABEL): string
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>Label</key><string>${escapeXml(label)}</string><key>ProgramArguments</key><array>${args.map((a) => `<string>${escapeXml(a)}</string>`).join("")}</array><key>RunAtLoad</key><true/><key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict><key>EnvironmentVariables</key><dict>${environment.map(([key, value]) => `<key>${key}</key><string>${escapeXml(value)}</string>`).join("")}</dict><key>StandardOutPath</key><string>${escapeXml(path.join(dataDir(home), "daemon.log"))}</string><key>StandardErrorPath</key><string>${escapeXml(path.join(dataDir(home), "daemon.err.log"))}</string></dict></plist>\n`;
 }
 
-export function startDaemon(home = os.homedir()): { label: string; path: string } {
+/**
+ * Converges the LaunchAgent on this build's plist, then asks launchd to run
+ * it. A stopped daemon keeps its label loaded (KeepAlive leaves a clean exit
+ * down), and launchd refuses to bootstrap a loaded label with "5:
+ * Input/output error"; reading the loaded state first is what lets a start
+ * after `hcoord daemon stop` reach the kickstart (2026-09-26).
+ */
+export function startDaemon(home = os.homedir(), environment: LaunchdEnvironment = {}): { label: string; path: string; launchctl: string[] } {
   if (process.platform !== "darwin") throw new HcoordError("unsupported_platform", "automatic daemon start is implemented only for macOS; see hcoord daemon run on a supported host");
-  const domain = `gui/${process.getuid!()}`;
   const file = plistPath(home);
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.mkdirSync(dataDir(home), { recursive: true, mode: 0o700 });
   fs.rmSync(stopMarkerPath(home), { force: true });
   const executable = path.resolve(__dirname, "cli.js");
-  const args = [process.execPath, executable, "daemon", "run"];
-  const body = daemonPlist(home, args);
-  fs.writeFileSync(file, body, { mode: 0o600 });
-  const boot = spawnSync("launchctl", ["bootstrap", domain, file], { encoding: "utf8", timeout: 5000 });
-  if (boot.status !== 0 && !/already bootstrapped|service already loaded/i.test(`${boot.stderr}${boot.stdout}`)) throw new HcoordError("start_failed", "launchd could not bootstrap coordinator; inspect its stderr log");
-  const kick = spawnSync("launchctl", ["kickstart", `${domain}/${LABEL}`], { encoding: "utf8", timeout: 5000 });
-  if (kick.status !== 0) throw new HcoordError("start_failed", "launchd could not start coordinator; inspect its stderr log");
-  return { label: LABEL, path: file };
+  const converged = convergeLaunchAgent({ label: LABEL, plistPath: file }, daemonPlist(home, [process.execPath, executable, "daemon", "run"]), environment);
+  if (converged.problem !== null) throw new HcoordError("start_failed", `launchd could not load the coordinator: ${converged.problem}; inspect its stderr log`);
+  const kick = kickstartLabel(LABEL, environment);
+  if (!kick.ok) throw new HcoordError("start_failed", `launchd could not start the coordinator: ${kick.detail}; inspect its stderr log`);
+  return { label: LABEL, path: file, launchctl: [...converged.launchctl, `kickstart ${LABEL}`] };
 }

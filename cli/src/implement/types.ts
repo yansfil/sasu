@@ -112,12 +112,12 @@ export interface VerificationReportIdentity {
   reportSha256: string;
 }
 export type IssuerLabel = "implementor" | "observer" | "human";
-export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify" | "dispatch" | "handover" | "plan";
+export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify" | "dispatch" | "handover" | "plan" | "block" | "report";
 export interface ImplementEvent {
   id: number; at: string; kind: ImplementEventKind; actor: IssuerLabel;
   subject: string | null; summary: string;
 }
-export type IssuedCommand = "artifact" | "plan" | "verify" | "escalate" | "amend" | "retire";
+export type IssuedCommand = "artifact" | "plan" | "block" | "report" | "verify" | "escalate" | "amend" | "retire";
 export type VerbRejectionCheck = "arguments" | "transition";
 export interface VerbRecord {
   id: number;
@@ -289,8 +289,15 @@ export interface SupervisionRecord {
   patrolIntervalMs: number;
   /** Who replaces a dead Observer: only one loop may input into a session (D-15). */
   recoveryOwner: "supervisor" | "task-factory";
-  /** Existing runs remain on the Sasu supervisor; newly enabled runs belong only to hcoord. */
+  /** Existing runs remain on the Sasu supervisor; runs dispatched with `sasu supervisor use hcoord` belong only to hcoord. */
   coordinationOwner?: "legacy" | "hcoord";
+  /**
+   * The hcoord participants this run is made of (D-19). hcoord knows only
+   * participants and their parent and watch relations, so this record is the
+   * one place that says which of them belong to the run; notices, status,
+   * handover, retire and delivery all address hcoord by these IDs.
+   */
+  hcoord?: { observer: string; implementor: string; intervalMs: number; recoveryOwner: "supervisor" | "task-factory"; registeredAt: string };
   handovers: ObserverHandover[];
 }
 
@@ -321,6 +328,8 @@ export interface PendingDispatch {
   coordinationOwner?: "legacy" | "hcoord";
   /** Human-approved recovery-authority transfers before supervision exists. */
   handovers?: ObserverHandover[];
+  /** The hcoord implementor participant this dispatch replaces, kept so a resumed registration still ends it. */
+  hcoordReplacedImplementor?: string | null;
 }
 
 export type PrdJudgeRecord =
