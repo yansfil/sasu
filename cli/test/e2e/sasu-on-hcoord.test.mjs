@@ -40,6 +40,25 @@ test("daemon start after a manual stop kickstarts the still-loaded label instead
   assert.equal(fs.existsSync(path.join(home, ".hcoord", "manual-stop")), false, "start clears the manual stop");
 });
 
+test("daemon start that reloads a changed plist waits for the bootout to settle before bootstrapping", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hcoord-launchd-"));
+  const launchctl = installFakeLaunchctl(root);
+  const home = path.join(root, "home");
+  const plist = path.join(home, "Library", "LaunchAgents", "com.hcoord.daemon.plist");
+  fs.mkdirSync(path.dirname(plist), { recursive: true });
+  // The live shape: the loaded label still runs another checkout's daemon.
+  fs.writeFileSync(plist, "<plist><string>/elsewhere/cli/dist/hcoord/cli.js</string></plist>\n");
+  fs.writeFileSync(launchctl.stateFile, JSON.stringify({ loaded: { "com.hcoord.daemon": plist } }));
+  const env = { ...process.env, HOME: home, PATH: launchctl.env.PATH, LAUNCHCTL_FAKE_LOG: launchctl.log, LAUNCHCTL_FAKE_STATE: launchctl.stateFile, LAUNCHCTL_FAKE_BOOTOUT_SETTLE_PRINTS: "3" };
+  delete env.HCOORD_HOME;
+  const started = spawnSync(process.execPath, [HCOORD, "daemon", "start", "--json"], { env, encoding: "utf8" });
+  assert.equal(started.status, 0, started.stdout + started.stderr);
+  assert.equal(JSON.parse(started.stdout).ok, true);
+  assert.deepEqual(launchctl.argv().map((args) => args[0]).filter((verb) => verb !== "print"), ["bootout", "bootstrap", "kickstart"]);
+  assert.match(launchctl.state().loaded["com.hcoord.daemon"], /com\.hcoord\.daemon\.plist$/);
+  assert.match(fs.readFileSync(plist, "utf8"), new RegExp(HCOORD.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "the reloaded definition runs this build");
+});
+
 /**
  * A project with a started run, a fake herdr whose Observer pane is idle and
  * interactive-ready, and a daemon this test owns. `sasu enable` is on.
