@@ -19,7 +19,10 @@ const IMPL_PANE = "w4G:p13";
 const PACKET = "ROLE: Implementor.\nPIPELINE: implement\nSOURCE: fixture\nRETURN CONTRACT: status";
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-test("daemon start after a manual stop kickstarts the still-loaded label instead of failing its bootstrap", () => {
+// `hcoord daemon start` is macOS-only by design; elsewhere it refuses with unsupported_platform.
+const MACOS_ONLY = { skip: process.platform !== "darwin" ? "hcoord daemon start is macOS-only" : false };
+
+test("daemon start after a manual stop kickstarts the still-loaded label instead of failing its bootstrap", MACOS_ONLY, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "hcoord-launchd-"));
   const launchctl = installFakeLaunchctl(root);
   const home = path.join(root, "home");
@@ -40,7 +43,7 @@ test("daemon start after a manual stop kickstarts the still-loaded label instead
   assert.equal(fs.existsSync(path.join(home, ".hcoord", "manual-stop")), false, "start clears the manual stop");
 });
 
-test("daemon start that reloads a changed plist waits for the bootout to settle before bootstrapping", () => {
+test("daemon start that reloads a changed plist waits for the bootout to settle before bootstrapping", MACOS_ONLY, () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "hcoord-launchd-"));
   const launchctl = installFakeLaunchctl(root);
   const home = path.join(root, "home");

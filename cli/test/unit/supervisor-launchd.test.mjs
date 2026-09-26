@@ -133,3 +133,23 @@ test("engineering 10/11: a failed staged definition write leaves the loaded serv
   assert.equal(base.loaded.has(LAUNCHD_LABEL), true);
   assert.equal(base.asked.filter((command) => command.startsWith("bootout ")).length, 0, "a definition that cannot be staged never stops the service");
 });
+
+test("a changed spec reloads only after launchd reports the booted-out label unloaded", () => {
+  const home = isolated();
+  const env = { HOME: home };
+  const base = fakeLaunchctl();
+  installLaunchAgent(spec(home), { env, launchctl: base.run, uid: 501 });
+  // launchd returns from bootout while the job is still exiting: the label
+  // reads loaded for three more prints, and a bootstrap meanwhile fails.
+  let settling = 0;
+  const run = (args) => {
+    if (args[0] === "bootout") { settling = 3; return { status: 0, stdout: "", stderr: "" }; }
+    if (settling > 0 && args[0] === "print") { settling -= 1; if (settling === 0) base.loaded.delete(LAUNCHD_LABEL); return { status: 0, stdout: "loaded", stderr: "" }; }
+    if (settling > 0 && args[0] === "bootstrap") return { status: 5, stdout: "", stderr: "Bootstrap failed: 5: Input/output error" };
+    return base.run(args);
+  };
+  const reloaded = installLaunchAgent(spec(home, { cli: "/new/cli.js" }), { env, launchctl: run, uid: 501 });
+  assert.equal(reloaded.problem, null);
+  assert.deepEqual(reloaded.launchctl, [`bootout gui/501/${LAUNCHD_LABEL}`, `bootstrap gui/501 ${launchAgentPlistPath(env)}`]);
+  assert.match(base.loaded.get(LAUNCHD_LABEL), /\/new\/cli\.js/);
+});
