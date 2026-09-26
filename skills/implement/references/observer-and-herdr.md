@@ -150,8 +150,8 @@ While `~/.hcoord/sasu-enabled` exists, a new run belongs to hcoord.
 Without it, and for every run first dispatched under the legacy supervisor, [The Supervisor Tick](#the-supervisor-tick) keeps the run until it ends.
 
 An hcoord dispatch checks the coordinator before it creates anything, with `hcoord sasu preflight`.
-The daemon must answer, the Observer pane must carry a Herdr agent name, and hcoord must be able to deliver to the Observer's exact execution.
-An unnamed pane is named with `herdr agent rename <pane> <name>`.
+The daemon must answer and hcoord must be able to deliver to the Observer's execution.
+An Observer pane without a Herdr agent name is recorded as `observer-<first 8 characters of its session id>`; the pane is not renamed.
 A refusal there creates nothing and never falls back to the legacy supervisor.
 After the Implementor starts, dispatch records its exact identity first and then registers both participants, a watch whose interval is `--patrol` (default 15 minutes), and the recovery owner.
 A registration refused after start leaves a started record: fix the reported cause and run `sasu implement dispatch --resume-handoff` with the packet on stdin, which registers and then hands off.

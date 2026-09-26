@@ -119,7 +119,7 @@ async function hcoordProject(t, { observerName = "observer", observerReady, daem
 
 const created = (herdr) => herdr.argv().filter((args) => ["tab create", "workspace create", "agent start"].includes(args.slice(0, 2).join(" ")));
 
-test("B3: dispatch refuses a stopped coordinator and an unnamed Observer before any pane or agent exists", async (t) => {
+test("B3: dispatch refuses a stopped coordinator before any pane or agent exists", async (t) => {
   const stopped = await hcoordProject(t, { daemon: false });
   const refused = stopped.dispatch();
   assert.equal(refused.status, 1, refused.text);
@@ -127,12 +127,17 @@ test("B3: dispatch refuses a stopped coordinator and an unnamed Observer before 
   assert.match(refused.json.message, /no legacy wake fallback/);
   assert.deepEqual(created(stopped.herdr), [], "nothing was created");
   assert.equal(stopped.state().pendingDispatch ?? null, null);
+});
 
-  const unnamed = await hcoordProject(t, { observerName: null });
-  const named = unnamed.dispatch();
-  assert.equal(named.status, 1, named.text);
-  assert.match(named.json.message, /herdr agent rename w4G:p12 <name>/);
-  assert.deepEqual(created(unnamed.herdr), [], "the name check precedes any pane");
+test("D-18: an unnamed Observer is registered under a name derived from its session, at dispatch and at handover, and its pane is never renamed", async (t) => {
+  const run = await dispatchedRun(t, { observerName: null });
+  assert.equal(run.hcoord("sasu", "show", "--run", run.record.runInstanceId).value.observer.name, `observer-${OBSERVER.slice(0, 8)}`);
+  const next = "7c1d2e3f-0000-4000-8000-00000000000b";
+  run.herdr.patchAgent(OBSERVER_PANE, { agent_session: { value: next } });
+  const handed = run.sasu(["supervisor", "handover", "--slug", "fixture", "--approval", "넘겨"], { env: { ...run.observerEnv, CLAUDE_SESSION_ID: next } });
+  assert.equal(handed.status, 0, handed.text);
+  assert.equal(run.hcoord("sasu", "show", "--run", run.record.runInstanceId).value.observer.name, "observer-7c1d2e3f");
+  assert.equal(run.herdr.argv().filter((args) => args[1] === "rename").length, 0, "the Observer's pane keeps no name");
 });
 
 test("B1, B4, B13, B16: dispatch registers both participants with the patrol interval and forewarns the implementor", async (t) => {

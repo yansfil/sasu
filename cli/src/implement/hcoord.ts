@@ -54,6 +54,19 @@ export function showRun(run: string): { value: SasuRunView; stale: boolean } { r
 export function listRuns(): { value: SasuRunView[]; stale: boolean } { return read<SasuRunView[]>(["sasu", "list"]); }
 
 export interface ObserverRegistration { identity: ObserverIdentity; name: string }
+
+/**
+ * The name hcoord records for an Observer: Herdr's agent name when the pane
+ * has one. Hand-started Observers have none (7 of 7 live, 2026-09-26), and
+ * since D-18 hcoord never matches names, so an unnamed one is recorded as
+ * observer-<session prefix>. That stays the same across every run the
+ * Observer dispatches and every Herdr restart, and differs per session; a
+ * run slug would rename the one shared participant at each dispatch.
+ */
+export function observerParticipantName(herdrName: string | null | undefined, sessionId: string): string {
+  const name = herdrName?.trim() ?? "";
+  return name !== "" ? name : `observer-${sessionId.slice(0, 8)}`;
+}
 export interface RunRegistration { run: string; project: string; slug: string; statePath: string; patrolIntervalMs: number; recoveryOwner: "supervisor" | "task-factory"; replaces: string | null }
 
 const observerArgs = (observer: ObserverRegistration): string[] => ["--observer-name", observer.name, "--observer-pane", observer.identity.paneId, "--observer-session", observer.identity.sessionId, "--observer-instance", observer.identity.terminalId, "--observer-host-scope", observer.identity.hostScope];

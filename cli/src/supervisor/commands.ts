@@ -4,7 +4,7 @@ import path from "node:path";
 import { legacyRetiredPath, sasuEnabledPath } from "../hcoord/store";
 import { getAgent, guardedPromptSupport, type HerdrEnvironment } from "../implement/herdr";
 import { recordEvent } from "../implement/events";
-import { HcoordCallFailed, handoverRun, listRuns, type SasuRunView } from "../implement/hcoord";
+import { HcoordCallFailed, handoverRun, listRuns, observerParticipantName, type SasuRunView } from "../implement/hcoord";
 import { loadState, nowIso, persistState, resolveStatePath } from "../implement/store";
 import type { ImplementCommandResult, ImplementState, ObserverIdentity } from "../implement/types";
 import { currentHerdrRole } from "../runs/session";
@@ -246,9 +246,8 @@ function handover(projectRoot: string, args: SupervisorArgs, env: NodeJS.Process
 
 function handoverCoordination(run: string, identity: ObserverIdentity, herdr: HerdrEnvironment): SasuRunView {
   const looked = getAgent(identity.paneId, herdr);
-  const name = looked.kind === "found" ? looked.agent.name?.trim() ?? "" : "";
-  if (name === "") throw new Error(`hcoord registers the Observer by its Herdr agent name and pane ${identity.paneId} has none; run \`herdr agent rename ${identity.paneId} <name>\` and hand over again. Nothing was changed`);
-  try { return handoverRun(run, { identity, name }); }
+  if (looked.kind !== "found") throw new Error(`herdr cannot read the new Observer pane ${identity.paneId}: ${looked.detail}. Nothing was changed`);
+  try { return handoverRun(run, { identity, name: observerParticipantName(looked.agent.name, identity.sessionId) }); }
   catch (error) {
     if (error instanceof HcoordCallFailed) throw new Error(`${error.message}; the handover was not recorded and the old Observer remains recorded`);
     throw error;

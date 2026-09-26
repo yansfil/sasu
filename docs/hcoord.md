@@ -94,7 +94,8 @@ Duplicate answers fail without overwriting the first, a canceled request records
 An existing run keeps its legacy supervisor owner; Sasu dispatch pins each new run's owner before creating the child and refuses fallback if the selected coordinator is unavailable.
 Sasu reaches the coordinator only through these subcommands, and the coordinator never reads a Sasu `state.json`:
 
-- `hcoord sasu preflight` checks, before Sasu creates any pane, that the daemon answers, the Observer pane has a Herdr agent name, and the Observer's exact execution takes official delivery; it saves nothing.
+- `hcoord sasu preflight` checks, before Sasu creates any pane, that the daemon answers and the Observer's execution takes official delivery; it saves nothing.
+  Sasu passes the Observer's Herdr agent name, or `observer-<session prefix>` for an unnamed pane.
 - `hcoord sasu register` binds the run key (the dispatch's run instance id) to the Observer and the implementor, starts the watch with the run's patrol interval, and records its slug, state path, recovery owner, and the dispatch it replaces, whose watch it stops in the same save.
   The Observer is registered without a project, since one Observer supervises runs in several trees.
 - `hcoord sasu show --run` and `hcoord sasu list` read the binding with its watch, open cycle, and last checked cycle; a stopped daemon answers from the saved ledger, marked stale.

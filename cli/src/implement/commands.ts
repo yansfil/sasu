@@ -27,7 +27,7 @@ import { indexPath, RUN_INSTANCE_ENV_KEY } from "../supervisor/paths";
 import { buildDigest, renderDigest, type CoordinatorFacts } from "../supervisor/digest";
 import { parsePatrolMinutes, parseRecoveryOwner } from "../supervisor/policy";
 import { sasuEnabledPath } from "../hcoord/store";
-import { HcoordCallFailed, endRun, preflightRun, registerRun, sendRunNotice, showRun, type ObserverRegistration, type RunNoticeKind, type RunRegistration, type SentNotice } from "./hcoord";
+import { HcoordCallFailed, endRun, observerParticipantName, preflightRun, registerRun, sendRunNotice, showRun, type ObserverRegistration, type RunNoticeKind, type RunRegistration, type SentNotice } from "./hcoord";
 import { DispatchRejected, assertDispatchablePrd, assertNotImplementor, dispatchImplementor, parseEnvPairs, placementFor } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
@@ -54,20 +54,11 @@ function hcoordRunRegistration(state: ImplementState, statePath: string, run: st
   return { run, project, slug: state.topicSlug, statePath, patrolIntervalMs, recoveryOwner, replaces };
 }
 
-/**
- * The Observer as the coordinator must register it: its exact identity and
- * its Herdr agent name. hcoord binds a participant to the name Herdr reports
- * and refuses a mismatch, so an unnamed Observer pane is refused here, before
- * anything is created, with the one command that fixes it; dispatch used to
- * pass an invented "observer" name and fail after the implementor had
- * started (2026-09-26).
- */
+/** The Observer as the coordinator registers it: its identity and the name it is recorded under. */
 function hcoordObserver(identity: ObserverIdentity): ObserverRegistration {
   const looked = getAgent(identity.paneId, herdrEnvironmentForHostScope(identity.hostScope));
   if (looked.kind !== "found") throw new DispatchRejected(`herdr cannot read the Observer pane ${identity.paneId}: ${looked.detail}; no legacy wake fallback was selected`);
-  const name = looked.agent.name?.trim() ?? "";
-  if (name === "") throw new DispatchRejected(`the Observer pane ${identity.paneId} has no Herdr agent name, and hcoord registers participants by name; run \`herdr agent rename ${identity.paneId} <name>\` and dispatch again. Nothing was created; no legacy wake fallback was selected`);
-  return { identity, name };
+  return { identity, name: observerParticipantName(looked.agent.name, identity.sessionId) };
 }
 
 function hcoordRefusal(error: unknown): never {
