@@ -469,3 +469,36 @@ test("B27: migrate-hcoord records participant IDs found by pane and session, and
   assert.match(unmatched.json.detail.runs[0].reason, /implementor: no registered participant in pane w4G:p77/);
   assert.equal(run.state().supervision.hcoord, undefined, "an unmatched run is left as it was");
 });
+
+test("B27, D-18: migrate-hcoord records a run whose Observer has duplicate records, and names the handover when its watch moved to another Observer", async (t) => {
+  const run = await dispatchedRun(t);
+  const statePath = path.join(run.root, STATE_PATH);
+  const saved = run.state(); delete saved.supervision.hcoord; fs.writeFileSync(statePath, `${JSON.stringify(saved, null, 2)}\n`);
+  // The live shape: the recorded Observer's one execution has two records from
+  // before D-18, and its watch was assigned to a new Observer outside Sasu.
+  const next = "5e6f7a8b-0000-4000-8000-00000000000c", nextPane = "w4G:p20";
+  run.herdr.patchAgent(nextPane, { agent: "claude", agent_status: "idle", pane_id: nextPane, terminal_id: "term_next", agent_session: { value: next }, tokens: { activity: String(Date.now()) }, state_change_seq: 1 });
+  const newObserver = run.hcoord("agent", "register", "--machine", "local", "--session", next, "--instance", "term_next", "--pane", nextPane, "--name", "observer-next");
+  assert.equal(newObserver.ok, true, JSON.stringify(newObserver));
+  const watch = run.hcoord("agent", "show", run.implementorId).value.watch;
+  assert.equal(run.hcoord("watch", "assign", run.implementorId, "--observer", newObserver.value.id, "--actor", "human", "--expected-generation", String(watch.generation)).ok, true);
+  await run.stopDaemon();
+  const ledgerPath = path.join(run.home, ".hcoord", "ledger.json");
+  const ledger = JSON.parse(fs.readFileSync(ledgerPath, "utf8"));
+  ledger.participants.a_duplicate = { ...ledger.participants[run.observerId], id: "a_duplicate", instance: "term_before_restart", name: "observer-before-restart" };
+  fs.writeFileSync(ledgerPath, JSON.stringify(ledger));
+  await run.startDaemon();
+
+  const migrated = run.sasu(["supervisor", "migrate-hcoord", "--state", statePath]);
+  assert.equal(migrated.status, 0, migrated.text);
+  const outcome = migrated.json.detail.runs[0];
+  assert.equal(outcome.outcome, "recorded");
+  assert.ok([run.observerId, "a_duplicate"].includes(run.state().supervision.hcoord.observer), "one record of the recorded Observer's execution");
+  assert.equal(run.state().supervision.hcoord.implementor, run.implementorId);
+  assert.match(outcome.note, new RegExp(`watch is observed by .*${nextPane}.*sasu supervisor handover`));
+
+  const handed = run.sasu(["supervisor", "handover", "--slug", "fixture", "--approval", "넘겨"], { env: { ...run.observerEnv, HERDR_PANE_ID: nextPane, CLAUDE_SESSION_ID: next } });
+  assert.equal(handed.status, 0, handed.text);
+  assert.equal(run.state().supervision.observer.paneId, nextPane);
+  assert.equal(run.state().supervision.hcoord.observer, newObserver.value.id);
+});

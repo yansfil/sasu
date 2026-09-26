@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { sameExecution } from "../hcoord/model";
 import type { ObserverIdentity, SupervisionRecord } from "./types";
 
 /**
@@ -58,9 +59,19 @@ function read<T>(argv: string[]): { value: T; stale: boolean } {
 }
 
 export interface WatchView { target: string; observer: string | null; generation: number; status: "active" | "stopped"; intervalMs: number; dueAt: string; cycle: string | null; checkedAt: string | null; brief?: string | null; quietSince?: string | null }
-export interface ParticipantView { id: string; name: string; pane: string | null; session: string; parent: string | null; runtime: string; connection: string; registered?: boolean; watch: WatchView | null }
+export interface ParticipantView { id: string; name: string; machine: string; hostScope: string; pane: string | null; session: string; instance: string; parent: string | null; runtime: string; connection: string; registered?: boolean; watch: WatchView | null }
 
 export function showParticipant(id: string): { value: ParticipantView; stale: boolean } { return read<ParticipantView>(["agent", "show", id]); }
+
+/**
+ * The registered participants that are this local execution, by hcoord's own
+ * identity rule (D-18), so Sasu never keeps a second one. Records made under
+ * the older terminal rule can put several participants on one execution.
+ */
+export function participantsOf(participants: ParticipantView[], identity: Pick<ObserverIdentity, "paneId" | "sessionId" | "terminalId" | "hostScope">): ParticipantView[] {
+  const execution = { machine: "local", hostScope: identity.hostScope, pane: identity.paneId, session: identity.sessionId, instance: identity.terminalId };
+  return participants.filter((participant) => sameExecution(participant, execution));
+}
 
 /** Registered participants from `hcoord agent list`; Herdr discoveries are left out. */
 export function listParticipants(): { value: ParticipantView[]; stale: boolean } {

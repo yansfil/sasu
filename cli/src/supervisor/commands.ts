@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getAgent, guardedPromptSupport, type HerdrEnvironment } from "../implement/herdr";
 import { recordEvent } from "../implement/events";
-import { HCOORD_CLI, HcoordCallFailed, handoverRun, listParticipants, observerParticipantName, showParticipant, type WatchView } from "../implement/hcoord";
+import { HCOORD_CLI, HcoordCallFailed, handoverRun, listParticipants, observerParticipantName, participantsOf, showParticipant, type ParticipantView, type WatchView } from "../implement/hcoord";
 import { loadState, nowIso, persistState, resolveStatePath } from "../implement/store";
 import type { ImplementCommandResult, ImplementState, ObserverIdentity } from "../implement/types";
 import { currentHerdrRole } from "../runs/session";
@@ -232,10 +232,12 @@ function migrateHcoord(projectRoot: string, args: SupervisorArgs, env: NodeJS.Pr
   let participants: ReturnType<typeof listParticipants>;
   try { participants = listParticipants(); }
   catch (error) { if (error instanceof HcoordCallFailed) return result("migrate-hcoord", false, `hcoord agent list failed: ${error.message}; nothing was changed`); throw error; }
-  const find = (identity: { paneId: string; sessionId: string }): { id: string; watch: WatchView | null } | string => {
-    const matches = participants.value.filter((participant) => participant.pane === identity.paneId && participant.session === identity.sessionId);
-    if (matches.length === 1) return matches[0]!;
-    return matches.length === 0 ? `no registered participant in pane ${identity.paneId} with session ${identity.sessionId}` : `${matches.length} participants share pane ${identity.paneId} and session ${identity.sessionId}`;
+  // Several records of one execution are one participant to hcoord (D-18);
+  // the one the run's relations point at is kept, else the latest.
+  const find = (identity: Pick<ObserverIdentity, "paneId" | "sessionId" | "terminalId" | "hostScope">, prefer: (participant: ParticipantView) => boolean): ParticipantView | string => {
+    const matches = participantsOf(participants.value, identity);
+    if (matches.length === 0) return `no registered participant in pane ${identity.paneId} with session ${identity.sessionId}`;
+    return matches.find(prefer) ?? matches.at(-1)!;
   };
   const runs = statePaths.map((statePath) => {
     const slug = slugOf(statePath);
@@ -246,21 +248,26 @@ function migrateHcoord(projectRoot: string, args: SupervisorArgs, env: NodeJS.Pr
     const supervision = state.supervision ?? null;
     if (supervision === null || supervision.coordinationOwner !== "hcoord") return { slug: state.topicSlug, statePath, outcome: "skipped", reason: "not an hcoord run" };
     if (state.status !== "active") return { slug: state.topicSlug, statePath, outcome: "skipped", reason: `run is ${state.status}` };
-    const observer = find(supervision.observer), implementor = find(supervision.implementor);
+    const implementor = find(supervision.implementor, (participant) => participant.watch?.status === "active");
+    const watchedBy = typeof implementor === "string" || implementor.watch?.status !== "active" ? null : implementor.watch.observer;
+    const observer = find(supervision.observer, (participant) => participant.id === watchedBy);
     if (typeof observer === "string" || typeof implementor === "string") return { slug: state.topicSlug, statePath, outcome: "unmatched", reason: [typeof observer === "string" ? `Observer: ${observer}` : null, typeof implementor === "string" ? `implementor: ${implementor}` : null].filter(Boolean).join("; ") };
+    // The watch was handed to another Observer outside Sasu; state.json still names the old one.
+    const watcher = watchedBy === null || watchedBy === observer.id ? undefined : participants.value.find((participant) => participant.id === watchedBy);
+    const note = watcher === undefined ? undefined : `the implementor's watch is observed by ${watcher.name} (${watcher.id}) in pane ${watcher.pane ?? "unknown"}, not the recorded Observer; run sasu supervisor handover --slug ${state.topicSlug} --approval "<verbatim user approval>" from that pane to record it`;
     const intervalMs = implementor.watch?.intervalMs ?? supervision.patrolIntervalMs;
     const before = supervision.hcoord ?? null;
     if (before !== null && before.observer === observer.id && before.implementor === implementor.id) {
       recordCoordinatedRun(indexPath(env), { statePath: path.resolve(statePath), runInstanceId: supervision.runInstanceId, addedAt: nowIso() });
-      return { slug: state.topicSlug, statePath, outcome: "unchanged", observer: observer.id, implementor: implementor.id };
+      return { slug: state.topicSlug, statePath, outcome: "unchanged", observer: observer.id, implementor: implementor.id, ...(note === undefined ? {} : { note }) };
     }
     supervision.hcoord = { observer: observer.id, implementor: implementor.id, intervalMs, recoveryOwner: supervision.recoveryOwner, registeredAt: nowIso() };
     persistState(statePath, state);
     recordCoordinatedRun(indexPath(env), { statePath: path.resolve(statePath), runInstanceId: supervision.runInstanceId, addedAt: nowIso() });
-    return { slug: state.topicSlug, statePath, outcome: "recorded", observer: observer.id, implementor: implementor.id, watch: implementor.watch?.status ?? "none" };
+    return { slug: state.topicSlug, statePath, outcome: "recorded", observer: observer.id, implementor: implementor.id, watch: implementor.watch?.status ?? "none", ...(note === undefined ? {} : { note }) };
   });
   const unmatched = runs.filter((run) => run.outcome === "unmatched");
-  const lines = runs.map((run) => `  ${run.slug}: ${run.outcome}${"reason" in run ? ` - ${run.reason}` : ` (Observer ${run.observer}, implementor ${run.implementor})`}`);
+  const lines = runs.map((run) => `  ${run.slug}: ${run.outcome}${"reason" in run ? ` - ${run.reason}` : ` (Observer ${run.observer}, implementor ${run.implementor})${"note" in run && run.note !== undefined ? `; ${run.note}` : ""}`}`);
   return result("migrate-hcoord", unmatched.length === 0, `${runs.filter((run) => run.outcome === "recorded").length} run(s) recorded, ${unmatched.length} unmatched, of ${runs.length} examined${participants.stale ? "; hcoord daemon stopped, saved record used" : ""}`, { runs }, lines);
 }
 

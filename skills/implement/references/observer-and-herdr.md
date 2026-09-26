@@ -158,6 +158,8 @@ A refusal there creates nothing and never falls back to the legacy supervisor.
 After the Implementor starts, dispatch records its exact identity first, then registers the Observer, the Implementor as its child, and the Implementor's watch, whose interval is `--patrol` (default 15 minutes) and whose brief names the digest command and the recovery owner.
 A registration refused after start leaves a started record: fix the reported cause and run `sasu implement dispatch --resume-handoff` with the packet on stdin, which registers and then hands off.
 Runs registered before `state.json` held their participant IDs are moved once with `sasu supervisor migrate-hcoord --state <state.json> ...`, which finds both participants in `hcoord agent list` by pane and session and reports any run it cannot match.
+When one execution has several participant records from before D-18, it keeps the one the implementor's watch points at, else the latest.
+When the watch was handed to another Observer outside Sasu, the run is still recorded and the result names the `sasu supervisor handover` to run from that Observer's pane.
 
 What reaches the Observer.
 Each notice is only an identifier line, the command that closes it, and its content; how to handle it is here, not in the message.
