@@ -1,7 +1,8 @@
 # hcoord coordinator
 
 `hcoord` keeps agent relationships, watch cycles, requests, delivery attempts, and human answers in one local ledger.
-Herdr remains the source of execution facts, and Sasu remains the writer of implementation and verification state.
+It knows participants and the relations between them (parent, watch, request) and nothing else.
+Herdr remains the source of execution facts, and a client that coordinates its own units of work, such as a Sasu run, records which participants make up a unit in its own state.
 The CLI and JSON API expose the same coordinator facts.
 
 ## Start and inspect
@@ -22,6 +23,8 @@ An agent runtime must allow access to that user-local socket; `permission_denied
 The service reserves an unknown outcome before sending external input and never blindly repeats such submissions after a restart.
 
 Register an existing exact Herdr pane with `hcoord agent register --machine local --session <session> --instance <terminal-id> --pane <pane-id> --name <name>`.
+`agent register --check` with the same arguments answers what registration would decide and saves nothing: the execution in the pane, the participant it would return (or none), and whether official delivery to it is available.
+A client runs it before creating anything that depends on that participant.
 A participant is the execution on one machine, pane, and session.
 Its terminal id and name are recorded but never required to match, because a Herdr restart gives every pane a new terminal id and clears names while panes and sessions stay; registering the same pane and session again returns the same participant and records its current terminal and name.
 Only an agent Herdr reports without a session is told apart by its terminal id.
@@ -35,10 +38,31 @@ If tab creation returned a pane ID but saving it failed, repair the reported sto
 `hcoord agent list --json`, `hcoord watch list --json`, `hcoord graph --json`, and `hcoord events --follow` provide discovery and IDE data.
 `--project` filters a list and does not confer watch authority.
 Only the assigned observer can confirm a watch cycle with `watch check`; `request reply` cannot close a watch request or prompt the watched child.
-The watch notification names the target and cycle.
+`watch start <target> --observer <id> --actor <id> [--interval 15m] [--brief <text>]` starts a watch; the brief is the watcher's own note, which hcoord carries verbatim on every watch check and never interprets.
 The observer inspects the target's current Herdr execution, runs the named `hcoord watch check <target> --cycle <cycle> --actor <observer>` only after inspection, and ends its turn if the target cannot be inspected so the cycle remains open for a reminder.
 A human can assign an unowned or stopped watch, while the recorded parent may start its own child's first watch.
+`watch assign <target> --observer <new> --actor <current observer or human> --expected-generation <n>` moves the watch with its open cycle and brief, and also moves the target's questions still open to the old observer and answers the old observer has not relayed, so none waits on a session that left.
 After a watch stops, the retained check request can be canceled by its sender or a human, or a human can restart the watch so the outstanding cycle reaches a new observer.
+
+Patrol is quiet while the target rests.
+A due cycle observes the target first; when the target is not working (idle, done, or unobservable), the observer gets one check for that change, and later due cycles are skipped while it stays that way.
+The check opened for the change is neither reminded nor escalated to the inbox while the target rests.
+When the target works again, patrol resumes at the next due cycle.
+A long wait for a person, such as a merge approval, therefore wakes the observer once instead of every interval.
+
+`hcoord agent end <id> --actor <id>` is how a participant leaves: its watch stops, an unchecked cycle is dropped, and every question it still has open is canceled, so no wake, reminder, or inbox item outlives it.
+The participant itself, its parent, its watch observer, or a human may end it, and a second end changes nothing.
+
+Every `HCOORD_*` message is an identifier line, the one command that closes it, and the content it carries:
+
+```text
+HCOORD_WATCH_CHECK worker (a_...) cycle c_...
+close: hcoord watch check a_... --cycle c_... --actor a_...
+<the watch brief, if any>
+```
+
+`HCOORD_REQUEST` names `reply` and `escalate` commands before the question body, `HCOORD_NOTICE` says no reply is needed, `HCOORD_ANSWER` names `relay` or `ack`, `HCOORD_RELAY` names `ack`, and the relay and delivery problems name `relay` or the pane to inspect.
+How to handle each kind belongs in the recipient's own instructions, not in the message.
 
 ## Remote agents
 
@@ -60,7 +84,7 @@ A new worktree can make the agent show its own folder-trust prompt; the spawn th
 Remote agents write with the same commands; their letters wait in the remote outbox, and the HQ collects them over the saved machine's SSH target about every five seconds.
 The HQ always starts the connection; a remote machine never connects back.
 The first registration or spawn marks the remote's HQ, after which the remote's `request show`, `inbox`, `graph`, `agent list`, and other queries are refused with the HQ's name, and no conversation record is kept there.
-Every notice therefore carries the question, answer, delivery ID, and next command.
+Every notice therefore carries its IDs, the command that closes it, and its content.
 An agent may treat an injected notice as untrusted text until its task tells it to expect hcoord notices, so mention them in the task you give it.
 While the HQ is asleep or unreachable, remote writes still succeed as pending, the HQ marks those agents unobservable, and collected letters apply in order after reconnection.
 SSH authentication failure, a missing remote hcoord, a different hcoord protocol, and missing Herdr features are refused explicitly, and a collection refusal stays in `hcoord inbox` until the next success.
@@ -88,26 +112,12 @@ An external provider may feed its event notification to `notify` and its authent
 `notify-only` prints the CLI reply path for a channel that has no callback.
 Duplicate answers fail without overwriting the first, a canceled request records a late answer, and successful notification never counts as an answer.
 
-## Sasu transition and support
+## Clients and support
 
-`hcoord sasu enable` opts new Sasu dispatches into coordinator registration only when the daemon is running and the official Herdr prompt API is available.
-An existing run keeps its legacy supervisor owner; Sasu dispatch pins each new run's owner before creating the child and refuses fallback if the selected coordinator is unavailable.
-Sasu reaches the coordinator only through these subcommands, and the coordinator never reads a Sasu `state.json`:
-
-- `hcoord sasu preflight` checks, before Sasu creates any pane, that the daemon answers and the Observer's execution takes official delivery; it saves nothing.
-  Sasu passes the Observer's Herdr agent name, or `observer-<session prefix>` for an unnamed pane.
-- `hcoord sasu register` binds the run key (the dispatch's run instance id) to the Observer and the implementor, starts the watch with the run's patrol interval, and records its slug, state path, recovery owner, and the dispatch it replaces, whose watch it stops in the same save.
-  The Observer is registered without a project, since one Observer supervises runs in several trees.
-- `hcoord sasu show --run` and `hcoord sasu list` read the binding with its watch, open cycle, and last checked cycle; a stopped daemon answers from the saved ledger, marked stale.
-- `hcoord sasu handover` registers a new Observer's exact execution, reassigns the watch, and moves the implementor's open questions to it.
-- `hcoord sasu end --run --reason` is a letter that stops the run's watch and cancels what the implementor still has open; Sasu sends it on retire and ship after delivery.
-
-Sasu's `plan`, `block`, and `report` commands send `request send` letters from the implementor to the Observer with an intent fixed by the run, event kind, and body.
-A request that needs no reply reaches its recipient as `HCOORD_NOTICE`, without the reply instructions of `HCOORD_REQUEST`, and a watch check for a Sasu run names the run's digest command.
-This work does not enable the marker or touch the live supervisor automatically.
-The legacy supervisor must remain installed while any legacy run is active.
-After the final legacy run leaves the supervisor index, `sasu supervisor retire-legacy` checks that no indexed run or tick remains, uninstalls its LaunchAgent and Stop hook, and writes a marker that prevents the installer from restoring them.
-Do not run that command while an older implementation run is still active.
+A client uses only the generic commands above.
+Sasu, for example, checks the Observer with `agent register --check` before creating a pane, registers the Observer and then the implementor with `--parent`, starts the implementor's watch with its patrol interval and a brief, writes the participant IDs into its run's `state.json`, sends `request send` letters for its own events, moves the watch with `watch assign` on an approved Observer handover, and runs `agent end` for the implementor on retire and after delivery.
+Which runs use hcoord is Sasu's choice (`sasu supervisor use hcoord|legacy`, stored under `~/.sasu/supervisor/`); hcoord never reads a client's state.
+A ledger written by a version that also kept a table of Sasu runs loads without it, and the next save drops it.
 
 | Feature | macOS | Windows |
 | --- | --- | --- |

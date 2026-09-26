@@ -146,26 +146,34 @@ Do not run a background command to wait on the run: a finished background comman
 ## hcoord Supervision
 
 Dispatch pins each run's supervision owner before a pane exists, and a run never has two.
-While `~/.hcoord/sasu-enabled` exists, a new run belongs to hcoord.
+After `sasu supervisor use hcoord` (stored as `~/.sasu/supervisor/use-hcoord`), a new run belongs to hcoord; `sasu supervisor use legacy` switches new runs back.
 Without it, and for every run first dispatched under the legacy supervisor, [The Supervisor Tick](#the-supervisor-tick) keeps the run until it ends.
+After the final legacy run leaves the supervisor index, `sasu supervisor retire-legacy` removes the tick's LaunchAgent and Stop hook and writes `~/.sasu/supervisor/legacy-retired`, so no later install restores them; it refuses while a legacy run or tick remains.
 
-An hcoord dispatch checks the coordinator before it creates anything, with `hcoord sasu preflight`.
-The daemon must answer and hcoord must be able to deliver to the Observer's execution.
+hcoord knows participants and their parent, watch and request relations, and nothing about Sasu.
+Which participants make up a run is written only in its `state.json` (`supervision.hcoord`: the Observer and Implementor participant IDs, the interval and the recovery owner).
+An hcoord dispatch checks the Observer before it creates anything, with `hcoord agent register --check`: the daemon must answer, the Observer's pane must hold its recorded session, and hcoord must be able to deliver to it.
 An Observer pane without a Herdr agent name is recorded as `observer-<first 8 characters of its session id>`; the pane is not renamed.
 A refusal there creates nothing and never falls back to the legacy supervisor.
-After the Implementor starts, dispatch records its exact identity first and then registers both participants, a watch whose interval is `--patrol` (default 15 minutes), and the recovery owner.
+After the Implementor starts, dispatch records its exact identity first, then registers the Observer, the Implementor as its child, and the Implementor's watch, whose interval is `--patrol` (default 15 minutes) and whose brief names the digest command and the recovery owner.
 A registration refused after start leaves a started record: fix the reported cause and run `sasu implement dispatch --resume-handoff` with the packet on stdin, which registers and then hands off.
+Runs registered before `state.json` held their participant IDs are moved once with `sasu supervisor migrate-hcoord --state <state.json> ...`, which finds both participants in `hcoord agent list` by pane and session and reports any run it cannot match.
 
-What reaches the Observer:
+What reaches the Observer.
+Each notice is only an identifier line, the command that closes it, and its content; how to handle it is here, not in the message.
 
 | Notice | Sent when | The Observer |
 | --- | --- | --- |
-| `HCOORD_WATCH_CHECK` | every watch interval | reads `sasu implement status --slug <slug> --digest` and the Implementor's pane, applies [Looking And Acting](#looking-and-acting) to the commits and drift facts there, then closes the cycle with the `hcoord watch check` command the notice names; when it cannot inspect, it leaves the cycle open and ends the turn |
+| `HCOORD_WATCH_CHECK <implementor> cycle <cycle>` | every watch interval while the Implementor works, and once when it stops working | reads `sasu implement status --slug <slug> --digest` (the brief under the `close:` line) and the Implementor's pane, applies [Looking And Acting](#looking-and-acting) to the commits and drift facts there; if verify is PASS and the PR is merged it runs `sasu implement retire --slug <slug>`, otherwise it runs the `close:` command; when it cannot inspect, it leaves the cycle open and ends the turn |
 | `HCOORD_NOTICE` with `SASU_PLAN` | `sasu implement plan` | reads the plan; answers only a "What I decide and go with" item it disagrees with, or a structure that differs from the PRD |
-| `HCOORD_REQUEST` with `SASU_BLOCK` | `sasu implement block` | decides from the handoff or asks the user, as below |
+| `HCOORD_REQUEST` with `SASU_BLOCK` | `sasu implement block` | decides from the handoff or asks the user, as below, with the `reply:` or `escalate:` command the notice names |
 | `HCOORD_NOTICE` with `SASU_REPORT` | `sasu implement report` | reads the current status and report; the notice alone completes nothing |
+| `HCOORD_ANSWER` | a person's answer to an escalated block is recorded | relays it with the `relay:` command, as below |
+| `HCOORD_RELAY_PROBLEM`, `HCOORD_DELIVERY_PROBLEM` | a recorded answer is not relayed, or the Implementor has not acknowledged a relay, after 15 minutes | relays the recorded answer, or inspects the Implementor's pane and tells the user if it is gone |
 
-A cycle left unchecked is reminded once after 15 minutes and reaches `hcoord inbox` after 30 minutes (hcoord's `remindMs` and `escalateMs`).
+Patrol is quiet while the Implementor rests: once it stops working (idle, done, blocked or gone) the Observer gets one watch check for that change, and no further check, reminder or inbox item comes until it works again.
+So a run waiting only for a merge approval wakes the Observer once, and the Observer that sees verify PASS and the PR merged retires the run instead of closing the cycle.
+While the Implementor works, a cycle left unchecked is reminded once after 15 minutes and reaches `hcoord inbox` after 30 minutes (hcoord's `remindMs` and `escalateMs`).
 Commits and drift facts wake nobody on their own: the Observer reads them in the digest at the next cycle, and a drift fact found there still needs one move.
 The plan, block and report commands record their Sasu event first and send once per content; a stopped daemon keeps the notice in the outbox, and a refusal fails the command with the retry to run.
 
@@ -182,17 +190,17 @@ Answering a block:
 Recovery on an hcoord run:
 
 - A gone Implementor is found at the next watch cycle; dispatch one replacement with `--adopt`, as in [Recovery And Completion](#recovery-and-completion).
-  The replacement joins the same run and hcoord stops watching the gone one.
-- A changed Observer session receives nothing until `sasu supervisor handover --slug <slug> --approval "<verbatim user words>"` from the new Observer's pane moves the watch and any question still waiting.
+  The replacement joins the same run as a child of the same Observer, and dispatch runs `hcoord agent end` for the gone one so hcoord stops watching it.
+- A changed Observer session receives nothing until `sasu supervisor handover --slug <slug> --approval "<verbatim user words>"` from the new Observer's pane registers it and runs `hcoord watch assign`, which moves the watch, any question still waiting, and any answer not yet relayed.
 - A Herdr restart that only rotates terminal ids or clears agent names changes nothing: hcoord knows a participant by its machine, pane and session, so notices keep arriving and no handover is needed.
-- `--recovery-owner task-factory` is recorded with the registration and shown by status; hcoord still wakes only the recorded Observer.
-- `sasu implement retire` and a completed `/ship` delivery end the watch.
+- `--recovery-owner task-factory` is recorded in `state.json`, shown by status, and written in the watch brief; hcoord still wakes only the recorded Observer.
+- `sasu implement retire` and a completed `/ship` delivery or merge run `hcoord agent end` for the Implementor: its watch stops and its open questions are canceled, and a rerun of either is the retry.
 
-Where to look: `sasu implement status` names the owner, participants and interval; `--digest` adds the coordinator's open and last closed cycle; `hcoord watch list` shows each watch with its run; `hcoord inbox` shows what waits on a person; `sasu supervisor status` lists hcoord-owned runs by slug.
+Where to look: `sasu implement status` names the owner, participants and interval; `--digest` adds the coordinator's open and last closed cycle and whether patrol is quiet, read by the participant IDs in `state.json`; `hcoord watch list` shows each watch with its brief; `hcoord inbox` shows what waits on a person; `sasu supervisor status` lists hcoord-owned runs by slug.
 
 ## The Supervisor Tick
 
-This section applies to legacy runs, those dispatched without `~/.hcoord/sasu-enabled`.
+This section applies to legacy runs, those dispatched while new dispatches used the legacy supervisor.
 One user LaunchAgent runs `sasu supervisor tick` every 30 seconds for every run on the machine.
 It is level-triggered: each tick re-reads the index of watched `state.json` paths, each run's record and git tree, and herdr's `agent get` for the Implementor and the Observer, and reaches its verdict from those facts alone.
 It writes no run state and holds no cursor, so a tick killed at any point, or a machine rebooted, reaches the same verdict on the next tick; the only cost is one interval of delay.
