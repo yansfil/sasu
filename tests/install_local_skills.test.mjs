@@ -152,8 +152,8 @@ test("installer installs canonical skills with correct substitutions and no alia
 test("installer keeps the legacy supervisor and Stop hook retired after hcoord transition", () => {
   const home = freshHome();
   runInstaller(home);
-  fs.mkdirSync(path.join(home, ".hcoord"), { recursive: true });
-  fs.writeFileSync(path.join(home, ".hcoord", "sasu-enabled"), "test\n");
+  fs.mkdirSync(path.join(home, ".sasu", "supervisor"), { recursive: true });
+  fs.writeFileSync(path.join(home, ".sasu", "supervisor", "use-hcoord"), "test\n");
   const launchctl = installFakeLaunchctl(path.join(home, "fakes"));
   const retired = spawnSync(process.execPath, [path.join(repoRoot, "cli", "dist", "cli.js"), "supervisor", "retire-legacy", "--json"], {
     cwd: repoRoot, encoding: "utf8", env: { ...process.env, HOME: home, ...launchctl.env },

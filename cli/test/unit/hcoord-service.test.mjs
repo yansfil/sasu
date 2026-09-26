@@ -6,7 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { emptyLedger, MAX_EVENTS } from "../../dist/hcoord/model.js";
 import { execute } from "../../dist/hcoord/service.js";
-import { loadLedger } from "../../dist/hcoord/store.js";
+import { inputReadiness, messageForDelivery } from "../../dist/hcoord/herdr.js";
+import { loadLedger, saveLedger } from "../../dist/hcoord/store.js";
 import { callDaemon } from "../../dist/hcoord/transport.js";
 
 test("a denied local socket gives the caller a permission cause and next action", { skip: process.platform === "win32" }, async (t) => {
@@ -484,4 +485,149 @@ test("completed spawn progress clears old pending guidance and same-intent retry
   assert.equal(repaired.value.reason, null);
   assert.equal(repaired.value.initialization, "complete");
   assert.equal(repaired.value.participant, complete.participant.id);
+});
+
+test("D-17: an idle or done recipient without a readiness flag takes input; working or a false flag holds it", () => {
+  assert.equal(inputReadiness("idle", null).ready, true, "a hand-started idle Observer");
+  assert.equal(inputReadiness("done", null).ready, true);
+  assert.equal(inputReadiness("working", null).ready, false);
+  assert.equal(inputReadiness("unknown", null).ready, false);
+  assert.equal(inputReadiness("idle", false).ready, false, "a false flag still holds");
+  assert.equal(inputReadiness("idle", true).ready, true);
+  assert.equal(inputReadiness("working", true).ready, false);
+});
+
+test("D-18: registering the same pane and session keeps one participant and records its current terminal and name; the session in another pane under that name conflicts", () => {
+  const at = "2026-09-26T00:00:00.000Z", state = emptyLedger(at);
+  const register = (fields) => execute(state, "agent.register", { machine: "local", hostScope: "default", session: "s", instance: "t1", name: "observer", pane: "w1:p1", runtime: "idle", ...fields }, at).value;
+  const first = register();
+  // Registered under the older terminal rule: a second record for the same execution.
+  state.participants["a_legacy"] = { ...first, id: "a_legacy", instance: "t2", name: "observer-2" };
+  assert.equal(register({ instance: "t3", name: "observer-2" }).id, "a_legacy", "the record already carrying the requested name is kept");
+  const renamed = register({ instance: "t4", name: "observer-3" });
+  assert.equal(renamed.id, "a_legacy", "otherwise the latest record");
+  assert.deepEqual([renamed.instance, renamed.name], ["t4", "observer-3"]);
+  assert.equal(state.events.filter((entry) => entry.type === "agent.binding_refreshed").length, 2);
+  assert.throws(() => register({ pane: "w1:p9", name: "observer" }), { code: "identity_conflict", message: /another pane/ });
+});
+
+/** An observer watching a target, a second observer, and the ledger they share. */
+function watchedLedger(at, runtime = "working") {
+  const state = emptyLedger(at);
+  const register = (name, parent = null) => execute(state, "agent.register", { machine: "local", hostScope: "default", session: `s-${name}`, instance: `t-${name}`, name, pane: `${name}-pane`, parent, runtime }, at).value.id;
+  const observer = register("observer");
+  const target = register("target", observer);
+  const next = register("next");
+  execute(state, "watch.start", { target, observer, actor: observer, intervalMs: 60_000, brief: "read the digest\n-> done: end it" }, at);
+  return { state, observer, target, next };
+}
+
+test("D-19: watch assign moves the open question and the unrelayed answer to the new observer with the watch", () => {
+  const at = "2026-09-26T00:00:00.000Z";
+  const { state, observer, target, next } = watchedLedger(at);
+  const open = execute(state, "request.send", { from: target, to: observer, body: "which?", intent: "q-open", waiting: true }, at).value;
+  const answered = execute(state, "request.send", { from: target, to: observer, body: "which one?", intent: "q-answered", waiting: true }, at).value;
+  execute(state, "request.escalate", { id: answered.id, actor: observer }, at);
+  execute(state, "request.reply", { id: answered.id, body: "A", respondent: "human", recordedBy: observer }, at);
+  const assigned = execute(state, "watch.assign", { target, observer: next, actor: "human", expectedGeneration: "1" }, at).value;
+  assert.equal(assigned.brief, "read the digest\n-> done: end it", "the brief stays with the watch");
+  assert.equal(state.requests[open.id].to, next);
+  assert.ok(state.requests[open.id].deliveries.some((delivery) => delivery.recipient === next && delivery.status === "pending"));
+  assert.equal(state.requests[open.id].deliveries.some((delivery) => delivery.recipient === observer && delivery.status === "pending"), false);
+  assert.equal(state.requests[answered.id].intermediary, next, "the new observer relays the recorded answer");
+  assert.throws(() => execute(state, "request.relay", { id: answered.id, actor: observer, body: "A" }, at), /authority/);
+  execute(state, "request.relay", { id: answered.id, actor: next, body: "A" }, at);
+  assert.equal(state.events.at(-2).detail.movedRequests, 2);
+});
+
+test("D-20: agent end stops the target's watch, drops its open cycle, cancels its questions, and a second end changes nothing", () => {
+  const at = "2026-09-26T00:00:00.000Z";
+  const { state, observer, target } = watchedLedger(at);
+  execute(state, "tick", { runRetention: false }, "2026-09-26T00:01:00.000Z");
+  const cycle = state.watches[target].requestId;
+  assert.notEqual(cycle, null);
+  const question = execute(state, "request.send", { from: target, to: observer, body: "which?", intent: "q", waiting: true }, at).value;
+  assert.throws(() => execute(state, "agent.end", { id: target, actor: "a_stranger" }, at), { code: "forbidden" });
+  const ended = execute(state, "agent.end", { id: target, actor: observer }, at);
+  assert.equal(ended.changed, true);
+  assert.equal(ended.value.watchStopped, true);
+  assert.deepEqual(ended.value.canceled.sort(), [cycle, question.id].sort());
+  assert.equal(state.watches[target].status, "stopped");
+  assert.equal(state.watches[target].cycle, null);
+  assert.equal(execute(state, "inbox", {}, at).value.length, 0, "nothing of the ended participant reaches a person");
+  const before = state.seq;
+  const again = execute(state, "agent.end", { id: target, actor: "human" }, at);
+  assert.equal(again.changed, false);
+  assert.equal(state.seq, before);
+  execute(state, "tick", { runRetention: false }, "2026-09-26T02:00:00.000Z");
+  assert.equal(Object.values(state.requests).filter((item) => item.status === "open").length, 0, "no cycle, reminder or escalation after end");
+});
+
+test("D-20: a resting target gets one check for the change, no cycle, reminder or escalation while it rests, and patrol resumes when it works", () => {
+  const at = "2026-09-26T00:00:00.000Z";
+  const { state, observer, target } = watchedLedger(at);
+  const tick = (minutes) => execute(state, "tick", { runRetention: false }, new Date(Date.parse(at) + minutes * 60_000).toISOString());
+  const cycles = () => Object.values(state.requests).filter((item) => item.intent.startsWith("watch:"));
+  tick(1);
+  execute(state, "watch.check", { target, cycle: state.watches[target].cycle, actor: observer }, at);
+  assert.equal(cycles().length, 1, "a working target is patrolled");
+  state.participants[target].runtime = "idle";
+  tick(3);
+  assert.equal(cycles().length, 2, "the change to idle is announced once");
+  assert.notEqual(state.watches[target].quietSince, null);
+  const transition = cycles().at(-1);
+  for (let minute = 4; minute <= 120; minute += 1) tick(minute);
+  assert.equal(cycles().length, 2, "no further cycle while the target rests");
+  assert.equal(transition.remindedAt, null, "the open check is not reminded while the target rests");
+  assert.equal(transition.escalatedAt, null);
+  assert.equal(execute(state, "inbox", {}, at).value.length, 0);
+  execute(state, "watch.check", { target, cycle: state.watches[target].cycle, actor: observer }, at);
+  state.participants[target].runtime = "done";
+  tick(130);
+  assert.equal(cycles().length, 2, "idle to done is still resting");
+  state.participants[target].runtime = "working";
+  tick(140);
+  assert.equal(state.watches[target].quietSince, null);
+  assert.equal(cycles().length, 3, "patrol resumes once the target works again");
+  assert.deepEqual(state.events.filter((entry) => entry.type === "watch.quiet" || entry.type === "watch.resumed").map((entry) => entry.type), ["watch.quiet", "watch.resumed"]);
+});
+
+test("D-21: every hcoord message is an identifier line, the command that closes it, and the carried content", () => {
+  const at = "2026-09-26T00:00:00.000Z";
+  const { state, observer, target } = watchedLedger(at);
+  execute(state, "tick", { runRetention: false }, "2026-09-26T00:01:00.000Z");
+  const watch = state.watches[target];
+  const check = state.requests[watch.requestId];
+  const peer = state.participants[target];
+  assert.equal(messageForDelivery(check, check.deliveries[0], watch, peer), [
+    `HCOORD_WATCH_CHECK target (${target}) cycle ${watch.cycle}`,
+    `close: hcoord watch check ${target} --cycle ${watch.cycle} --actor ${observer}`,
+    "read the digest",
+    "-> done: end it",
+  ].join("\n"));
+  const asked = execute(state, "request.send", { from: target, to: observer, body: "which?", intent: "q", waiting: true }, at).value;
+  const request = messageForDelivery(asked, asked.deliveries[0], null, peer).split("\n");
+  assert.deepEqual(request, [`HCOORD_REQUEST ${asked.id} from target (${target})`, `reply: hcoord request reply ${asked.id} --as ${observer} --body <answer> | escalate: hcoord request escalate ${asked.id} --actor ${observer}`, "which?"]);
+  const told = execute(state, "request.send", { from: target, to: observer, body: "plan ready", intent: "n", notifyOnly: true }, at).value;
+  assert.deepEqual(messageForDelivery(told, told.deliveries[0], null, peer).split("\n"), [`HCOORD_NOTICE ${told.id} from target (${target})`, "no reply needed", "plan ready"]);
+  execute(state, "request.reply", { id: asked.id, body: "B", respondent: observer, recordedBy: observer }, at);
+  const answer = state.requests[asked.id].deliveries.at(-1);
+  assert.deepEqual(messageForDelivery(state.requests[asked.id], answer, null).split("\n"), [`HCOORD_ANSWER ${asked.id}`, `ack: hcoord request ack ${asked.id} --actor ${target} --delivery ${answer.id}`, "answer: B"]);
+});
+
+// Older ledgers kept a table of Sasu runs; the loader keeps only fields it knows, so any such table is dropped.
+test("B24: a ledger field this version does not know, such as an old table of one client's runs, loads away and the next save drops it", (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "hcoord-old-ledger-"));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const previous = process.env.HCOORD_HOME;
+  process.env.HCOORD_HOME = path.join(home, "data");
+  t.after(() => { if (previous === undefined) delete process.env.HCOORD_HOME; else process.env.HCOORD_HOME = previous; });
+  const old = { ...emptyLedger("2026-09-26T00:00:00.000Z"), clientRuns: { "run-1": { observer: "a_1", implementor: "a_2" } } };
+  fs.mkdirSync(path.join(home, "data"), { recursive: true });
+  fs.writeFileSync(path.join(home, "data", "ledger.json"), JSON.stringify(old));
+  const loaded = loadLedger();
+  assert.equal(Object.hasOwn(loaded, "clientRuns"), false);
+  saveLedger(loaded);
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(path.join(home, "data", "ledger.json"), "utf8")), "clientRuns"), false);
+  assert.deepEqual(Object.keys(execute(loaded, "status", {}, "2026-09-26T00:00:00.000Z").value.counts).sort(), ["agents", "events", "requests", "watches"]);
 });

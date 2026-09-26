@@ -1,5 +1,5 @@
 import path from "node:path";
-import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_LETTER_RECORDS, MAX_BODY_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, validateSpawnSpec, type Delivery, type Ledger, type LetterRecord, type Participant, type Request, type Watch } from "./model";
+import { DEFAULTS, event, HcoordError, id, MAX_AGENTS, MAX_LETTER_RECORDS, MAX_BODY_BYTES, MAX_BRIEF_BYTES, MAX_EVENTS, MAX_MESSAGE_BYTES, MAX_QUEUE, MAX_REQUESTS, MAX_SPAWN_INTENTS, MAX_WATCH_HISTORY, SPAWN_EVENT_SLOTS, own, put, sameExecution, validateSpawnSpec, type Delivery, type Ledger, type LetterRecord, type Participant, type Request, type SpawnIntent, type Watch } from "./model";
 
 type Args = Record<string, unknown>;
 const isHere = (machine: string): boolean => machine === "local" || machine === require("node:os").hostname();
@@ -18,6 +18,12 @@ const optional = (args: Args, key: string): string | null => {
 const body = (args: Args, key = "body"): string => {
   const value = required(args, key);
   if (Buffer.byteLength(value) > MAX_BODY_BYTES) throw new HcoordError("capacity", `${key} exceeds ${MAX_BODY_BYTES} bytes`);
+  return value;
+};
+const brief = (args: Args): string | null => {
+  const value = optional(args, "brief");
+  if (value === null || value.trim() === "") return null;
+  if (Buffer.byteLength(value) > MAX_BRIEF_BYTES) throw new HcoordError("capacity", `brief exceeds ${MAX_BRIEF_BYTES} bytes`);
   return value;
 };
 const person = (state: Ledger, agentId: string): Participant => {
@@ -81,6 +87,31 @@ const retireUnsent = (item: Request, reason: string, phase?: Delivery["phase"]):
   }
 };
 /**
+ * Questions the target asked the old observer, and answers a person gave
+ * through the old observer that it has not relayed yet, move to the new
+ * observer with the watch, so none waits on a session that left (PRD B15).
+ */
+function moveLetters(state: Ledger, target: string, from: string, to: string, at: string): number {
+  let moved = 0;
+  for (const item of Object.values(state.requests)) {
+    if (item.from !== target || uncheckedWatchRequest(state, item)) continue;
+    if (item.status === "open" && item.to === from) {
+      retireUnsent(item, "watch assigned to another observer before submission");
+      item.to = to;
+      queueDelivery(item, to, at);
+      moved += 1;
+    } else if (pendingRelay(item) && item.intermediary === from) {
+      retireUnsent(item, "watch assigned to another observer before the answer was relayed", "answer");
+      retireUnsent(item, "watch assigned to another observer before the answer was relayed", "relay_problem");
+      item.intermediary = to;
+      queueDelivery(item, to, at, "answer");
+      moved += 1;
+    }
+  }
+  return moved;
+}
+
+/**
  * Records a letter in the same ledger save as its effect, so a crash before the
  * outbox deletion re-reads a letter the ledger already knows (PRD B10).
  */
@@ -100,11 +131,17 @@ export function openWork(state: Ledger): { requests: Array<{ id: string; from: s
   };
 }
 
+/** Whether a spawn's execution is still the one first observed in its saved pane (D-18). */
+function spawnObservationHolds(record: SpawnIntent, session: string, instance: string): boolean {
+  const recorded = { machine: record.machine, hostScope: record.hostScope, pane: record.pane, session: record.observedSession ?? null, instance: record.observedInstance ?? null };
+  return (recorded.session === null && recorded.instance === null) || sameExecution(recorded, { ...recorded, session, instance });
+}
+
 export function execute(state: Ledger, operation: string, args: Args, at: string): Outcome {
   if (operation === "status") return { changed: false, value: {
     schema: state.schema, at, lastUpdatedAt: state.updatedAt, eventCursor: state.seq, counts: {
       agents: Object.keys(state.participants).length, watches: Object.values(state.watches).filter((w) => w.status === "active").length,
-      requests: Object.values(state.requests).filter((r) => !terminalRequest(state, r)).length, events: state.events.length, sasuRuns: Object.keys(state.sasuRuns).length,
+      requests: Object.values(state.requests).filter((r) => !terminalRequest(state, r)).length, events: state.events.length,
     }, caps: { agents: MAX_AGENTS, requests: MAX_REQUESTS, spawnIntents: MAX_SPAWN_INTENTS, watchHistory: MAX_WATCH_HISTORY, events: 20000, ledgerBytes: 64 * 1024 * 1024, messageBytes: MAX_MESSAGE_BYTES, connections: 64, queuedOperations: MAX_QUEUE }, config: state.config,
   } };
   if (operation === "config.set") {
@@ -117,16 +154,22 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
   }
   if (operation === "agent.register") {
     const machine = required(args, "machine"), hostScope = required(args, "hostScope"), session = required(args, "session"), instance = required(args, "instance"), name = required(args, "name");
-    const matches = Object.values(state.participants).filter((p) => p.machine === machine && p.hostScope === hostScope && p.session === session && p.instance === instance);
-    if (matches.length) {
-      const existing = matches[0]!;
+    const binding = { machine, hostScope, pane: optional(args, "pane"), session, instance };
+    // Participants registered under the older terminal rule can share one
+    // execution; the one already carrying the requested name is kept, else the latest.
+    const matches = Object.values(state.participants).filter((p) => sameExecution(p, binding));
+    const existing = matches.find((p) => p.name === name) ?? matches.at(-1);
+    const namesakes = Object.values(state.participants).filter((p) => p.machine === machine && p.hostScope === hostScope && p.session === session && p.name === name && !sameExecution(p, binding));
+    if (namesakes.length) throw new HcoordError("identity_conflict", "name belongs to the same session in another pane", { candidates: namesakes });
+    if (existing) {
       const project = optional(args, "project");
-      if (existing.name !== name || existing.pane !== optional(args, "pane") || existing.parent !== optional(args, "parent") || (project !== null && existing.project !== null && existing.project !== path.resolve(project))) throw new HcoordError("identity_conflict", "runtime identity already has a different name, pane, parent, or project; inspect the exact binding before changing it", { candidates: matches });
+      if (existing.parent !== optional(args, "parent") || (project !== null && existing.project !== null && existing.project !== path.resolve(project))) throw new HcoordError("identity_conflict", "this execution is registered with a different parent or project; inspect the exact binding before changing it", { candidates: matches });
+      // Terminal and name are recorded, never matched (D-18): a registration keeps them current.
+      const refreshed = existing.instance !== instance || existing.name !== name;
+      if (refreshed) { event(state, at, "agent.binding_refreshed", existing.id, null, { instance, name, previousInstance: existing.instance, previousName: existing.name }); existing.instance = instance; existing.name = name; }
       if (project !== null && existing.project === null) { existing.project = path.resolve(project); event(state, at, "agent.project_attached", existing.id); return { changed: true, value: existing }; }
-      return { changed: false, value: existing };
+      return { changed: refreshed, value: existing };
     }
-    const namesakes = Object.values(state.participants).filter((p) => p.machine === machine && p.hostScope === hostScope && p.session === session && p.name === name);
-    if (namesakes.length) throw new HcoordError("identity_conflict", "name belongs to a different execution instance", { candidates: namesakes });
     if (Object.keys(state.participants).length >= MAX_AGENTS) throw new HcoordError("capacity", `participant limit ${MAX_AGENTS} reached`);
     const parent = optional(args, "parent");
     if (parent !== null) person(state, parent);
@@ -218,8 +261,7 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const record = own(state.spawnIntents, required(args, "intent"));
     if (!record || record.pane === null || record.status === "complete") throw new HcoordError("invalid_state", "spawn has no active saved pane");
     const instance = required(args, "instance"), session = required(args, "runtimeSession");
-    if ((record.observedInstance !== null && record.observedInstance !== undefined && record.observedInstance !== instance)
-      || (record.observedSession !== null && record.observedSession !== undefined && record.observedSession !== session)) throw new HcoordError("identity_conflict", "spawn execution differs from its first observation");
+    if (!spawnObservationHolds(record, session, instance)) throw new HcoordError("identity_conflict", "spawn execution differs from its first observation");
     record.observedInstance = instance; record.observedSession = session;
     event(state, at, "agent.spawn_identity", record.parent, record.key, { pane: record.pane });
     return { changed: true, value: record };
@@ -229,9 +271,8 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     if (!record || record.pane === null) throw new HcoordError("not_found", "spawn pane is not recorded");
     if (record.status === "complete") return { changed: false, value: { intent: record, participant: state.participants[record.participant!] } };
     const runtimeSession = required(args, "runtimeSession"), instance = required(args, "instance");
-    if ((record.observedInstance !== null && record.observedInstance !== undefined && record.observedInstance !== instance)
-      || (record.observedSession !== null && record.observedSession !== undefined && record.observedSession !== runtimeSession)) throw new HcoordError("identity_conflict", "spawn execution changed before registration");
-    const matches = Object.values(state.participants).filter((p) => p.machine === record.machine && p.hostScope === record.hostScope && p.session === runtimeSession && p.instance === instance);
+    if (!spawnObservationHolds(record, runtimeSession, instance)) throw new HcoordError("identity_conflict", "spawn execution changed before registration");
+    const matches = Object.values(state.participants).filter((p) => sameExecution(p, { machine: record.machine, hostScope: record.hostScope, pane: record.pane, session: runtimeSession, instance }));
     if (matches.length) throw new HcoordError("identity_conflict", "spawned execution is already registered elsewhere", { candidates: matches });
     if (Object.keys(state.participants).length >= MAX_AGENTS) throw new HcoordError("capacity", `participant limit ${MAX_AGENTS} reached; retain the saved spawn and resolve retention before registration`);
     const runtime = required(args, "runtime") as Participant["runtime"];
@@ -268,6 +309,30 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const participant = person(state, required(args, "id"));
     return { changed: false, value: { ...participant, watch: state.watches[participant.id] ?? null, requests: Object.values(state.requests).filter((r) => r.from === participant.id || r.to === participant.id).map((r) => ({ id: r.id, status: r.status })) } };
   }
+  if (operation === "agent.end") {
+    // A participant leaves (D-20): its watch stops, an unchecked cycle is
+    // dropped, and every question it still has open is canceled, so no wake,
+    // reminder or inbox item outlives it. Ending it again changes nothing.
+    const participant = person(state, required(args, "id")), actor = required(args, "actor");
+    const watch = own(state.watches, participant.id);
+    authority(actor, [participant.id, participant.parent, watch?.observer ?? null]);
+    let watchStopped = false, cycleDropped = false;
+    const canceled: string[] = [];
+    if (watch?.status === "active") { watch.status = "stopped"; watch.stoppedAt = at; watchStopped = true; event(state, at, "watch.stopped", watch.target, null, { generation: watch.generation }); }
+    // A watch stopped earlier keeps its unchecked cycle for a restart; its request is canceled below.
+    if (watch && watch.cycle !== null) { watch.cycle = null; watch.requestId = null; cycleDropped = true; }
+    for (const item of Object.values(state.requests)) {
+      if (item.from !== participant.id || item.status !== "open") continue;
+      item.status = "canceled"; item.canceledAt = at;
+      for (const delivery of item.deliveries) if (delivery.status === "pending" || delivery.status === "deferred") { delivery.status = "failed"; delivery.reason = "participant ended before submission"; }
+      event(state, at, "request.canceled", item.id, item.intent);
+      canceled.push(item.id);
+    }
+    const value = { participant: participant.id, watchStopped, canceled };
+    if (!watchStopped && !cycleDropped && canceled.length === 0) return { changed: false, value };
+    event(state, at, "agent.ended", participant.id, null, { by: actor, watchStopped, canceled: canceled.length });
+    return { changed: true, value };
+  }
   if (operation === "watch.start" || operation === "watch.assign") {
     const target = person(state, required(args, "target"));
     const observer = person(state, required(args, "observer"));
@@ -289,10 +354,12 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       state.watchHistory.push({ ...previous, status: "stopped", stoppedAt: previous.stoppedAt ?? at });
     }
     const carryCycle = previous !== undefined && previous.cycle !== null && carriedRequest !== undefined && carriedRequest.status !== "canceled";
+    // A new observer starts outside quiet, so it hears once about a target that is already resting.
     const watch: Watch = { target: target.id, observer: observer.id, generation: (previous?.generation ?? 0) + 1, status: "active", intervalMs,
       dueAt: carryCycle ? previous!.dueAt : timed(at, intervalMs),
       cycle: carryCycle ? previous!.cycle : null, requestId: carryCycle ? carriedRequest!.id : null,
-      checkedAt: previous?.checkedAt ?? null, startedAt: at, stoppedAt: null, observation: previous?.observation ?? null };
+      checkedAt: previous?.checkedAt ?? null, startedAt: at, stoppedAt: null, observation: previous?.observation ?? null,
+      brief: brief(args) ?? previous?.brief ?? null, quietSince: null };
     if (carryCycle && carriedRequest) {
       const sameObserver = previous!.observer === observer.id;
       if (!sameObserver) retireUnsent(carriedRequest, "watch assigned to another observer");
@@ -302,8 +369,9 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       const existingWake = sameObserver && carriedRequest.deliveries.some((delivery) => delivery.recipient === observer.id && (delivery.phase ?? "request") === phase && ["pending", "deferred", "unknown", "accepted", "acknowledged"].includes(delivery.status));
       if (!existingWake) queueDelivery(carriedRequest, observer.id, at, phase);
     }
+    const moved = operation === "watch.assign" && previous?.observer != null && previous.observer !== observer.id ? moveLetters(state, target.id, previous.observer, observer.id, at) : 0;
     put(state.watches, target.id, watch);
-    event(state, at, previous ? "watch.assigned" : "watch.started", target.id, null, { observer: observer.id, generation: watch.generation });
+    event(state, at, previous ? "watch.assigned" : "watch.started", target.id, null, { observer: observer.id, generation: watch.generation, movedRequests: moved });
     return { changed: true, value: watch };
   }
   if (operation === "watch.stop") {
@@ -492,19 +560,12 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       if (history.length !== state.watchHistory.length) { state.watchHistory = history; state.prunedBefore = at; changed = true; }
       const watchRefs = new Set<string>();
       for (const watch of [...Object.values(state.watches), ...state.watchHistory]) { watchRefs.add(watch.target); if (watch.observer !== null) watchRefs.add(watch.observer); }
-      for (const [run, binding] of Object.entries(state.sasuRuns)) {
-        const implementor = own(state.participants, binding.implementor);
-        if (Date.parse(binding.registeredAt) < before && implementor?.runtime === "done" && own(state.watches, binding.implementor)?.status !== "active" && !unresolvedRefs.has(binding.implementor) && !unresolvedRefs.has(binding.observer)) {
-          delete state.sasuRuns[run]; state.prunedBefore = at; changed = true;
-        }
-      }
-      const runRefs = new Set(Object.values(state.sasuRuns).flatMap((run) => [run.observer, run.implementor]));
       const parentRefs = new Set(Object.values(state.participants).map((person) => person.parent).filter((parent): parent is string => parent !== null));
       const uncertainParentRefs = new Set(Object.values(state.spawnIntents).filter((intent) => intent.status === "unknown").map((intent) => intent.parent));
       const completedIntents = new Map<string, string[]>();
       for (const [key, intent] of Object.entries(state.spawnIntents)) if (intent.status === "complete" && intent.participant !== null) completedIntents.set(intent.participant, [...(completedIntents.get(intent.participant) ?? []), key]);
       for (const [key, participant] of Object.entries(state.participants)) {
-        if (participant.runtime !== "done" || Date.parse(participant.observedAt) >= before || requestRefs.has(key) || watchRefs.has(key) || parentRefs.has(key) || runRefs.has(key) || uncertainParentRefs.has(key)) continue;
+        if (participant.runtime !== "done" || Date.parse(participant.observedAt) >= before || requestRefs.has(key) || watchRefs.has(key) || parentRefs.has(key) || uncertainParentRefs.has(key)) continue;
         delete state.participants[key];
         for (const intentKey of completedIntents.get(key) ?? []) delete state.spawnIntents[intentKey];
         state.prunedBefore = at; changed = true;
@@ -519,6 +580,11 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
       if (watch.status !== "active" || Date.parse(watch.dueAt) > Date.parse(at)) continue;
       if (observed !== null && !observed.has(watch.target)) continue;
       changed = true;
+      const target = own(state.participants, watch.target);
+      const resting = target !== undefined && target.runtime !== "working";
+      if (resting && watch.quietSince) { watch.dueAt = timed(at, watch.intervalMs); continue; }
+      if (resting) { watch.quietSince = at; event(state, at, "watch.quiet", watch.target, null, { runtime: target!.runtime }); }
+      else if (watch.quietSince) { watch.quietSince = null; event(state, at, "watch.resumed", watch.target); }
       if (watch.cycle === null) {
         watch.cycle = id("c"); cycles += 1;
         if (watch.observer !== null) {
@@ -563,6 +629,8 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
         }
       }
       if (item.status !== "open" || !item.requiresReply) continue;
+      const quiet = own(state.watches, item.from);
+      if (quiet?.status === "active" && quiet.quietSince && uncheckedWatchRequest(state, item)) continue;
       const age = Date.parse(at) - Date.parse(item.createdAt);
       if (age >= state.config.escalateMs && item.escalatedAt === null) {
         if (item.remindedAt === null) { item.remindedAt = at; event(state, at, "request.reminder_coalesced", item.id, item.intent); }

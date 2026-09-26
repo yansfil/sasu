@@ -21,7 +21,7 @@ const target=process.argv[4];
 if(process.argv[2]==='agent' && process.argv[3]==='get') {
   const row=target==='parent-pane'?{name:'parent',session:'one',instance:'a'}:target==='child-pane'?{name:'child',session:'two',instance:'b'}:target?.endsWith('-pane') && fs.existsSync(path.join(process.env.HOME,target+'.started'))?{name:target.slice(0,-5),session:target+'-session',instance:target+'-instance'}:null;
   if(!row){process.stderr.write(JSON.stringify({error:{code:'agent_not_found'}}));process.exitCode=1;}
-  else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';const instanceFile=path.join(process.env.HOME,target+'.instance');const instance=fs.existsSync(instanceFile)?fs.readFileSync(instanceFile,'utf8').trim():row.instance;const initializing=target.endsWith('-pane')&&!['parent-pane','child-pane'].includes(target)&&!fs.existsSync(path.join(process.env.HOME,row.name+'.initialized'));process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:process.env.HCOORD_FAKE_OBSERVER_REPLACED==='1'&&target==='parent-pane'?'replacement':row.name,agent:process.env.HCOORD_FAKE_WRONG_KIND==='1'&&target==='kind-check-pane'?'claude':'codex',agent_session:initializing?undefined:{value:row.session},terminal_id:instance,agent_status:status,interactive_ready:process.env.HCOORD_FAKE_NOT_READY!=='1'}}}));}
+  else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';const instanceFile=path.join(process.env.HOME,target+'.instance');const instance=fs.existsSync(instanceFile)?fs.readFileSync(instanceFile,'utf8').trim():row.instance;const initializing=target.endsWith('-pane')&&!['parent-pane','child-pane'].includes(target)&&!fs.existsSync(path.join(process.env.HOME,row.name+'.initialized'));process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:process.env.HCOORD_FAKE_OBSERVER_REPLACED==='1'&&target==='parent-pane'?'replacement':row.name,agent:process.env.HCOORD_FAKE_WRONG_KIND==='1'&&target==='kind-check-pane'?'claude':'codex',agent_session:initializing?undefined:{value:process.env.HCOORD_FAKE_OBSERVER_REPLACED==='1'&&target==='parent-pane'?'replacement-session':row.session},terminal_id:instance,agent_status:status,interactive_ready:process.env.HCOORD_FAKE_NOT_READY!=='1'}}}));}
 } else if(process.argv[2]==='pane' && process.argv[3]==='get') {
   if(target?.endsWith('-pane') && !['parent-pane','child-pane'].includes(target) && !fs.existsSync(path.join(process.env.HOME,target.slice(0,-5)+'.tab'))){process.stderr.write('pane missing');process.exitCode=1;}
   else {const cwdFile=path.join(process.env.HOME,target==='parent-pane'?'parent.cwd':target.slice(0,-5)+'.cwd');const cwd=fs.existsSync(cwdFile)?fs.readFileSync(cwdFile,'utf8'):process.env.HOME;process.stdout.write(JSON.stringify({result:{type:'pane_info',pane:{pane_id:process.env.HCOORD_FAKE_PANE_ID_MISSING==='1'&&target==='partial-pane'?undefined:target,workspace_id:'test-workspace',cwd}}}));}
@@ -105,15 +105,23 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(daemonErrors.includes("SECRET_ABC"), false, "a parser failure does not copy request text to logs");
   assert.equal(ok("daemon", "status").platform.macos.localSocket, "verified_isolated");
   const parent = ok("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "parent", "--pane", "parent-pane");
+  // D-19, B3: --check answers what registration would decide and saves nothing.
+  const checkChild = ["agent", "register", "--check", "--machine", "local", "--session", "two", "--instance", "b", "--name", "child", "--parent", parent.id, "--pane", "child-pane"];
+  const checked = ok(...checkChild);
+  assert.deepEqual([checked.ready, checked.saved, checked.participant, checked.pane], [true, false, null, "child-pane"]);
+  assert.equal(ok("agent", "register", "--check", "--machine", "local", "--session", "one", "--instance", "a", "--name", "parent", "--pane", "parent-pane").participant, parent.id, "a registered execution is named");
+  assert.equal(JSON.parse(command("agent", "register", "--check", "--machine", "local", "--session", "other", "--instance", "b", "--name", "child", "--pane", "child-pane").stdout).error.code, "identity_conflict", "another session in the pane is refused");
+  assert.equal(ok("status").counts.agents, 1, "a check registers nobody");
   const child = ok("agent", "register", "--machine", "local", "--session", "two", "--instance", "b", "--name", "child", "--parent", parent.id, "--pane", "child-pane");
   assert.equal(JSON.parse(command("agent", "register", "--machine", "remote", "--session", "one", "--instance", "a", "--name", "remote", "--pane", "parent-pane").stdout).error.code, "unsupported_runtime", "a Herdr without --machine forwarding cannot host remote participants");
-  assert.equal(command("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "wrong", "--pane", "parent-pane").status, 1);
-  env.HCOORD_FAKE_PROMPT_API = "0";
-  assert.equal(command("sasu", "enable").status, 1, "Sasu cannot opt into an unsupported wake path");
-  assert.equal(fs.existsSync(path.join(home, ".hcoord", "sasu-enabled")), false);
-  delete env.HCOORD_FAKE_PROMPT_API;
-  ok("sasu", "enable");
-  const sasuArgs = ["sasu", "register", "--run", "run-one", "--project", home, "--observer-name", "parent", "--observer-pane", "parent-pane", "--observer-session", "one", "--observer-instance", "a", "--implementor-name", "child", "--implementor-pane", "child-pane", "--implementor-session", "two", "--implementor-instance", "b"];
+  assert.equal(ok("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "renamed", "--pane", "parent-pane").id, parent.id, "the same pane and session under another name is the same participant (D-18)");
+  assert.equal(ok("agent", "register", "--machine", "local", "--session", "one", "--instance", "a", "--name", "parent", "--pane", "parent-pane").name, "parent");
+  // B24: hcoord has no client-specific commands.
+  const retired = command("sasu", "list");
+  assert.equal(retired.status, 2);
+  assert.equal(JSON.parse(retired.stdout).error.code, "invalid_argument");
+  assert.doesNotMatch(JSON.parse(retired.stdout).error.message, /sasu/);
+  const checkParent = ["agent", "register", "--check", "--machine", "local", "--session", "one", "--instance", "a", "--name", "parent", "--pane", "parent-pane"];
   await stop();
   env.HCOORD_FAKE_OBSERVER_REPLACED = "1";
   fs.writeFileSync(path.join(home, ".hcoord", "api.sock.lock"), "99999999\n");
@@ -121,15 +129,19 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   fs.writeFileSync(path.join(home, ".hcoord", "api.sock.lock.recovery", "owner"), "99999999\n");
   await start();
   assert.equal(ok("daemon", "status").stale, undefined, "abandoned lock recovery does not block restart");
-  assert.equal(command(...sasuArgs).status, 1, "exact Observer identity is required before ownership transfer");
-  assert.equal(ok("status").counts.sasuRuns, 0);
+  assert.equal(JSON.parse(command(...checkParent).stdout).error.code, "identity_conflict", "another session in the parent's pane is refused");
   await stop();
   delete env.HCOORD_FAKE_OBSERVER_REPLACED;
+  env.HCOORD_FAKE_PROMPT_API = "0";
   await start();
-  const registeredRun = ok(...sasuArgs);
-  assert.equal(registeredRun.owner, "hcoord");
-  assert.equal(ok(...sasuArgs).watch.generation, registeredRun.watch.generation);
-  assert.equal(ok("status").counts.sasuRuns, 1);
+  assert.equal(JSON.parse(command(...checkParent).stdout).error.code, "unsupported_runtime", "no official delivery, no ready answer");
+  await stop();
+  delete env.HCOORD_FAKE_PROMPT_API;
+  await start();
+  assert.equal(ok(...checkParent).participant, parent.id);
+  const watched = ok("watch", "start", child.id, "--observer", parent.id, "--actor", parent.id, "--brief", "read the log");
+  assert.equal(watched.brief, "read the log");
+  assert.equal(JSON.parse(command("watch", "start", child.id, "--observer", parent.id, "--actor", parent.id).stdout).error.code, "conflict", "one active watch per target");
   assert.ok(ok("status").usage.ledgerBytes > 0);
   ok("config", "set", "--key", "remindMs", "--value", "1s");
   ok("config", "set", "--key", "escalateMs", "--value", "2m");
@@ -371,7 +383,7 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   cycleRequest = ok("request", "show", cycleRequestId);
   assert.equal(cycleRequest.deliveries[0].status, "deferred", "a stopped watch holds its unsent check even when the old observer is idle");
   assert.match(cycleRequest.nextAction, /watch is stopped/);
-  assert.equal(fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").includes(cycleRequestId), false, "a stopped watch sends no misleading request prompt");
+  assert.equal(fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").includes(watch.cycle), false, "a stopped watch sends no misleading request prompt");
   ok("config", "set", "--key", "escalateMs", "--value", "1s");
   for (let attempt = 0; attempt < 100; attempt += 1) {
     cycleRequest = ok("request", "show", cycleRequestId);
@@ -391,10 +403,8 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
     await wait(100);
   }
   assert.equal(cycleRequest.deliveries[0].status, "accepted");
-  const watchPrompt = fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)).find((entry) => entry.text.includes(cycleRequestId));
-  assert.match(watchPrompt.text, new RegExp(`HCOORD_WATCH_CHECK[\\s\\S]*target: ${child.id}[\\s\\S]*cycle: ${watch.cycle}`));
-  assert.match(watchPrompt.text, /Inspect the target's current exact Herdr execution before confirming this cycle/);
-  assert.match(watchPrompt.text, /Do not use request reply for a watch cycle/);
+  const watchPrompt = fs.readFileSync(path.join(home, "official-prompts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line)).find((entry) => entry.text.startsWith("HCOORD_WATCH_CHECK") && entry.text.includes(watch.cycle));
+  assert.equal(watchPrompt.text, `HCOORD_WATCH_CHECK child (${child.id}) cycle ${watch.cycle}\nclose: hcoord watch check ${child.id} --cycle ${watch.cycle} --actor ${parent.id}\nread the log`);
   assert.equal(fs.existsSync(path.join(home, "UNSUPPORTED_GUARD")), false);
   const decoy = ok("request", "send", "--from", child.id, "--to", parent.id, "--body", "Which option should I choose?", "--intent", `watch:${child.id}:999:${watch.cycle}`);
   let decoyPrompt;

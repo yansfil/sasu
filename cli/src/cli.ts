@@ -50,13 +50,18 @@ Usage:
     (archives and re-seals the edited PRD, refreshes metadata, and invalidates the current verification report.)
   sasu implement dispatch --name <unique-agent-name> --prd <path> [--kind <agent>] [--model <model>] [--effort <level>] [--env KEY=VALUE ...] [--patrol <minutes>] [--recovery-owner <supervisor|task-factory>] [--json]
     (starts exactly one marked implementor in its own pane with the handoff packet on stdin, records this pane as the run's Observer,
-     and enrolls the run with the supervisor tick; recursive dispatch is refused. Use --resume-handoff for every durable partial phase,
+     and enrolls the run with the supervisor tick, or after sasu supervisor use hcoord registers it with hcoord, whose watch interval is --patrol;
+     recursive dispatch is refused. Use --resume-handoff for every durable partial phase,
      with --recover-absent-child only for a positively absent recorded started child; that recovery sends no input.)
   sasu implement escalate --reason "<what the implementor is stuck on>" [--target <finding-or-issue-ref>] [--agent <herdr-agent>] [--json]
     (bounded read-only diagnosis and context recovery; unavailable while a verify execution lease is live.)
   sasu implement artifact (--kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<observation>" | --manifest <json-file>) [--source "<collector and method>"] [--collected-at <ISO-time>] [--target "<observed target>"] [--environment "<environment>"] [--refs "<B1,B2,...>"] [--json]
   sasu implement plan     --path <plan-file> [--json]
-    (records the execution plan written before the first source change; under Herdr the supervisor tick wakes the Observer once per plan event.)
+    (records the execution plan written before the first source change; the Observer is woken once per plan: by the supervisor tick, or at once by an hcoord notice.)
+  sasu implement block    --kind <implementation|product|authority|runtime> --question "<text>" --recommendation "<text>" --reversible <yes|no> --scope-impact "<text>" [--external-effect "<text>"] [--json]
+    (hcoord runs: records the block and asks the Observer through hcoord; end the turn, the answer arrives as HCOORD_ANSWER or HCOORD_RELAY.)
+  sasu implement report   [--summary "<text>"] [--json]
+    (hcoord runs: right before the final report, sends the Observer the current verification verdict; it declares nothing complete.)
   sasu implement status   [--slug <topic> | --state <path>] [--digest] [--json]
     (--digest prints deterministic facts since dispatch for the run's recorded Observer session; other sessions are refused.)
   sasu implement verify   [--slug <topic> | --state <path>] [--json]
@@ -78,11 +83,13 @@ Usage:
   sasu interview coherence  --slug <topic> [--min-decisions <n>] [--json]
   sasu interview status     --slug <topic> [--json]
   sasu supervisor tick      [--json]   (one level-triggered pass over every indexed run; launchd runs it every 30 s)
-  sasu supervisor status    [--json]   (LaunchAgent, last tick, per-run last wake and failure, guarded prompt support)
+  sasu supervisor status    [--json]   (LaunchAgent, last tick, per-run last wake and failure, guarded prompt support, and hcoord runs)
   sasu supervisor install   [--json]   (write and load the user LaunchAgent for this build; converges on repeat)
   sasu supervisor uninstall [--json]   (unload and remove the LaunchAgent and the Sasu Stop hook entries only)
   sasu supervisor retire-legacy [--json] (after the final legacy run, retire its LaunchAgent and Stop hook)
   sasu supervisor handover  --slug <topic> --approval "<verbatim user approval>" [--json]   (record this pane's session as the run's Observer)
+  sasu supervisor use       <hcoord|legacy> [--json]   (who supervises new dispatches on this machine; dispatched runs keep their owner)
+  sasu supervisor migrate-hcoord [--state <path> ...] [--json]   (one time: record the hcoord participant IDs of older hcoord runs in their state.json from hcoord agent list)
   sasu doctor [--json]
 
 Interview commands own the qa-log's mechanical bookkeeping (transcript source

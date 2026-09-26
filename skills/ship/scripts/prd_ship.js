@@ -1232,6 +1232,7 @@ function cmdLocal(options) {
       ...recorded,
       alreadyCommitted: true,
       resultPath: toRepoRelative(deliveryResultPath(context), context.repoRoot),
+      coordination: endCoordination(context),
     }, null, 2) + "\n");
     return;
   }
@@ -1258,7 +1259,38 @@ function cmdLocal(options) {
     ...result,
     alreadyCommitted: false,
     resultPath: toRepoRelative(deliveryResultPath(context), context.repoRoot),
+    coordination: endCoordination(context),
   }, null, 2) + "\n");
+}
+
+/**
+ * A completed delivery ends an hcoord-supervised run's implementor
+ * participant, so its Observer receives no watch cycle for delivered work
+ * (sasu-on-hcoord B17, D-20). The participant IDs are the ones state.json
+ * records. The delivery already happened, so a refusal here is reported with
+ * its retry instead of failing the delivery.
+ */
+function endCoordination(context) {
+  const supervision = context.state && context.state.supervision;
+  if (!supervision || supervision.coordinationOwner !== "hcoord") return null;
+  const participants = supervision.hcoord;
+  if (!participants || !participants.implementor || !participants.observer) {
+    const problem = "state.json records no hcoord participants for this run";
+    const retry = "sasu supervisor migrate-hcoord, then hcoord agent end <implementor> --actor <observer>";
+    process.stderr.write(`Delivery is recorded, but hcoord may still watch this run: ${problem}. Retry with: ${retry}\n`);
+    return { ended: false, problem, retry };
+  }
+  const args = ["agent", "end", participants.implementor, "--actor", participants.observer];
+  const retry = `hcoord ${args.join(" ")}`;
+  const result = childProcess.spawnSync("hcoord", [...args, "--json"], { cwd: context.repoRoot, encoding: "utf8", shell: false });
+  let parsed = null;
+  try { parsed = JSON.parse(result.stdout || ""); } catch { parsed = null; }
+  if (parsed && parsed.ok === true) return { ended: true, implementor: participants.implementor, delivery: parsed.delivery || "delivered" };
+  const problem = parsed && parsed.error
+    ? `${parsed.error.code}: ${parsed.error.message}`
+    : ((result.error && result.error.message) || result.stderr || result.stdout || `hcoord exited ${result.status}`).trim();
+  process.stderr.write(`Delivery is recorded, but hcoord still watches implementor ${participants.implementor}: ${problem}. Retry with: ${retry}\n`);
+  return { ended: false, implementor: participants.implementor, problem, retry };
 }
 
 function cmdShip(options) {
@@ -1541,6 +1573,7 @@ function cmdMerge(options) {
     ok: true,
     ...result,
     resultPath: toRepoRelative(deliveryResultPath(context), context.repoRoot),
+    coordination: endCoordination(context),
   };
   process.stdout.write(JSON.stringify(output, null, 2) + "\n");
 }
