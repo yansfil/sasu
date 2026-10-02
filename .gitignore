@@ -8,6 +8,7 @@
 /cli/dist/
 /cli/dist.staging/
 /cli/dist.previous/
+/cli/.cache/
 /cli/bin/
 /cli/lib/node_modules/
 

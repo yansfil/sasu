@@ -40,5 +40,35 @@ jobs:
       - name: Run CLI unit tests
         run: npm --prefix cli test
 
+      # The e2e suite drives a real hcoord daemon, and sasu ships none: it is
+      # built from the commit pinned in cli/test/hcoord-source.json. The suite
+      # fails, never skips, when SASU_TEST_HCOORD is missing under CI.
+      - name: Read the pinned hcoord source
+        id: hcoord-pin
+        run: |
+          echo "repo=$(jq -r .repo cli/test/hcoord-source.json)" >> "$GITHUB_OUTPUT"
+          echo "ref=$(jq -r .ref cli/test/hcoord-source.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the pinned hcoord source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.hcoord-pin.outputs.repo }}
+          ref: ${{ steps.hcoord-pin.outputs.ref }}
+          path: hcoord-src
+          persist-credentials: false
+          sparse-checkout: |
+            plugins/hcoord
+            pnpm-workspace.yaml
+            pnpm-lock.yaml
+          sparse-checkout-cone-mode: false
+
+      - name: Set up pnpm for the hcoord build
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Build the pinned hcoord
+        run: echo "SASU_TEST_HCOORD=$(node scripts/build-test-hcoord.mjs --src hcoord-src --out "$RUNNER_TEMP/hcoord")" >> "$GITHUB_ENV"
+
       - name: Run CLI end-to-end tests
         run: npm --prefix cli run test:e2e

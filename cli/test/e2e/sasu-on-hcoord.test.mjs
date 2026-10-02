@@ -1,7 +1,9 @@
-// Sasu supervision on hcoord at the real CLI boundary: an isolated HOME, a
-// fake herdr and a fake launchctl on PATH, and a test-owned daemon of the
-// `hcoord` on PATH (hide installs it) under its own HCOORD_HOME.
-// No test reaches a live pane, the live daemon, or the real launchd domain.
+// Sasu supervision on hcoord at the real CLI boundary: an isolated HOME and a
+// fake herdr and fake launchctl on PATH. A test about sasu uses the fake hcoord
+// (coordinator: "fake"); a test that needs a real daemon uses the one named by
+// SASU_TEST_HCOORD, built from the commit pinned in cli/test/hcoord-source.json,
+// under its own HCOORD_HOME. No test reaches a live pane, the live daemon, or
+// the real launchd domain.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -11,7 +13,7 @@ import test from "node:test";
 
 import { CLI, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
 import { installFakeHerdr, installFakeLaunchctl } from "../helpers/fake-herdr.mjs";
-import { HCOORD_SKIP, pathWithoutHcoord } from "../helpers/hcoord-binary.mjs";
+import { HCOORD_SKIP, hcoordBinary, installFakeHcoord, installRealHcoord, pathWithoutHcoord } from "../helpers/hcoord-binary.mjs";
 import { readIndex } from "../../dist/supervisor/index.js";
 
 const OBSERVER = "0b5e7e1e-0000-4000-8000-00000000000a";
@@ -22,9 +24,10 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * A project with a started run, a fake herdr whose Observer pane is idle and
- * interactive-ready, and a daemon this test owns. `sasu enable` is on.
+ * interactive-ready, and a coordinator: the real hcoord with a daemon this test
+ * owns, or `coordinator: "fake"`, which has none. `sasu enable` is on.
  */
-async function hcoordProject(t, { observerName = "observer", observerReady, daemon = true, env: extraEnv = {} } = {}) {
+async function hcoordProject(t, { observerName = "observer", observerReady, coordinator = "real", daemon = coordinator === "real", env: extraEnv = {} } = {}) {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
   // Fakes and HOME live outside the project so the digest never sees their
@@ -37,14 +40,16 @@ async function hcoordProject(t, { observerName = "observer", observerReady, daem
   const home = path.join(outside, "home");
   fs.mkdirSync(home, { recursive: true });
   const hcoordHome = path.join(home, "hc");
-  const base = { HOME: home, HCOORD_HOME: hcoordHome, ...herdr.env, PATH: herdr.env.PATH, LAUNCHCTL_FAKE_LOG: launchctl.env.LAUNCHCTL_FAKE_LOG, LAUNCHCTL_FAKE_STATE: launchctl.env.LAUNCHCTL_FAKE_STATE, ...extraEnv };
+  const fake = coordinator === "fake" ? installFakeHcoord(herdr.bin, outside) : null;
+  if (fake === null) installRealHcoord(herdr.bin);
+  const base = { HOME: home, HCOORD_HOME: hcoordHome, ...(fake?.env ?? {}), ...herdr.env, PATH: herdr.env.PATH, LAUNCHCTL_FAKE_LOG: launchctl.env.LAUNCHCTL_FAKE_LOG, LAUNCHCTL_FAKE_STATE: launchctl.env.LAUNCHCTL_FAKE_STATE, ...extraEnv };
   const observerEnv = { ...base, HERDR_ENV: "1", HERDR_PANE_ID: OBSERVER_PANE, HERDR_WORKSPACE_ID: "w4G", CLAUDE_SESSION_ID: OBSERVER };
   const implementorEnv = { ...base, HERDR_ENV: "1", HERDR_PANE_ID: IMPL_PANE, HERDR_WORKSPACE_ID: "w4G", CLAUDE_SESSION_ID: "impl-session", SASU_HERDR_ROLE: "implementor" };
   // The default Observer is hand-started, as in real use: Herdr 0.9.1 reports no interactive_ready for it (D-17).
   herdr.setAgents({ [OBSERVER_PANE]: { ...(observerName === null ? {} : { name: observerName }), ...(observerReady === undefined ? {} : { interactive_ready: observerReady }), agent: "claude", agent_status: "idle", pane_id: OBSERVER_PANE, terminal_id: "term_observer", agent_session: { value: OBSERVER }, tokens: { activity: String(Date.now()) }, state_change_seq: 1 } });
   let child = null, daemonError = "";
   const startDaemon = async () => {
-    child = spawn("hcoord", ["daemon", "run"], { cwd: home, env: isolatedEnv(base), stdio: ["ignore", "ignore", "pipe"] });
+    child = spawn(hcoordBinary(), ["daemon", "run"], { cwd: home, env: isolatedEnv(base), stdio: ["ignore", "ignore", "pipe"] });
     child.stderr.on("data", (chunk) => { daemonError += chunk; });
     const socket = path.join(hcoordHome, "api.sock");
     for (let attempt = 0; attempt < 500 && !fs.existsSync(socket); attempt += 1) await wait(20);
@@ -79,13 +84,13 @@ async function hcoordProject(t, { observerName = "observer", observerReady, daem
     assert.fail(`timed out waiting for ${what}; daemon stderr: ${daemonError}`);
   };
   const dispatch = (extra = [], env = observerEnv) => sasu(["implement", "dispatch", "--name", "impl", "--prd", PRD_PATH, ...extra], { env, input: PACKET });
-  return { root, home, hcoordHome, herdr, base, observerEnv, implementorEnv, hcoord, sasu, state, dispatch, noticesTo, until, startDaemon, stopDaemon };
+  return { root, home, hcoordHome, herdr, fake, base, observerEnv, implementorEnv, hcoord, sasu, state, dispatch, noticesTo, until, startDaemon, stopDaemon };
 }
 
 const created = (herdr) => herdr.argv().filter((args) => ["tab create", "workspace create", "agent start"].includes(args.slice(0, 2).join(" ")));
 
-test("B3: dispatch refuses a stopped coordinator before any pane or agent exists", { skip: HCOORD_SKIP }, async (t) => {
-  const stopped = await hcoordProject(t, { daemon: false });
+test("B3: dispatch refuses a stopped coordinator before any pane or agent exists", async (t) => {
+  const stopped = await hcoordProject(t, { coordinator: "fake", env: { HCOORD_FAKE_DOWN: "1" } });
   const refused = stopped.dispatch();
   assert.equal(refused.status, 1, refused.text);
   assert.match(refused.json.message, /daemon_down|not running/);
@@ -95,7 +100,7 @@ test("B3: dispatch refuses a stopped coordinator before any pane or agent exists
 });
 
 test("a missing hcoord fails with the one thing to do, before any pane or agent exists, and never falls back to a bundled copy", async (t) => {
-  const bare = await hcoordProject(t, { daemon: false });
+  const bare = await hcoordProject(t, { coordinator: "fake" });
   const bin = pathWithoutHcoord(path.join(bare.home, "bare-bin"));
   fs.copyFileSync(path.join(bare.herdr.bin, "herdr"), path.join(bin, "herdr"));
   fs.chmodSync(path.join(bin, "herdr"), 0o755);
@@ -110,8 +115,8 @@ test("a missing hcoord fails with the one thing to do, before any pane or agent 
   assert.equal(bare.state().pendingDispatch ?? null, null);
 });
 
-test("D-18: an unnamed Observer is registered under a name derived from its session, at dispatch and at handover, and its pane is never renamed", { skip: HCOORD_SKIP }, async (t) => {
-  const run = await dispatchedRun(t, { observerName: null });
+test("D-18: an unnamed Observer is registered under a name derived from its session, at dispatch and at handover, and its pane is never renamed", async (t) => {
+  const run = await dispatchedRun(t, { observerName: null, coordinator: "fake" });
   assert.equal(run.hcoord("agent", "show", run.observerId).value.name, `observer-${OBSERVER.slice(0, 8)}`);
   const next = "7c1d2e3f-0000-4000-8000-00000000000b";
   run.herdr.patchAgent(OBSERVER_PANE, { agent_session: { value: next } });
@@ -121,8 +126,8 @@ test("D-18: an unnamed Observer is registered under a name derived from its sess
   assert.equal(run.herdr.argv().filter((args) => args[1] === "rename").length, 0, "the Observer's pane keeps no name");
 });
 
-test("B1, B4, B13, B16: dispatch registers both participants with the patrol interval and forewarns the implementor", { skip: HCOORD_SKIP }, async (t) => {
-  const run = await hcoordProject(t);
+test("B1, B4, B13, B16: dispatch registers both participants with the patrol interval and forewarns the implementor", async (t) => {
+  const run = await hcoordProject(t, { coordinator: "fake" });
   const dispatched = run.dispatch(["--patrol", "7", "--recovery-owner", "task-factory"]);
   assert.equal(dispatched.status, 0, dispatched.text);
   const record = run.state().supervision;
@@ -148,10 +153,10 @@ test("B1, B4, B13, B16: dispatch registers both participants with the patrol int
   assert.deepEqual(index.coordinated.map((entry) => entry.runInstanceId), [record.runInstanceId], "listed as hcoord's");
 });
 
-test("B3: a coordinator refusal after the implementor started is completed by --resume-handoff", { skip: HCOORD_SKIP }, async (t) => {
+test("B3: a coordinator refusal after the implementor started is completed by --resume-handoff", async (t) => {
   // Another session takes the Observer's pane at the exact moment the
   // implementor starts, so preflight passed and registration then refuses.
-  const run = await hcoordProject(t, { env: { HERDR_FAKE_ON_START_PATCH: JSON.stringify({ [OBSERVER_PANE]: { agent_session: { value: "observer-elsewhere" } } }) } });
+  const run = await hcoordProject(t, { coordinator: "fake", env: { HERDR_FAKE_ON_START_PATCH: JSON.stringify({ [OBSERVER_PANE]: { agent_session: { value: "observer-elsewhere" } } }) } });
   const failed = run.dispatch();
   assert.equal(failed.status, 1, failed.text);
   assert.match(failed.json.message, /identity_conflict/);
@@ -273,7 +278,7 @@ test("B11, B12: a report names the current verdict; a stopped daemon delivers it
 });
 
 test("legacy runs keep OBSERVER_BLOCK: block and report refuse without an hcoord registration", async (t) => {
-  const run = await hcoordProject(t, { daemon: false });
+  const run = await hcoordProject(t, { coordinator: "fake" });
   assert.equal(run.sasu(["supervisor", "use", "legacy"]).status, 0);
   const dispatched = run.dispatch();
   assert.equal(dispatched.status, 0, dispatched.text);
@@ -305,8 +310,8 @@ test("B15: a new Observer session receives nothing until the handover, then gets
   assert.equal(run.hcoord("agent", "show", run.implementorId).value.watch.generation, 2, "a repeated handover finds the watch moved");
 });
 
-test("B14: a replacement dispatch registers the new implementor in the same run and stops watching the gone one", { skip: HCOORD_SKIP }, async (t) => {
-  const run = await dispatchedRun(t);
+test("B14: a replacement dispatch registers the new implementor in the same run and stops watching the gone one", async (t) => {
+  const run = await dispatchedRun(t, { coordinator: "fake" });
   const first = run.record;
   const agents = JSON.parse(fs.readFileSync(run.herdr.agentsFile, "utf8"));
   delete agents[IMPL_PANE];
@@ -426,8 +431,8 @@ test("B23: a rotated terminal with a cleared name stays the same participant; an
   for (const held of [otherSession, otherPane, noSession]) await run.until(() => delivered(held)?.status === "accepted", "a held notice once the recorded terminal returns");
 });
 
-test("B27: migrate-hcoord records participant IDs found by pane and session, and reports a run it cannot match", { skip: HCOORD_SKIP }, async (t) => {
-  const run = await dispatchedRun(t);
+test("B27: migrate-hcoord records participant IDs found by pane and session, and reports a run it cannot match", async (t) => {
+  const run = await dispatchedRun(t, { coordinator: "fake" });
   const statePath = path.join(run.root, STATE_PATH);
   const rewrite = (change) => { const saved = run.state(); change(saved.supervision); fs.writeFileSync(statePath, `${JSON.stringify(saved, null, 2)}\n`); };
   // A run registered before state.json recorded its participants.

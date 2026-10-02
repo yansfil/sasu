@@ -11,7 +11,7 @@ import test from "node:test";
 
 import { CLI, git, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
 import { installFakeHerdr, installFakeLaunchctl } from "../helpers/fake-herdr.mjs";
-import { HCOORD_SKIP } from "../helpers/hcoord-binary.mjs";
+import { installFakeHcoord } from "../helpers/hcoord-binary.mjs";
 import { readIndex, updateIndex } from "../../dist/supervisor/index.js";
 import { launchdLogPath } from "../../dist/supervisor/paths.js";
 import { LOG_CAP_BYTES, TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP } from "../../dist/supervisor/tick.js";
@@ -60,30 +60,20 @@ function dispatchedRun(extraDispatchArgs = []) {
   return { root, home, herdr, launchctl, base, observerEnv, indexFile, tick, wakes, statePath: path.join(root, STATE_PATH), runInstanceId: dispatched.json.detail.runInstanceId, index: () => readIndex(indexFile) };
 }
 
-test("B1: a run dispatched after use hcoord is listed as hcoord's in the index and the tick never wakes it", { skip: HCOORD_SKIP }, async (t) => {
+test("B1: a run dispatched after use hcoord is listed as hcoord's in the index and the tick never wakes it", async (t) => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
-  // A short name outside the project: beside a macOS temp project the daemon
-  // socket path passed the 104-byte socket path limit.
+  // Fakes and HOME live outside the project so the digest never sees their logs.
   const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hc-")));
   const herdr = installFakeHerdr(outside);
   const launchctl = installFakeLaunchctl(outside);
   const home = path.join(outside, "home");
   fs.mkdirSync(home, { recursive: true });
-  const hcoordHome = path.join(home, "hc");
-  const base = { HOME: home, HCOORD_HOME: hcoordHome, ...herdr.env, PATH: herdr.env.PATH, HERDR_FAKE_REQUIRED_SOCKET_PATH: "/tmp/fake.sock", LAUNCHCTL_FAKE_LOG: launchctl.env.LAUNCHCTL_FAKE_LOG, LAUNCHCTL_FAKE_STATE: launchctl.env.LAUNCHCTL_FAKE_STATE };
+  const fake = installFakeHcoord(herdr.bin, outside);
+  const base = { HOME: home, ...fake.env, ...herdr.env, PATH: herdr.env.PATH, HERDR_FAKE_REQUIRED_SOCKET_PATH: "/tmp/fake.sock", LAUNCHCTL_FAKE_LOG: launchctl.env.LAUNCHCTL_FAKE_LOG, LAUNCHCTL_FAKE_STATE: launchctl.env.LAUNCHCTL_FAKE_STATE };
   const observerEnv = { ...base, HERDR_ENV: "1", HERDR_PANE_ID: OBSERVER_PANE, HERDR_WORKSPACE_ID: "w4G", HERDR_SOCKET_PATH: "/tmp/fake.sock", CLAUDE_SESSION_ID: OBSERVER };
   herdr.setAgents({ [OBSERVER_PANE]: observerAgent({ name: "observer", agent_status: "working", interactive_ready: true }) });
-  const daemon = spawn("hcoord", ["daemon", "run"], { cwd: root, env: isolatedEnv(base), stdio: ["ignore", "ignore", "pipe"] });
-  let daemonError = "";
-  daemon.stderr.on("data", (chunk) => { daemonError += chunk; });
-  t.after(async () => {
-    if (daemon.exitCode === null) { daemon.kill("SIGTERM"); await new Promise((resolve) => daemon.once("exit", resolve)); }
-    fs.rmSync(outside, { recursive: true, force: true });
-  });
-  const socket = path.join(hcoordHome, "api.sock");
-  for (let attempt = 0; attempt < 500 && !fs.existsSync(socket); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(fs.existsSync(socket), true, daemonError);
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   const hcoord = (...args) => spawnSync("hcoord", [...args, "--json"], { cwd: root, env: isolatedEnv(observerEnv), encoding: "utf8" });
   const use = sasu(home, ["supervisor", "use", "hcoord"], { env: base });
   assert.equal(use.status, 0, use.text);
