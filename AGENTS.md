@@ -123,6 +123,10 @@ The installer registers the `challenge_trigger.mjs` routing hook, the advisory `
 No hook changes verification or completion state; the Stop hook only confirms an Observer handover and always exits 0.
 Any hook the installer has owned stays listed in `HARNESS_HOOK_MARKERS` in `cli/lib/hooks.js` so later installs can retire it without touching foreign hooks.
 
+The installer writes no `hcoord` shim: hcoord is installed by the hide app and Sasu calls whichever `hcoord` is on PATH.
+It removes only its own earlier `hcoord` shim beside the `sasu` shim, recognised by the old shim's exact shape, and never an `hcoord` it did not write.
+Tests that need a coordinator use that `hcoord` too, each with its own `HCOORD_HOME`, and skip with a stated reason when none is on PATH.
+
 The installer also loads one user LaunchAgent (`com.sasu.supervisor`) that runs `sasu supervisor tick` every 30 seconds.
 The tick reads the index under `~/.sasu/supervisor/`, each watched `state.json` and its run's git tree, and herdr, and wakes a run's recorded Observer; it never writes run state.
 Tests exercise it only under an isolated `HOME` with a fake `herdr` and `launchctl` on `PATH`; never bootstrap a label into the real launchd domain or address a live pane from a test.

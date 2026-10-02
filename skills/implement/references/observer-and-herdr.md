@@ -150,6 +150,8 @@ After `sasu supervisor use hcoord` (stored as `~/.sasu/supervisor/use-hcoord`), 
 Without it, and for every run first dispatched under the legacy supervisor, [The Supervisor Tick](#the-supervisor-tick) keeps the run until it ends.
 After the final legacy run leaves the supervisor index, `sasu supervisor retire-legacy` removes the tick's LaunchAgent and Stop hook and writes `~/.sasu/supervisor/legacy-retired`, so no later install restores them; it refuses while a legacy run or tick remains.
 
+hcoord is the command the hide app installs (`~/.local/bin/hcoord`); Sasu ships none and calls whichever `hcoord` is on PATH.
+When it is missing, dispatch and `sasu supervisor use hcoord` fail with `hcoord is not on PATH; open the hide app, which installs it at ~/.local/bin/hcoord` and create nothing.
 hcoord knows participants and their parent, watch and request relations, and nothing about Sasu.
 Which participants make up a run is written only in its `state.json` (`supervision.hcoord`: the Observer and Implementor participant IDs, the interval and the recovery owner).
 An hcoord dispatch checks the Observer before it creates anything, with `hcoord agent register --check`: the daemon must answer, the Observer's pane must hold its recorded session, and hcoord must be able to deliver to it.
