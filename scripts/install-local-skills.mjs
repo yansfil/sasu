@@ -181,6 +181,21 @@ function cleanupLegacyDirs(targetKey) {
   return removed;
 }
 
+// hcoord belongs to the hide app, which installs `~/.local/bin/hcoord`. Sasu
+// used to ship a copy of it and wrote two shims that exec that copy's built
+// entry: one beside the sasu shim and one under the hcoord data folder for the
+// HQ's SSH calls. The first is retired here, since it would shadow hide's
+// hcoord on PATH with a command that no longer exists; the second lives in
+// hcoord's data folder, which is not this installer's to change, so it is only
+// reported. Only a regular file with exactly the old shim's shape is ours: a
+// symlink (hide's link) or any other content is left alone.
+const OWN_HCOORD_SHIM = /^#!\/bin\/sh\nexec (?:node|"[^"\n]+") "[^"\n]*\/cli\/dist\/hcoord\/cli\.js" "\$@"\n$/;
+function ownHcoordShim(file) {
+  let stat;
+  try { stat = fs.lstatSync(file); } catch { return false; }
+  return stat.isFile() && OWN_HCOORD_SHIM.test(fs.readFileSync(file, "utf8"));
+}
+
 // Build the sasu CLI and expose its binary. The shim execs the built
 // entry in this repository, so `sasu` always matches the installed
 // skills (same-repo versioning is the skew defense from PRD D-06).
@@ -205,23 +220,22 @@ function installCliBinary() {
   ensureDir(binDir);
   const shimPath = path.join(binDir, "sasu");
   const entry = path.join(cliDir, "dist", "cli.js");
-  const hcoordEntry = path.join(cliDir, "dist", "hcoord", "cli.js");
   const version = spawnSync("node", [entry, "--contract-version"], { encoding: "utf8" });
   if (version.status !== 0) {
     return { ok: false, error: `built CLI version probe failed: ${(version.stderr || version.stdout || "").trim().slice(0, 500)}` };
   }
-  if (!fs.existsSync(hcoordEntry)) return { ok: false, error: "built hcoord entrypoint missing" };
-  const hcoordShimPath = path.join(binDir, "hcoord");
   fs.writeFileSync(shimPath, `#!/bin/sh\nexec node "${entry}" "$@"\n`, { mode: 0o755 });
-  fs.writeFileSync(hcoordShimPath, `#!/bin/sh\nexec node "${hcoordEntry}" "$@"\n`, { mode: 0o755 });
-  // The HQ reaches this machine's hcoord over a non-login SSH shell, whose
-  // PATH lacked node on the measured remote (2026-09-24), so this copy names
-  // node by absolute path and lives at a fixed place under the hcoord data dir.
-  const hcoordData = process.env.HCOORD_HOME || path.join(home, ".hcoord");
-  const remoteShimPath = path.join(hcoordData, "bin", "hcoord");
-  fs.mkdirSync(path.dirname(remoteShimPath), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(remoteShimPath, `#!/bin/sh\nexec "${process.execPath}" "${hcoordEntry}" "$@"\n`, { mode: 0o755 });
-  return { ok: true, shimPath, hcoordShimPath, remoteShimPath, contractVersion: (version.stdout || "").trim() };
+  const hcoordShimPath = path.join(binDir, "hcoord");
+  const retiredHcoordShim = ownHcoordShim(hcoordShimPath);
+  if (retiredHcoordShim) fs.rmSync(hcoordShimPath);
+  const oldRemoteShim = path.join(process.env.HCOORD_HOME || path.join(home, ".hcoord"), "bin", "hcoord");
+  return {
+    ok: true,
+    shimPath,
+    contractVersion: (version.stdout || "").trim(),
+    ...(retiredHcoordShim ? { retiredHcoordShim: hcoordShimPath } : {}),
+    ...(ownHcoordShim(oldRemoteShim) ? { staleHcoordShim: oldRemoteShim, note: "this old Sasu hcoord shim now names a missing entry; hide's hcoord replaces it, so it was left in place" } : {}),
+  };
 }
 
 // The LaunchAgent that runs `sasu supervisor tick` every interval. The CLI
