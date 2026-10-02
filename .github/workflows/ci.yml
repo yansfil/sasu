@@ -76,7 +76,9 @@ jobs:
           version: 10
 
       - name: Build the pinned hcoord
-        run: echo "SASU_TEST_HCOORD=$(node scripts/build-test-hcoord.mjs --src hcoord-src --out "$RUNNER_TEMP/hcoord")" >> "$GITHUB_ENV"
+        run: |
+          wrapper="$(node scripts/build-test-hcoord.mjs --src hcoord-src --out "$RUNNER_TEMP/hcoord")"
+          echo "SASU_TEST_HCOORD=$wrapper" >> "$GITHUB_ENV"
 
       - name: Run CLI end-to-end tests
         run: npm --prefix cli run test:e2e
