@@ -1,16 +1,15 @@
 import crypto from "node:crypto";
-import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { sameExecution } from "../hcoord/model";
 import type { ObserverIdentity, SupervisionRecord } from "./types";
 
 /**
  * Sasu's side of hcoord supervision. hcoord knows participants and the
  * relations between them (parent, watch, request) and nothing about Sasu
- * (D-19), so Sasu calls only its generic commands, through this build's
- * hcoord CLI, and records which participants make up a run in state.json.
- * The coordinator stays the only writer of its ledger and Sasu the only
- * writer of state.json (PRD D-02); Sasu never reads the ledger file.
+ * (D-19), so Sasu calls only its generic commands, through the `hcoord` the
+ * hide app installs on PATH, and records which participants make up a run in
+ * state.json. The coordinator stays the only writer of its ledger and Sasu
+ * the only writer of state.json (PRD D-02); Sasu never reads the ledger file
+ * and never learns where it lives: the data folder is hcoord's to name.
  */
 
 export class HcoordCallFailed extends Error {
@@ -19,11 +18,21 @@ export class HcoordCallFailed extends Error {
 
 interface Wire { ok: boolean; value?: unknown; error?: { code?: string; message?: string }; delivery?: "delivered" | "pending" }
 
-/** The hcoord CLI of this build, beside this module's own dist directory. */
-export const HCOORD_CLI = path.resolve(__dirname, "..", "hcoord", "cli.js");
+export const HCOORD_MISSING = "hcoord is not on PATH; open the hide app, which installs it at ~/.local/bin/hcoord";
+
+/**
+ * Runs `hcoord` from PATH. A missing binary is its own refusal with the one
+ * thing to do about it: there is no bundled copy to fall back to, because a
+ * second hcoord would be a second coordinator with its own ledger.
+ */
+export function runHcoord(argv: string[], env: NodeJS.ProcessEnv = process.env, timeout = 30_000): { stdout: string; stderr: string; status: number | null } {
+  const run = spawnSync("hcoord", argv, { encoding: "utf8", timeout, env, shell: false });
+  if (run.error !== undefined && (run.error as NodeJS.ErrnoException).code === "ENOENT") throw new HcoordCallFailed(HCOORD_MISSING, "not_installed");
+  return { stdout: run.stdout ?? "", stderr: run.stderr ?? "", status: run.status };
+}
 
 function call(argv: string[]): Wire {
-  const run = spawnSync(process.execPath, [HCOORD_CLI, ...argv, "--json"], { encoding: "utf8", timeout: 30_000 });
+  const run = runHcoord([...argv, "--json"]);
   let parsed: Wire | null = null;
   try { parsed = JSON.parse(run.stdout) as Wire; } catch { parsed = null; }
   if (parsed === null) throw new HcoordCallFailed(`hcoord ${argv.slice(0, 2).join(" ")} did not answer with JSON (exit ${run.status ?? "none"}): ${(run.stderr || run.stdout).trim().slice(0, 300)}`, null);
@@ -62,6 +71,23 @@ export interface WatchView { target: string; observer: string | null; generation
 export interface ParticipantView { id: string; name: string; machine: string; hostScope: string; pane: string | null; session: string; instance: string; parent: string | null; runtime: string; connection: string; registered?: boolean; watch: WatchView | null }
 
 export function showParticipant(id: string): { value: ParticipantView; stale: boolean } { return read<ParticipantView>(["agent", "show", id]); }
+
+/**
+ * hcoord's identity rule for one execution (D-18): the same machine and host
+ * scope, the same pane, then the session, and the terminal only for an agent
+ * that reports no session. A Herdr restart changes terminals and clears names
+ * but not panes and sessions. This mirrors hcoord's own `sameExecution`; it is
+ * written here only because `agent list` has no filter by execution, and the
+ * unit test pins the cases that rule distinguishes.
+ */
+export function sameExecution(recorded: ExecutionBinding, observed: ExecutionBinding): boolean {
+  if (recorded.machine !== observed.machine || recorded.hostScope !== observed.hostScope) return false;
+  if (recorded.pane === null || observed.pane !== recorded.pane) return false;
+  if (recorded.session !== null && observed.session !== null) return observed.session === recorded.session;
+  return recorded.instance !== null && observed.instance === recorded.instance;
+}
+
+export interface ExecutionBinding { machine: string; hostScope: string; pane: string | null; session: string | null; instance: string | null }
 
 /**
  * The registered participants that are this local execution, by hcoord's own

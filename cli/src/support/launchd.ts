@@ -5,11 +5,11 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 /**
- * Converging one user LaunchAgent on a rendered plist, shared by the Sasu
- * supervisor and the hcoord daemon. launchd refuses `bootstrap` of a label it
- * already has loaded with "5: Input/output error", so every caller reads the
- * label's loaded state first instead of matching that error text; the hcoord
- * daemon's start after a stop failed on exactly that (2026-09-26).
+ * Converging one user LaunchAgent on a rendered plist for the Sasu
+ * supervisor. launchd refuses `bootstrap` of a label it already has loaded
+ * with "5: Input/output error", so every caller reads the label's loaded
+ * state first instead of matching that error text; a daemon start after a
+ * stop failed on exactly that (2026-09-26).
  *
  * `bootout` also returns before launchd has let go of the label: the job is
  * still exiting, and a bootstrap sent right after it fails with the same
