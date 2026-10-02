@@ -20,6 +20,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          # The pinned hcoord build below runs another repository's code
+          # inside this workspace; it gets no token from .git/config.
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -46,8 +50,12 @@ jobs:
       - name: Read the pinned hcoord source
         id: hcoord-pin
         run: |
-          echo "repo=$(jq -r .repo cli/test/hcoord-source.json)" >> "$GITHUB_OUTPUT"
-          echo "ref=$(jq -r .ref cli/test/hcoord-source.json)" >> "$GITHUB_OUTPUT"
+          repo="$(jq -r .repo cli/test/hcoord-source.json)"
+          ref="$(jq -r .ref cli/test/hcoord-source.json)"
+          [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "hcoord-source.json repo is not owner/name: $repo" >&2; exit 1; }
+          [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "hcoord-source.json ref is not a full commit SHA: $ref" >&2; exit 1; }
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
       - name: Check out the pinned hcoord source
         uses: actions/checkout@v4
