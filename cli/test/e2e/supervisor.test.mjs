@@ -11,6 +11,7 @@ import test from "node:test";
 
 import { CLI, git, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
 import { installFakeHerdr, installFakeLaunchctl } from "../helpers/fake-herdr.mjs";
+import { installFakeHcoord } from "../helpers/hcoord-binary.mjs";
 import { readIndex, updateIndex } from "../../dist/supervisor/index.js";
 import { launchdLogPath } from "../../dist/supervisor/paths.js";
 import { LOG_CAP_BYTES, TERMINAL_FAILURE_TICKS_BEFORE_CLEANUP } from "../../dist/supervisor/tick.js";
@@ -21,7 +22,6 @@ const OBSERVER_PANE = "w4G:p12";
 const IMPL_PANE = "w4G:p13";
 const PACKET = "ROLE: Implementor.\nPIPELINE: implement\nSOURCE: fixture\nRETURN CONTRACT: status";
 const STOP_HOOK = path.resolve(import.meta.dirname, "../../../scripts/supervisor_stop.mjs");
-const HCOORD = path.resolve(import.meta.dirname, "../../dist/hcoord/cli.js");
 
 function sasu(cwd, args, { env = {}, input } = {}) {
   const result = spawnSync(process.execPath, [CLI, ...args, "--json"], { cwd, encoding: "utf8", env: isolatedEnv(env), input, timeout: 60_000, maxBuffer: 8 * 1024 * 1024 });
@@ -63,27 +63,18 @@ function dispatchedRun(extraDispatchArgs = []) {
 test("B1: a run dispatched after use hcoord is listed as hcoord's in the index and the tick never wakes it", async (t) => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
-  // A short name outside the project: beside a macOS temp project the daemon
-  // socket path passed the 104-byte socket path limit.
+  // Fakes and HOME live outside the project so the digest never sees their logs.
   const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hc-")));
   const herdr = installFakeHerdr(outside);
   const launchctl = installFakeLaunchctl(outside);
   const home = path.join(outside, "home");
   fs.mkdirSync(home, { recursive: true });
-  const base = { HOME: home, ...herdr.env, PATH: herdr.env.PATH, HERDR_FAKE_REQUIRED_SOCKET_PATH: "/tmp/fake.sock", LAUNCHCTL_FAKE_LOG: launchctl.env.LAUNCHCTL_FAKE_LOG, LAUNCHCTL_FAKE_STATE: launchctl.env.LAUNCHCTL_FAKE_STATE };
+  const fake = installFakeHcoord(herdr.bin, outside);
+  const base = { HOME: home, ...fake.env, ...herdr.env, PATH: herdr.env.PATH, HERDR_FAKE_REQUIRED_SOCKET_PATH: "/tmp/fake.sock", LAUNCHCTL_FAKE_LOG: launchctl.env.LAUNCHCTL_FAKE_LOG, LAUNCHCTL_FAKE_STATE: launchctl.env.LAUNCHCTL_FAKE_STATE };
   const observerEnv = { ...base, HERDR_ENV: "1", HERDR_PANE_ID: OBSERVER_PANE, HERDR_WORKSPACE_ID: "w4G", HERDR_SOCKET_PATH: "/tmp/fake.sock", CLAUDE_SESSION_ID: OBSERVER };
   herdr.setAgents({ [OBSERVER_PANE]: observerAgent({ name: "observer", agent_status: "working", interactive_ready: true }) });
-  const daemon = spawn(process.execPath, [HCOORD, "daemon", "run"], { cwd: root, env: isolatedEnv(base), stdio: ["ignore", "ignore", "pipe"] });
-  let daemonError = "";
-  daemon.stderr.on("data", (chunk) => { daemonError += chunk; });
-  t.after(async () => {
-    if (daemon.exitCode === null) { daemon.kill("SIGTERM"); await new Promise((resolve) => daemon.once("exit", resolve)); }
-    fs.rmSync(outside, { recursive: true, force: true });
-  });
-  const socket = path.join(home, ".hcoord", "api.sock");
-  for (let attempt = 0; attempt < 100 && !fs.existsSync(socket); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(fs.existsSync(socket), true, daemonError);
-  const hcoord = (...args) => spawnSync(process.execPath, [HCOORD, ...args, "--json"], { cwd: root, env: isolatedEnv(observerEnv), encoding: "utf8" });
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  const hcoord = (...args) => spawnSync("hcoord", [...args, "--json"], { cwd: root, env: isolatedEnv(observerEnv), encoding: "utf8" });
   const use = sasu(home, ["supervisor", "use", "hcoord"], { env: base });
   assert.equal(use.status, 0, use.text);
   const started = sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env: observerEnv });

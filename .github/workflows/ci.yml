@@ -20,6 +20,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          # The pinned hcoord build below runs another repository's code
+          # inside this workspace; it gets no token from .git/config.
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -39,6 +43,42 @@ jobs:
 
       - name: Run CLI unit tests
         run: npm --prefix cli test
+
+      # The e2e suite drives a real hcoord daemon, and sasu ships none: it is
+      # built from the commit pinned in cli/test/hcoord-source.json. The suite
+      # fails, never skips, when SASU_TEST_HCOORD is missing under CI.
+      - name: Read the pinned hcoord source
+        id: hcoord-pin
+        run: |
+          repo="$(jq -r .repo cli/test/hcoord-source.json)"
+          ref="$(jq -r .ref cli/test/hcoord-source.json)"
+          [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "hcoord-source.json repo is not owner/name: $repo" >&2; exit 1; }
+          [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "hcoord-source.json ref is not a full commit SHA: $ref" >&2; exit 1; }
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the pinned hcoord source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.hcoord-pin.outputs.repo }}
+          ref: ${{ steps.hcoord-pin.outputs.ref }}
+          path: hcoord-src
+          persist-credentials: false
+          sparse-checkout: |
+            plugins/hcoord
+            pnpm-workspace.yaml
+            pnpm-lock.yaml
+          sparse-checkout-cone-mode: false
+
+      - name: Set up pnpm for the hcoord build
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
+      - name: Build the pinned hcoord
+        run: |
+          wrapper="$(node scripts/build-test-hcoord.mjs --src hcoord-src --out "$RUNNER_TEMP/hcoord")"
+          echo "SASU_TEST_HCOORD=$wrapper" >> "$GITHUB_ENV"
 
       - name: Run CLI end-to-end tests
         run: npm --prefix cli run test:e2e

@@ -71,8 +71,9 @@ npm --prefix cli run build
 node cli/dist/cli.js --help
 ```
 
-The separate `hcoord` CLI supplies reusable agent relationships, watch cycles, durable requests, and an inbox.
-See [the coordinator guide](docs/hcoord.md) for its commands, Sasu transition, adapter example, and feature-level platform support.
+The `hcoord` command supplies reusable agent relationships, watch cycles, durable requests, and an inbox.
+The hide app installs it at `~/.local/bin/hcoord`; Sasu ships no copy and calls the one on PATH.
+See [Sasu on hcoord](docs/hcoord.md) for the commands Sasu uses.
 
 The implementation path uses these main commands:
 

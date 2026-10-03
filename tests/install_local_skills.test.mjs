@@ -38,6 +38,46 @@ function freshHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "install-skills-home-"));
 }
 
+// Sasu once wrote two hcoord shims. The one beside the sasu shim would shadow
+// hide's hcoord on PATH with a command whose entry no longer exists, so it is
+// removed, but only when it has exactly the old shape.
+test("installer retires its own old hcoord shim and leaves any other hcoord alone", () => {
+  const oldShim = (node) => `#!/bin/sh\nexec ${node} "/somewhere/sasu/cli/dist/hcoord/cli.js" "$@"\n`;
+  const own = freshHome();
+  fs.mkdirSync(path.join(own, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(own, "bin", "hcoord"), oldShim("node"), { mode: 0o755 });
+  const retired = JSON.parse(runInstaller(own).stdout);
+  assert.equal(fs.existsSync(path.join(own, "bin", "hcoord")), false);
+  assert.equal(retired.cliBinary.retiredHcoordShim, path.join(own, "bin", "hcoord"));
+
+  const foreign = freshHome();
+  fs.mkdirSync(path.join(foreign, "bin"), { recursive: true });
+  const hide = "#!/bin/sh\nexec node \"/Users/x/.hide/hcoord/dist/hcoord/cli.js\" \"$@\"\n";
+  fs.writeFileSync(path.join(foreign, "bin", "hcoord"), hide, { mode: 0o755 });
+  const kept = JSON.parse(runInstaller(foreign).stdout);
+  assert.equal(fs.readFileSync(path.join(foreign, "bin", "hcoord"), "utf8"), hide, "another hcoord is not ours to remove");
+  assert.equal(kept.cliBinary.retiredHcoordShim, undefined);
+
+  // hide links ~/.local/bin/hcoord, and a link is never followed or removed, even to the old shape.
+  const linked = freshHome();
+  fs.mkdirSync(path.join(linked, "bin"), { recursive: true });
+  const target = path.join(linked, "hide-hcoord");
+  fs.writeFileSync(target, oldShim("node"), { mode: 0o755 });
+  fs.symlinkSync(target, path.join(linked, "bin", "hcoord"));
+  const link = JSON.parse(runInstaller(linked).stdout);
+  assert.equal(fs.lstatSync(path.join(linked, "bin", "hcoord")).isSymbolicLink(), true);
+  assert.equal(link.cliBinary.retiredHcoordShim, undefined);
+
+  // The old HQ-side shim lives in hcoord's data folder: reported, not touched.
+  const remote = freshHome();
+  fs.mkdirSync(path.join(remote, ".hcoord", "bin"), { recursive: true });
+  const remoteShim = path.join(remote, ".hcoord", "bin", "hcoord");
+  fs.writeFileSync(remoteShim, oldShim('"/usr/local/bin/node"'), { mode: 0o755 });
+  const reported = JSON.parse(runInstaller(remote).stdout);
+  assert.equal(reported.cliBinary.staleHcoordShim, remoteShim);
+  assert.equal(fs.existsSync(remoteShim), true);
+});
+
 test("installer installs canonical skills with correct substitutions and no aliases", () => {
   const home = freshHome();
   const result = runInstaller(home);
@@ -45,11 +85,9 @@ test("installer installs canonical skills with correct substitutions and no alia
   assert.equal(report.ok, true);
   assert.equal(report.installed.codex.length, 9);
   assert.equal(report.installed.claude.length, 9);
-  assert.match(fs.readFileSync(path.join(home, "bin", "hcoord"), "utf8"), /dist\/hcoord\/cli\.js/);
-  const remoteShim = fs.readFileSync(path.join(home, ".hcoord", "bin", "hcoord"), "utf8");
-  assert.ok(remoteShim.includes(`exec "${process.execPath}" `), "the SSH-reachable hcoord names node by absolute path");
-  const hello = spawnSync("/bin/sh", ["-c", `HCOORD_HOME="$HOME/.hcoord" exec "$HOME/.hcoord/bin/hcoord" remote hello --hq test-hq --json`], { env: { PATH: "/usr/bin:/bin", HOME: home }, encoding: "utf8" });
-  assert.equal(JSON.parse(hello.stdout).value.protocol, 1, "it answers the HQ from a bare non-login PATH");
+  assert.equal(fs.existsSync(path.join(home, "bin", "hcoord")), false, "hcoord is hide's to install");
+  assert.equal(fs.existsSync(path.join(home, ".hcoord")), false, "the installer never creates an hcoord data folder");
+  assert.equal(report.cliBinary.retiredHcoordShim, undefined);
 
   const codexInterview = path.join(home, ".codex", "skills", "interview-me", "SKILL.md");
   const codexInterviewText = fs.readFileSync(codexInterview, "utf8");

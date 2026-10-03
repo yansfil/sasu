@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { getAgent, guardedPromptSupport, type HerdrEnvironment } from "../implement/herdr";
 import { recordEvent } from "../implement/events";
-import { HCOORD_CLI, HcoordCallFailed, handoverRun, listParticipants, observerParticipantName, participantsOf, showParticipant, type ParticipantView, type WatchView } from "../implement/hcoord";
+import { HcoordCallFailed, runHcoord, handoverRun, listParticipants, observerParticipantName, participantsOf, showParticipant, type ParticipantView, type WatchView } from "../implement/hcoord";
 import { loadState, nowIso, persistState, resolveStatePath } from "../implement/store";
 import type { ImplementCommandResult, ImplementState, ObserverIdentity } from "../implement/types";
 import { currentHerdrRole } from "../runs/session";
@@ -209,7 +209,9 @@ function use(args: SupervisorArgs, env: NodeJS.ProcessEnv): ImplementCommandResu
     return result("use", true, "new dispatches use the legacy supervisor; runs already dispatched keep their owner", { newDispatches: "legacy" });
   }
   if (choice !== "hcoord") return { ok: false, action: "supervisor:use", exitCode: 2, message: "usage: sasu supervisor use hcoord|legacy" };
-  const probe = require("node:child_process").spawnSync(process.execPath, [HCOORD_CLI, "status", "--json"], { encoding: "utf8", timeout: 15_000, env }) as { stdout: string; stderr: string; status: number | null };
+  let probe: { stdout: string; stderr: string; status: number | null };
+  try { probe = runHcoord(["status", "--json"], env, 15_000); }
+  catch (error) { if (error instanceof HcoordCallFailed) return result("use", false, `${error.message}, so new dispatches stay with the legacy supervisor`); throw error; }
   let answered: { ok?: boolean; value?: { stale?: boolean } } | null = null;
   try { answered = JSON.parse(probe.stdout); } catch { answered = null; }
   if (answered?.ok !== true || answered.value?.stale === true) return result("use", false, `the hcoord daemon is not answering, so new dispatches stay with the legacy supervisor; start it with hcoord daemon start (${(probe.stderr || probe.stdout).trim().slice(0, 200) || "no output"})`);

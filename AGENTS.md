@@ -123,6 +123,15 @@ The installer registers the `challenge_trigger.mjs` routing hook, the advisory `
 No hook changes verification or completion state; the Stop hook only confirms an Observer handover and always exits 0.
 Any hook the installer has owned stays listed in `HARNESS_HOOK_MARKERS` in `cli/lib/hooks.js` so later installs can retire it without touching foreign hooks.
 
+The installer writes no `hcoord` shim: hcoord is installed by the hide app and Sasu calls whichever `hcoord` is on PATH.
+It removes only its own earlier `hcoord` shim beside the `sasu` shim, recognised by the old shim's exact shape, and never an `hcoord` it did not write.
+Tests never take `hcoord` from PATH.
+A test about sasu uses the fake in `cli/test/helpers/fake-hcoord.cjs`.
+A test that needs a real daemon uses the executable named by `SASU_TEST_HCOORD`, each daemon with its own `HCOORD_HOME`.
+`node scripts/build-test-hcoord.mjs` builds that executable from the hide commit pinned in `cli/test/hcoord-source.json` and prints its path; CI builds the same commit and exports the variable.
+Unset, those tests skip locally with that instruction and fail under `CI`, so a CI run cannot silently skip them.
+Move the pin only together with a green e2e run against the new commit.
+
 The installer also loads one user LaunchAgent (`com.sasu.supervisor`) that runs `sasu supervisor tick` every 30 seconds.
 The tick reads the index under `~/.sasu/supervisor/`, each watched `state.json` and its run's git tree, and herdr, and wakes a run's recorded Observer; it never writes run state.
 Tests exercise it only under an isolated `HOME` with a fake `herdr` and `launchctl` on `PATH`; never bootstrap a label into the real launchd domain or address a live pane from a test.
