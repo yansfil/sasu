@@ -107,6 +107,8 @@ export interface HerdrEnvironment {
   run?: (args: string[], cwd?: string, timeoutMs?: number) => { status: number | null; stdout: string; stderr: string; errorCode?: string };
   /** Wall clock and blocking sleep; injected by tests, so a 30 s wait costs a test nothing. */
   clock?: HerdrClock;
+  /** `codex features list` output, or null when it could not run; injected by tests so they never ask the machine's Codex. */
+  codexFeatures?: () => string | null;
 }
 
 export interface HerdrClock {
@@ -337,16 +339,38 @@ function listAgents(run: NonNullable<HerdrEnvironment["run"]>): { agents: AgentE
  * herdr passes everything after `--` straight to the agent executable, so the
  * translation is per-CLI and measured rather than guessed (2026-09-07):
  * `claude --model <m> --effort <level>`, `codex --model <m> -c
- * model_reasoning_effort="<level>"`.
+ * model_reasoning_effort="<level>"`. A Codex with a daemon also gets
+ * `--no-daemon` first (`codexRunsDaemon`).
  */
-function nativeAgentArgs(kind: string, model?: string, effort?: string): string[] {
-  const args: string[] = [];
+function nativeAgentArgs(kind: string, model?: string, effort?: string, noDaemon = false): string[] {
+  const args: string[] = noDaemon ? ["--no-daemon"] : [];
   if (model !== undefined && model !== "") args.push("--model", model);
   if (effort !== undefined && effort !== "") {
     if (kind === "codex") args.push("--config", `model_reasoning_effort="${effort}"`);
     else args.push("--effort", effort);
   }
   return args.length === 0 ? [] : ["--", ...args];
+}
+
+/**
+ * Whether this machine's Codex runs sessions in its shared app-server daemon,
+ * which `--no-daemon` turns off: its `codex features list` names
+ * `daemon_auto_start` (codex-cli 0.160, measured 2026-10-03). A session in
+ * that daemon runs its hooks with the daemon's environment instead of the
+ * pane's (openai/codex#48500), so Herdr cannot tell which pane it belongs to.
+ * hide's install kit, hide's own starts and hcoord spawn make the same
+ * judgement (hide PRD overview-request-view D-20). An older Codex has no
+ * daemon and refuses the flag, so a Codex that does not name the feature, or
+ * that this call cannot run, starts as before.
+ */
+function codexRunsDaemon(environment: HerdrEnvironment): boolean {
+  const listed = environment.codexFeatures ? environment.codexFeatures() : codexFeatureList(environment.env);
+  return listed !== null && /^daemon_auto_start\s/m.test(listed);
+}
+
+function codexFeatureList(env: NodeJS.ProcessEnv = process.env): string | null {
+  const executed = spawnSync("codex", ["features", "list"], { env, encoding: "utf8", shell: false, timeout: 5_000, killSignal: HERDR_TIMEOUT_KILL_SIGNAL });
+  return executed.error === undefined && executed.status === 0 ? executed.stdout : null;
 }
 
 export function initializedCodex(prepared: Pick<PreparedSpawn, "paneId" | "name">, environment: HerdrEnvironment, requireSettled = true): AgentLookup {
@@ -591,7 +615,7 @@ export function spawnImplementor(
     return { ok: false, value: null, problem: `pane ${created} was created, but pre-start persistence failed: ${error instanceof Error ? error.message : String(error)}; no agent was started and ${cleanup}` };
   }
 
-  const startArgv = ["agent", "start", input.name, "--kind", kind, "--pane", created, ...nativeAgentArgs(kind, input.model, input.effort)];
+  const startArgv = ["agent", "start", input.name, "--kind", kind, "--pane", created, ...nativeAgentArgs(kind, input.model, input.effort, kind === "codex" && codexRunsDaemon(environment))];
   const { result: started, busyRetries, elapsedMs } = startAgentWhenPaneReady(startArgv, { ...environment, run }, cwd);
   if (started.status !== 0) {
     // A nonzero startup may leave a live trust dialog (2026-09-07).
