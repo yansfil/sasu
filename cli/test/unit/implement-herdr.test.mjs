@@ -375,6 +375,11 @@ test("an undetectable kind is refused before anything is created", () => {
   assert.equal(of("workspace create"), undefined, "nothing may be created before the kind is known");
 });
 
+// `codex features list` rows as codex-cli prints them: 0.160 names the
+// daemon feature (measured 2026-10-03), an older Codex has no daemon.
+const CODEX_0_160_FEATURES = "auth_elicitation                         stable             true\ndaemon_auto_start                        stable             false\ndefault_mode_request_user_input          under development  false\n";
+const CODEX_0_150_FEATURES = "auth_elicitation                         stable             true\ndefault_mode_request_user_input          under development  false\n";
+
 // herdr passes everything after `--` to the agent executable, so the
 // translation is per-CLI: claude has a native --effort, codex takes it as a
 // config override (measured against both CLIs 2026-09-07).
@@ -384,9 +389,21 @@ test("model and effort are forwarded as the started agent's own native arguments
   assert.deepEqual(claude.of("agent start").slice(7), ["--", "--model", "opus", "--effort", "xhigh"]);
 
   const codex = recorder();
-  spawnImplementor({ name: "impl", placement: WS, prompt: "p", kind: "codex", effort: "xhigh" }, { env: LIVE, run: codex.run });
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p", kind: "codex", effort: "xhigh" }, { env: LIVE, run: codex.run, codexFeatures: () => CODEX_0_150_FEATURES });
   assert.deepEqual(codex.of("agent start").slice(7, 10), ["--", "--config", 'model_reasoning_effort="xhigh"']);
   assert.equal(codex.of("agent start").length, 10, "Codex launch options contain no model turn inside Herdr readiness");
+
+  const daemon = recorder();
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p", kind: "codex", effort: "xhigh" }, { env: LIVE, run: daemon.run, codexFeatures: () => CODEX_0_160_FEATURES });
+  assert.deepEqual(daemon.of("agent start").slice(7), ["--", "--no-daemon", "--config", 'model_reasoning_effort="xhigh"']);
+
+  const bare = recorder();
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p", kind: "codex" }, { env: LIVE, run: bare.run, codexFeatures: () => CODEX_0_160_FEATURES });
+  assert.deepEqual(bare.of("agent start").slice(7), ["--", "--no-daemon"]);
+
+  const claudeOnDaemonMachine = recorder();
+  spawnImplementor({ name: "impl", placement: WS, prompt: "p", model: "opus" }, { env: LIVE, run: claudeOnDaemonMachine.run, codexFeatures: () => CODEX_0_160_FEATURES });
+  assert.ok(!claudeOnDaemonMachine.of("agent start").includes("--no-daemon"), "only Codex takes the flag");
 
   const plain = recorder();
   spawnImplementor({ name: "impl", placement: WS, prompt: "p" }, { env: LIVE, run: plain.run });
