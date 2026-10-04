@@ -4,6 +4,8 @@ import test from "node:test";
 
 import { closePreparedSpawn, herdrCapabilities, isAgentAlive, readPane, spawnImplementor } from "../../dist/implement/herdr.js";
 import { parseEnvPairs } from "../../dist/implement/dispatch.js";
+import { requireRealHide } from "../helpers/hide-binary.mjs";
+import { privateHerdrFixture } from "../helpers/private-herdr.mjs";
 
 const ok = (stdout = "") => () => ({ status: 0, stdout, stderr: "" });
 const fails = (status = 1, stderr = "boom") => () => ({ status, stdout: "", stderr });
@@ -596,22 +598,20 @@ test("a blank pane id is treated as unset rather than dispatched verbatim", () =
  * adapter spells actually exist, and skips where herdr is not installed -
  * which is exactly the bare terminal, launchd and CI case R9 designs for.
  */
+const probeBinary = process.env.SASU_TEST_HIDE === undefined ? "herdr" : requireRealHide().herdr;
 const herdrHelp = (args) => {
-  const run = spawnSync("herdr", [...args, "--help"], { encoding: "utf8", timeout: 15_000 });
+  const run = spawnSync(probeBinary, [...args, "--help"], { encoding: "utf8", timeout: 15_000 });
   return run.error === undefined && run.status === 0 ? `${run.stdout}${run.stderr}` : null;
 };
 
-const binaryProbe = spawnSync("herdr", ["--version"], { encoding: "utf8", timeout: 15_000 });
+const binaryProbe = spawnSync(probeBinary, ["--version"], { encoding: "utf8", timeout: 15_000 });
 const noHerdr = binaryProbe.error?.code === "ENOENT";
-// The `--help` contract needs only the binary. The probes below it need a
-// reachable server: under `sasu implement verify` the suite runs with a
-// scrubbed HOME and no HERDR_SOCKET_PATH, so herdr derives a socket path
-// under the deep suite-runtime HOME and fails on sun_path before it can
-// answer (measured 2026-09-18, run sasu-observer-supervisor). That is the
-// "no live desktop" case, not a contract change, so those probes skip with
-// the reason instead of failing the sealed suite.
-const serverProbe = noHerdr ? null : spawnSync("herdr", ["agent", "list"], { encoding: "utf8", timeout: 15_000 });
-const noServer = noHerdr ? "herdr is not installed" : serverProbe.status !== 0 ? `herdr server not reachable: ${(serverProbe.stderr || serverProbe.stdout).trim().slice(0, 160)}` : false;
+// Server probes own a candidate and a short explicit socket. A deep private
+// HOME must neither hide their assertions behind a skip nor reach a desktop.
+// Bare CI without Herdr retains its optional binary-absence behavior.
+const noPrivateServer = process.env.SASU_TEST_HIDE === undefined
+  ? (noHerdr ? "herdr is not installed" : "SASU_TEST_HIDE is not configured; private server probes are unrun")
+  : false;
 
 test("the argv this adapter sends matches the installed herdr's own contract", { skip: noHerdr ? "herdr is not installed" : false }, () => {
   for (const [args, flags] of [
@@ -632,7 +632,9 @@ test("the argv this adapter sends matches the installed herdr's own contract", {
   }
 });
 
-test("the installed herdr answers `agent list` with JSON and no --json flag", { skip: noServer }, () => {
+test("the installed herdr answers `agent list` with JSON and no --json flag", { skip: noPrivateServer }, async (t) => {
+  const fixture = await privateHerdrFixture(t);
+  const serverProbe = fixture.run(["agent", "list"]);
   assert.equal(serverProbe.status, 0, "the capability probe's argv must succeed against the installed herdr");
   assert.doesNotThrow(() => JSON.parse(serverProbe.stdout), "`agent list` is expected to print JSON with no --json flag");
 });
@@ -674,14 +676,14 @@ test("failed startup retains unready, live, and unobservable panes without sendi
   }
 });
 
-test("installed CLI errors use stderr and retain unknown liveness on connection failure", { skip: noServer }, () => {
+test("installed CLI errors use stderr and retain unknown liveness on connection failure", { skip: noPrivateServer }, async (t) => {
+  const fixture = await privateHerdrFixture(t);
   const missing = `missing-${process.pid}-${Date.now()}`;
-  const read = spawnSync("herdr", ["agent", "read", missing, "--source", "recent-unwrapped", "--lines", "1"], { encoding: "utf8", timeout: 15_000 });
+  const read = fixture.run(["agent", "read", missing, "--source", "recent-unwrapped", "--lines", "1"]);
   assert.equal(read.status, 1);
   assert.equal(read.stdout, "");
   assert.equal(JSON.parse(read.stderr).error.code, "agent_not_found");
-  const run = (args) => spawnSync("herdr", args, { encoding: "utf8", timeout: 15_000,
-    env: { ...process.env, HERDR_SOCKET_PATH: `/tmp/${missing}.sock` } });
+  const run = fixture.disconnected;
   const failure = run(["agent", "list"]);
   assert.equal(failure.status, 1);
   assert.equal(failure.stdout, "");

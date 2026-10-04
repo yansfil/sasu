@@ -1,5 +1,5 @@
 {
   "repo": "yansfil/herdr-ide",
-  "ref": "70b1abe70f7f6b3eb80b935f32d370c564a384be",
+  "ref": "8ac5d31e9e5726f6bf2f2d12f045b2942e9de40b",
   "note": "The Hide candidate supplies agent registration, durable intake confirmation and watch handover. Native tests require this candidate's adjacent daemon and pinned Herdr resources."
 }
