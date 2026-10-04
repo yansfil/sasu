@@ -71,7 +71,7 @@ if (topic === "request" && action === "send") {
   if (!sender || !recipient || typeof flags.intent !== "string" || typeof flags.body !== "string" || !["request", "block", "report"].includes(flags.kind)) refuse("native_identity_required");
   const existing = Object.values(state.requests).find((r) => r.intent === flags.intent && r.sender.pane_id === sender.pane);
   if (existing) reply(existing);
-  const request = { id: `letter_${++state.seq}`, sender: actor(sender), recipient: actor(recipient), intent: flags.intent, body: flags.body, kind: flags.kind, waiting_answer: flags.kind !== "report", state: "pending" };
+  const request = { id: `letter_${++state.seq}`, sender: actor(sender), recipient: actor(recipient), intent: flags.intent, body: flags.body, kind: flags.kind, waiting_answer: flags.kind !== "report", state: "pending", hook_confirmed: false };
   state.requests[request.id] = request; save(); reply(request);
 }
 if (topic === "request" && action === "show") { if (!state.requests[target]) refuse("not_found"); reply(state.requests[target]); }

@@ -26,16 +26,43 @@ test("a malformed successful check cannot grant caller authority", (t) => {
   assert.throws(() => checkObserver({ name: "observer", identity: { paneId: "w1:p1", runtime: "claude", sessionId: "session", terminalId: "terminal", hostScope: "socket", recordedAt: "2026-10-03T00:00:00.000Z" } }), /unusable registration check/);
 });
 test("Pending report remains unconfirmed and uses the public envelope and argv", (t) => {
-  const argv = binary(t, `const a=process.argv.slice(2);process.stdout.write(JSON.stringify({type:"workspace_result",ok:true,result:{id:"letter-1",intent:a[a.indexOf("--intent")+1],state:"pending"}}));`);
+  const argv = binary(t, `const a=process.argv.slice(2);process.stdout.write(JSON.stringify({type:"workspace_result",ok:true,result:{id:"letter-1",intent:a[a.indexOf("--intent")+1],state:"pending",hook_confirmed:false}}));`);
   const first = sendRunNotice("run", { observer: "parent", implementor: "child" }, "report", "done");
   const retry = sendRunNotice("run", { observer: "parent", implementor: "child" }, "report", "done");
   assert.equal(first.delivery, "pending"); assert.equal(first.intent, retry.intent);
   assert.deepEqual(argv()[0], ["request", "send", "parent", "--kind", "report", "--intent", first.intent, "--body", "done"]);
 });
 test("plan sends an ordinary request with durable intent", (t) => {
-  const argv = binary(t, `const a=process.argv.slice(2);process.stdout.write(JSON.stringify({type:"workspace_result",ok:true,result:{id:"letter-2",intent:a[a.indexOf("--intent")+1],state:"delivered"}}));`);
+  const argv = binary(t, `const a=process.argv.slice(2);process.stdout.write(JSON.stringify({type:"workspace_result",ok:true,result:{id:"letter-2",intent:a[a.indexOf("--intent")+1],state:"delivered",hook_confirmed:true}}));`);
   const sent = sendRunNotice("run", { observer: "parent", implementor: "child" }, "plan", "plan");
   assert.equal(sent.delivery, "delivered"); assert.equal(argv()[0][4], "request");
+});
+test("notice delivery follows confirmed intake independently of request state", async (t) => {
+  const cases = [
+    ...["pending", "delivered", "acknowledged", "cancelled", "expired", "undelivered"].map((state) => ({ state, receipt: false, delivery: "pending" })),
+    ...["acknowledged", "cancelled", "delivered"].map((state) => ({ state, receipt: true, delivery: "delivered" })),
+    ...[null, undefined].flatMap((receipt) => [
+      { state: "delivered", receipt, delivery: "delivered" },
+      { state: "acknowledged", receipt, delivery: "pending" },
+      { state: "cancelled", receipt, delivery: "pending" },
+    ]),
+  ];
+  for (const { state, receipt, delivery } of cases) await t.test(`${state}, receipt ${String(receipt)}`, (t) => {
+    binary(t, `const a=process.argv.slice(2);process.stdout.write(JSON.stringify({type:"workspace_result",ok:true,result:{id:"letter-receipt",intent:a[a.indexOf("--intent")+1],...${JSON.stringify({ state, hook_confirmed: receipt })}}}));`);
+    const first = sendRunNotice("run", { observer: "parent", implementor: "child" }, "report", "done");
+    const retry = sendRunNotice("run", { observer: "parent", implementor: "child" }, "report", "done");
+    assert.equal(first.delivery, delivery);
+    assert.equal(retry.delivery, delivery);
+    assert.equal(first.requestId, retry.requestId);
+    assert.equal(first.intent, retry.intent);
+  });
+});
+test("malformed intake receipts return an actionable refusal", (t) => {
+  binary(t, `const a=process.argv.slice(2);process.stdout.write(JSON.stringify({type:"workspace_result",ok:true,result:{id:"letter-invalid",intent:a[a.indexOf("--intent")+1],state:"acknowledged",hook_confirmed:JSON.parse(a[a.indexOf("--body")+1])}}));`);
+  for (const receipt of ["true", 1, {}, []]) assert.throws(
+    () => sendRunNotice("run", { observer: "parent", implementor: "child" }, "report", JSON.stringify(receipt)),
+    (error) => error instanceof HideCallFailed && error.code === "invalid_response" && /inspect the request and retry the same intent/.test(error.message),
+  );
 });
 test("delivery refusal carries reason and next action", (t) => {
   binary(t, `process.stdout.write(JSON.stringify({ok:false,reason:"native_identity_required",next_action:"Retry from the actual agent pane"}));process.exit(1);`);

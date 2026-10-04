@@ -1733,7 +1733,7 @@ function recordNoticeEvent(state: ImplementState, kind: "plan" | "block" | "repo
 /**
  * Sends the recorded event to the Observer through Hide, after the Sasu
  * record is durable. A refusal preserves the Sasu record and the stable
- * intent for retry; a pending letter is not confirmed delivery.
+ * intent for retry; only confirmed intake proves delivery, including after ack.
  */
 function sendNotice(action: string, state: ImplementState, kind: RunNoticeKind, body: string, recorded: string, retry: string, detail: Record<string, unknown>, sentLine: (sent: SentNotice) => string): ImplementCommandResult {
   let sent: SentNotice;
@@ -1750,7 +1750,7 @@ function sendNotice(action: string, state: ImplementState, kind: RunNoticeKind, 
     if (!(error instanceof HideCallFailed)) throw error;
     return failed(error.message);
   }
-  const where = sent.delivery === "pending" ? `Hide letter ${sent.letter} is pending; delivery is not confirmed` : `Hide request ${sent.requestId} was delivered`;
+  const where = sent.delivery === "pending" ? `Hide letter ${sent.letter}: delivery is not confirmed` : `Hide request ${sent.requestId} was delivered`;
   return result(action, true, `${recorded}; ${where}; ${sentLine(sent)}`, { ...detail, hide: { sent: true, ...sent } });
 }
 

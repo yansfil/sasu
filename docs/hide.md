@@ -73,6 +73,10 @@ No relay or automatic unanswered-question escalation is installed.
 
 A report is pending until intake is confirmed.
 Its successful send alone does not end supervision or prove completion.
+The letter's durable `hook_confirmed` receipt records that confirmation independently of acknowledgement.
+An acknowledged letter with a false or unknown receipt remains unconfirmed in Sasu; retries retain the same letter ID.
+For older letters without a receipt, only `delivered` proves intake; `acknowledged` alone cannot distinguish acknowledgement before or after intake.
+If intake is confirmed after cancellation or a missed-delivery deadline, the receipt still proves actual delivery; cancellation alone does not.
 Hide stops the implementor's watch when that report is confirmed delivered to its parent, without waiting for a parent acknowledgement.
 An interrupted intake repeats the same letter ID and leaves the watch active until confirmation.
 The Observer may explicitly start a new watch when more observation is needed.

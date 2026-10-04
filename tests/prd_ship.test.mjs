@@ -26,6 +26,8 @@ function fixture(baselineFiles = {}) {
   run("git", ["init", "-q"], { cwd: root });
   run("git", ["config", "user.name", "test"], { cwd: root });
   run("git", ["config", "user.email", "test@example.test"], { cwd: root });
+  // Synthetic history must not depend on the workstation's signing agent.
+  run("git", ["config", "commit.gpgsign", "false"], { cwd: root });
   write(path.join(root, ".gitignore"), "agents/\n");
   write(path.join(root, "src", "feature.js"), "export const ready = false;\n");
   for (const [relative, text] of Object.entries(baselineFiles)) write(path.join(root, relative), text);

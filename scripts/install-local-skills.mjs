@@ -19,11 +19,10 @@
 // The installer also retires legacy harness hooks idempotently while
 // preserving foreign hooks, and removes pre-rename install directories it
 // owns (intake, prd, prd-implement, ...). Hook reconciliation lives in
-// cli/lib/hooks.js, shared with `sasu supervisor uninstall`.
+// cli/lib/hooks.js.
 //
-// It also installs the supervisor LaunchAgent (`sasu supervisor install`)
-// and the Observer Stop hook on both runtimes, so a Herdr-dispatched run is
-// watched from its first tick (D-03, D-12).
+// It installs only the challenge routing and commit reminder advisory hooks
+// on both runtimes. Hide owns each dispatched run's inactivity watch.
 
 import fs from "node:fs";
 import path from "node:path";

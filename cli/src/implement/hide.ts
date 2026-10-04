@@ -131,11 +131,14 @@ export function endParticipant(implementorId: string, actor?: string): { deliver
 
 export type RunNoticeKind = "plan" | "block" | "report";
 export interface SentNotice { requestId: string; intent: string; delivery: "delivered" | "pending"; letter: string }
-interface Letter { id: string; intent: string; state: string }
-/** Stable intent survives a Sasu retry. Pending remains unconfirmed delivery. */
+interface Letter { id: string; intent: string; state: string; hook_confirmed?: boolean | null }
+/** Stable intent survives retry; acknowledgement alone does not prove intake. */
 export function sendRunNotice(run: string, participants: { observer: string; implementor: string }, kind: RunNoticeKind, body: string): SentNotice {
   const intent = `sasu:${run}:${kind}:${crypto.createHash("sha256").update(body).digest("hex").slice(0, 16)}`;
   const sent = call<Letter>(["request", "send", participants.observer, "--kind", kind === "plan" ? "request" : kind, "--intent", intent, "--body", body], "delivery");
-  if (typeof sent.id !== "string" || sent.intent !== intent || !["pending", "delivered", "acknowledged"].includes(sent.state)) throw new HideCallFailed("hide returned an unusable letter; inspect the request and retry the same intent", "invalid_response");
-  return { requestId: sent.id, intent, delivery: sent.state === "pending" ? "pending" : "delivered", letter: sent.id };
+  if (!record(sent) || !textField(sent.id) || sent.intent !== intent || !["pending", "delivered", "acknowledged", "cancelled", "expired", "undelivered"].includes(sent.state)
+    || !(sent.hook_confirmed === undefined || sent.hook_confirmed === null || typeof sent.hook_confirmed === "boolean")) throw new HideCallFailed("hide returned an unusable letter; inspect the request and retry the same intent", "invalid_response");
+  // Legacy Delivered records imply intake; legacy Acknowledged records cannot.
+  const confirmed = sent.hook_confirmed === true || ((sent.hook_confirmed === undefined || sent.hook_confirmed === null) && sent.state === "delivered");
+  return { requestId: sent.id, intent, delivery: confirmed ? "delivered" : "pending", letter: sent.id };
 }
