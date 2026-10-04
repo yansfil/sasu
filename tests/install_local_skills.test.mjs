@@ -1,20 +1,33 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { installFakeLaunchctl } from "../cli/test/helpers/fake-herdr.mjs";
-
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const installer = path.join(repoRoot, "scripts", "install-local-skills.mjs");
 
-// Every installer run in this suite sees a fake launchctl first on PATH: the
-// installer loads the supervisor LaunchAgent, and a test must never
-// bootstrap a label into the real launchd domain (B20).
+function installLaunchctlTripwire(directory) {
+  const bin = path.join(directory, "bin");
+  const log = path.join(directory, "launchctl-argv.jsonl");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, "launchctl"), `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + "\\n");
+process.stderr.write("installer attempted a forbidden service call\\n");
+process.exitCode = 97;
+`, { mode: 0o755 });
+  return {
+    env: { PATH: `${bin}:${process.env.PATH ?? ""}` },
+    argv: () => fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [],
+  };
+}
+
+// Every run uses a private HOME and a fake launchctl. The current installer
+// must make no service calls; the fake also keeps a regression away from the
+// operator's launchd domain.
 function runInstaller(home, options = {}) {
-  const launchctl = installFakeLaunchctl(path.join(home, "fakes"));
+  const launchctl = installLaunchctlTripwire(path.join(home, "fakes"));
   const result = spawnSync(process.execPath, [installer], {
     cwd: repoRoot,
     shell: false,
@@ -34,13 +47,22 @@ function runInstaller(home, options = {}) {
   return result;
 }
 
+const fixtureRoot = path.join(repoRoot, "agents", "runs", "hcoord-retire", "installer-fixtures");
+const fixtureHomes = new Set();
 function freshHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "install-skills-home-"));
+  fs.mkdirSync(fixtureRoot, { recursive: true });
+  const home = fs.mkdtempSync(path.join(fixtureRoot, "home-"));
+  fixtureHomes.add(home);
+  return home;
 }
 
-// Sasu once wrote two hcoord shims. The one beside the sasu shim would shadow
-// hide's hcoord on PATH with a command whose entry no longer exists, so it is
-// removed, but only when it has exactly the old shape.
+test.afterEach(() => {
+  for (const home of fixtureHomes) fs.rmSync(home, { recursive: true, force: true });
+  fixtureHomes.clear();
+});
+
+// The exact former Sasu shim is transition-owned; other files and links are
+// foreign, and the coordinator's former HOME is never inspected or changed.
 test("installer retires its own old hcoord shim and leaves any other hcoord alone", () => {
   const oldShim = (node) => `#!/bin/sh\nexec ${node} "/somewhere/sasu/cli/dist/hcoord/cli.js" "$@"\n`;
   const own = freshHome();
@@ -52,13 +74,13 @@ test("installer retires its own old hcoord shim and leaves any other hcoord alon
 
   const foreign = freshHome();
   fs.mkdirSync(path.join(foreign, "bin"), { recursive: true });
-  const hide = "#!/bin/sh\nexec node \"/Users/x/.hide/hcoord/dist/hcoord/cli.js\" \"$@\"\n";
+  const hide = "#!/bin/sh\nexec node \"/fixture/.hide/hcoord/dist/hcoord/cli.js\" \"$@\"\n";
   fs.writeFileSync(path.join(foreign, "bin", "hcoord"), hide, { mode: 0o755 });
   const kept = JSON.parse(runInstaller(foreign).stdout);
   assert.equal(fs.readFileSync(path.join(foreign, "bin", "hcoord"), "utf8"), hide, "another hcoord is not ours to remove");
   assert.equal(kept.cliBinary.retiredHcoordShim, undefined);
 
-  // hide links ~/.local/bin/hcoord, and a link is never followed or removed, even to the old shape.
+  // A link is never followed or removed, even when its target has the old shape.
   const linked = freshHome();
   fs.mkdirSync(path.join(linked, "bin"), { recursive: true });
   const target = path.join(linked, "hide-hcoord");
@@ -68,14 +90,15 @@ test("installer retires its own old hcoord shim and leaves any other hcoord alon
   assert.equal(fs.lstatSync(path.join(linked, "bin", "hcoord")).isSymbolicLink(), true);
   assert.equal(link.cliBinary.retiredHcoordShim, undefined);
 
-  // The old HQ-side shim lives in hcoord's data folder: reported, not touched.
+  // A legacy HOME is outside the installer scope, even when explicitly set.
   const remote = freshHome();
   fs.mkdirSync(path.join(remote, ".hcoord", "bin"), { recursive: true });
   const remoteShim = path.join(remote, ".hcoord", "bin", "hcoord");
   fs.writeFileSync(remoteShim, oldShim('"/usr/local/bin/node"'), { mode: 0o755 });
-  const reported = JSON.parse(runInstaller(remote).stdout);
-  assert.equal(reported.cliBinary.staleHcoordShim, remoteShim);
-  assert.equal(fs.existsSync(remoteShim), true);
+  const remoteBytes = fs.readFileSync(remoteShim, "utf8");
+  const reported = JSON.parse(runInstaller(remote, { env: { HCOORD_HOME: path.join(remote, ".hcoord") } }).stdout);
+  assert.equal(reported.cliBinary.staleHcoordShim, undefined);
+  assert.equal(fs.readFileSync(remoteShim, "utf8"), remoteBytes);
 });
 
 test("installer installs canonical skills with correct substitutions and no aliases", () => {
@@ -85,8 +108,8 @@ test("installer installs canonical skills with correct substitutions and no alia
   assert.equal(report.ok, true);
   assert.equal(report.installed.codex.length, 9);
   assert.equal(report.installed.claude.length, 9);
-  assert.equal(fs.existsSync(path.join(home, "bin", "hcoord")), false, "hcoord is hide's to install");
-  assert.equal(fs.existsSync(path.join(home, ".hcoord")), false, "the installer never creates an hcoord data folder");
+  assert.equal(fs.existsSync(path.join(home, "bin", "hcoord")), false, "the retired coordinator is not installed");
+  assert.equal(fs.existsSync(path.join(home, ".hcoord")), false, "the installer never creates the former coordinator HOME");
   assert.equal(report.cliBinary.retiredHcoordShim, undefined);
 
   const codexInterview = path.join(home, ".codex", "skills", "interview-me", "SKILL.md");
@@ -164,48 +187,38 @@ test("installer installs canonical skills with correct substitutions and no alia
   assert.doesNotMatch(claudeChallenge, /\$challenge/);
   assert.match(fs.readFileSync(path.join(home, ".codex", "skills", "challenge", "SKILL.md"), "utf8"), /\$challenge/);
 
-  // The approved reminder, challenge routing and the handover-confirming
-  // Stop hook install once on both runtimes (D-12).
+  // Only the two advisory hooks install, once on both runtimes.
   for (const file of [
     path.join(home, ".codex", "hooks.json"),
     path.join(home, ".claude", "settings.json"),
   ]) {
     const config = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.deepEqual(Object.keys(config.hooks), ["UserPromptSubmit", "PostToolUse", "Stop"]);
+    assert.deepEqual(Object.keys(config.hooks), ["UserPromptSubmit", "PostToolUse"]);
     assert.equal(config.hooks.UserPromptSubmit.length, 1);
     assert.match(config.hooks.UserPromptSubmit[0].hooks[0].command, /challenge_trigger\.mjs$/);
     assert.equal(config.hooks.PostToolUse.length, 1);
     assert.match(config.hooks.PostToolUse[0].hooks[0].command, /commit_reminder\.mjs$/);
-    assert.equal(config.hooks.Stop.length, 1);
-    assert.match(config.hooks.Stop[0].hooks[0].command, /supervisor_stop\.mjs$/);
+    assert.equal(config.hooks.Stop, undefined);
   }
-  // The supervisor LaunchAgent is written under this HOME and loaded through
-  // launchctl exactly once (B14).
-  assert.equal(report.supervisor.ok, true, JSON.stringify(report.supervisor));
-  assert.equal(report.supervisor.plist, "written");
-  assert.equal(fs.existsSync(path.join(home, "Library", "LaunchAgents", "com.sasu.supervisor.plist")), true);
-  assert.deepEqual(result.launchctl.argv().map((argv) => argv[0]), ["print", "bootstrap"]);
+  assert.equal(report.supervisor, undefined);
+  assert.equal(fs.existsSync(path.join(home, "Library", "LaunchAgents", "com.sasu.supervisor.plist")), false);
+  assert.deepEqual(result.launchctl.argv(), []);
 });
 
-test("installer keeps the legacy supervisor and Stop hook retired after hcoord transition", () => {
+test("installer does not inspect or change the former supervisor service", () => {
   const home = freshHome();
-  runInstaller(home);
-  fs.mkdirSync(path.join(home, ".sasu", "supervisor"), { recursive: true });
-  fs.writeFileSync(path.join(home, ".sasu", "supervisor", "use-hcoord"), "test\n");
-  const launchctl = installFakeLaunchctl(path.join(home, "fakes"));
-  const retired = spawnSync(process.execPath, [path.join(repoRoot, "cli", "dist", "cli.js"), "supervisor", "retire-legacy", "--json"], {
-    cwd: repoRoot, encoding: "utf8", env: { ...process.env, HOME: home, ...launchctl.env },
-  });
-  assert.equal(retired.status, 0, retired.stdout + retired.stderr);
-  const reinstalled = JSON.parse(runInstaller(home).stdout);
-  assert.equal(reinstalled.supervisor.retired, true);
-  assert.equal(fs.existsSync(path.join(home, "Library", "LaunchAgents", "com.sasu.supervisor.plist")), false);
-  for (const file of [path.join(home, ".codex", "hooks.json"), path.join(home, ".claude", "settings.json")]) {
-    const hooks = JSON.parse(fs.readFileSync(file, "utf8")).hooks;
-    assert.equal(hooks.Stop, undefined);
-    assert.ok(hooks.UserPromptSubmit);
-    assert.ok(hooks.PostToolUse);
-  }
+  const plist = path.join(home, "Library", "LaunchAgents", "com.sasu.supervisor.plist");
+  const index = path.join(home, ".sasu", "supervisor", "index.json");
+  fs.mkdirSync(path.dirname(plist), { recursive: true });
+  fs.mkdirSync(path.dirname(index), { recursive: true });
+  fs.writeFileSync(plist, "foreign-or-legacy service bytes\n");
+  fs.writeFileSync(index, "not a current Sasu index\n");
+
+  const result = runInstaller(home);
+  assert.equal(JSON.parse(result.stdout).supervisor, undefined);
+  assert.deepEqual(result.launchctl.argv(), []);
+  assert.equal(fs.readFileSync(plist, "utf8"), "foreign-or-legacy service bytes\n");
+  assert.equal(fs.readFileSync(index, "utf8"), "not a current Sasu index\n");
 });
 
 test("installer removes owned legacy directories and keeps foreign ones", () => {
@@ -246,31 +259,16 @@ test("installer is idempotent and preserves foreign hooks and settings", () => {
   runInstaller(home);
   const first = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
   assert.equal(first.model, "opus");
-  // The foreign Stop hook keeps its place and order; ours is appended once.
-  assert.equal(first.hooks.Stop.length, 2);
-  assert.equal(first.hooks.Stop[0].hooks[0].command, "echo unrelated");
-  assert.match(first.hooks.Stop[1].hooks[0].command, /supervisor_stop\.mjs$/);
+  assert.deepEqual(first.hooks.Stop, [{ hooks: [{ type: "command", command: "echo unrelated" }] }]);
 
-  // Second run changes nothing and does not duplicate hook entries, and the
-  // LaunchAgent is not rewritten or reloaded.
   const second = runInstaller(home);
   const report = JSON.parse(second.stdout);
   assert.equal(report.hooks.claude.changed, false);
   assert.equal(report.hooks.codex.changed, false);
-  assert.equal(report.supervisor.plist, "unchanged");
-  assert.deepEqual(report.supervisor.launchctl, []);
+  assert.equal(report.supervisor, undefined);
+  assert.deepEqual(second.launchctl.argv(), []);
   const settings = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
-  assert.equal(settings.hooks.Stop.length, 2);
-
-  // Uninstall takes back only the Sasu Stop hook and the LaunchAgent (D-12).
-  const removed = spawnSync(process.execPath, [path.join(repoRoot, "cli", "dist", "cli.js"), "supervisor", "uninstall", "--json"], { encoding: "utf8", env: { ...process.env, HOME: home, ...second.launchctl.env } });
-  assert.equal(removed.status, 0, removed.stderr + removed.stdout);
-  const after = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
-  assert.deepEqual(after.hooks.Stop, [{ hooks: [{ type: "command", command: "echo unrelated" }] }]);
-  assert.equal(after.hooks.PostToolUse.length, 1, "the reminder hook is not the supervisor's to remove");
-  assert.equal(after.model, "opus");
-  assert.equal(fs.existsSync(path.join(home, "Library", "LaunchAgents", "com.sasu.supervisor.plist")), false);
-  assert.deepEqual(second.launchctl.state().loaded, {});
+  assert.deepEqual(settings, first);
 });
 
 test("installer retires legacy harness hooks without touching foreign hooks", () => {
@@ -278,28 +276,28 @@ test("installer retires legacy harness hooks without touching foreign hooks", ()
   for (const runtime of [".codex", ".claude"]) {
     fs.mkdirSync(path.join(home, runtime), { recursive: true });
   }
-  const legacy = { hooks: [{ type: "command", command: "node /tmp/prd_state_harness.js hook stop" }] };
+  const legacy = { hooks: [{ type: "command", command: "node /fixture/prd_state_harness.js hook stop" }] };
+  const legacyStop = { hooks: [{ type: "command", command: "node /fixture/supervisor_stop.mjs" }] };
   const foreign = { hooks: [{ type: "command", command: "echo unrelated" }] };
+  const mixed = { matcher: "fixture", hooks: [foreign.hooks[0], legacyStop.hooks[0]] };
   fs.writeFileSync(path.join(home, ".codex", "hooks.json"), JSON.stringify({
-    hooks: { Stop: [foreign, legacy], PreToolUse: [legacy] },
+    hooks: { Stop: [foreign, legacy, legacyStop, mixed], PreToolUse: [legacy] },
   }, null, 2));
   fs.writeFileSync(path.join(home, ".claude", "settings.json"), JSON.stringify({
-    hooks: { Stop: [legacy], PostToolUse: [foreign, legacy] },
+    hooks: { Stop: [legacy, legacyStop, mixed], PostToolUse: [foreign, legacy] },
   }, null, 2));
 
   runInstaller(home);
 
   const codex = JSON.parse(fs.readFileSync(path.join(home, ".codex", "hooks.json"), "utf8"));
-  assert.deepEqual(codex.hooks.Stop[0], foreign);
-  assert.match(codex.hooks.Stop[1].hooks[0].command, /supervisor_stop\.mjs$/, "the legacy Stop entry is replaced by the supervisor's, after the foreign one");
-  assert.equal(codex.hooks.Stop.length, 2);
+  const keptMixed = { matcher: "fixture", hooks: [foreign.hooks[0]] };
+  assert.deepEqual(codex.hooks.Stop, [foreign, keptMixed]);
   assert.equal(codex.hooks.PreToolUse, undefined);
   const claude = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8"));
   assert.equal(claude.hooks.PostToolUse.length, 2);
   assert.deepEqual(claude.hooks.PostToolUse[0], foreign);
   assert.match(claude.hooks.PostToolUse[1].hooks[0].command, /commit_reminder\.mjs$/);
-  assert.equal(claude.hooks.Stop.length, 1);
-  assert.match(claude.hooks.Stop[0].hooks[0].command, /supervisor_stop\.mjs$/);
+  assert.deepEqual(claude.hooks.Stop, [keptMixed]);
 });
 
 test("installer replaces stale advisory and routing hooks while preserving foreign entries", () => {
@@ -320,9 +318,12 @@ test("installer replaces stale advisory and routing hooks while preserving forei
   for (const file of files) {
     const config = JSON.parse(fs.readFileSync(file, "utf8"));
     for (const [event, script] of Object.entries(scripts)) {
-      assert.equal(config.hooks[event].length, 2);
       assert.deepEqual(config.hooks[event][0], foreign);
-      assert.equal(config.hooks[event][1].hooks[0].command, `node ${path.join(repoRoot, "scripts", script)}`);
+      if (event === "Stop") assert.deepEqual(config.hooks.Stop, [foreign]);
+      else {
+        assert.equal(config.hooks[event].length, 2);
+        assert.equal(config.hooks[event][1].hooks[0].command, `node ${path.join(repoRoot, "scripts", script)}`);
+      }
     }
   }
 });

@@ -33,7 +33,7 @@ test("verify runs the sealed suite, writes a current report, and starts no revie
 
   const state = readState(root);
   const report = readReport(root);
-  assert.equal(state.schema, "sasu.implement.state.v11.stateless-verification");
+  assert.equal(state.schema, "sasu.implement.state.v12.hide");
   assert.equal(state.requirements.length, 30);
   assert.equal(state.verificationAttempts.length, 1);
   assert.equal(state.verificationAttempts[0].verdict, "PASS");
@@ -175,5 +175,6 @@ test("retired lifecycle commands and old state schemas fail explicitly", () => {
   const refused = run(root, ["implement", "status"]);
   assert.notEqual(refused.status, 0);
   assert.match(refused.json.message, /v10/);
-  assert.match(refused.json.message, /v11/);
+  assert.match(refused.json.message, /sasu\.implement\.state\.v12\.hide/);
+  assert.match(refused.json.message, /no automatic migration/);
 });

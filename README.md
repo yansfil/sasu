@@ -71,9 +71,10 @@ npm --prefix cli run build
 node cli/dist/cli.js --help
 ```
 
-The `hcoord` command supplies reusable agent relationships, watch cycles, durable requests, and an inbox.
-The hide app installs it at `~/.local/bin/hcoord`; Sasu ships no copy and calls the one on PATH.
-See [Sasu on hcoord](docs/hcoord.md) for the commands Sasu uses.
+The `hide` CLI supplies agent registration, lineage, a durable mailbox and inactivity watches.
+Sasu calls the Hide installation on PATH and needs its daemon and the current Herdr pane identity.
+See [Sasu on Hide](docs/hide.md) for dispatch, block, report and approved Observer handover.
+The skill installer installs no coordination daemon, LaunchAgent or Stop hook.
 
 The implementation path uses these main commands:
 

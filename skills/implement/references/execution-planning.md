@@ -23,7 +23,7 @@ Nothing validates its shape, and nothing checks conformance to it later.
 1. **How I will build it.**
    Map the PRD's `Technical structure` onto the real code: which modules or boundaries, what talks to what, what existing code is reused, and what is new.
    Name the one or two decisions that are expensive to reverse and why they go this way.
-   A structure that differs from the approved PRD is a block before the first write (`sasu implement block` on an hcoord run, `OBSERVER_BLOCK` on a legacy one), not a note in the plan.
+   A structure that differs from the approved PRD is a block before the first write (`sasu implement block`), not a note in the plan.
 2. **Where it can go wrong.**
    Name the risks that decide the order.
    A plan with no risk is the PRD restated and reads as such.
@@ -42,9 +42,11 @@ sasu implement plan --path agents/runs/<slug>/plan.md
 ```
 
 Then continue in the same turn.
-The command records one `plan` event and wakes the Observer once for it, whatever runtime the Implementor is: an hcoord run sends an `HCOORD_NOTICE` at once, and a legacy run's supervisor tick wakes it within a tick interval.
+The command records one `plan` event and sends an ordinary Hide request with a stable intent when the run has a recorded Observer.
+The Implementor continues while the Observer reads the plan and closes the request with a confirmation reply.
+The plan request creates no patrol timer or gate, and the Implementor does not wait for the confirmation reply.
 The plan is run bookkeeping: not verify input and not a gate the Observer approves.
-When the plan turns out wrong mid-run, rewrite the file, say so in one line, register it again, and continue; the new registration wakes the Observer again.
+When the plan turns out wrong mid-run, rewrite the file, say so in one line, register it again, and continue; the changed plan gets a new intent and a new request.
 A run that never registers one is not a signal of anything.
 
 ### Example

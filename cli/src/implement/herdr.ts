@@ -358,7 +358,7 @@ function nativeAgentArgs(kind: string, model?: string, effort?: string, noDaemon
  * `daemon_auto_start` (codex-cli 0.160, measured 2026-10-03). A session in
  * that daemon runs its hooks with the daemon's environment instead of the
  * pane's (openai/codex#48500), so Herdr cannot tell which pane it belongs to.
- * hide's install kit, hide's own starts and hcoord spawn make the same
+ * hide's install kit, hide's own starts and hide agent spawn make the same
  * judgement (hide PRD overview-request-view D-20). An older Codex has no
  * daemon and refuses the flag, so a Codex that does not name the feature, or
  * that this call cannot run, starts as before.

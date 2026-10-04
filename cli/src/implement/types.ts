@@ -1,11 +1,13 @@
 import type { JudgeCallRecord, JudgeFailureCause } from "../judge/types";
 
 // Implementation state records reproducible execution facts and run authority.
-export const IMPLEMENT_SCHEMA = "sasu.implement.state.v11.stateless-verification" as const;
+export const IMPLEMENT_SCHEMA = "sasu.implement.state.v12.hide" as const;
 export const IMPLEMENT_ACTIVE_SCHEMA = "sasu.implement.active.v3" as const;
 export const RETIRED_IMPLEMENT_SUPPORT_COMMIT = "9149d9826fad2af3ba7200761e674b5228ef9b7d";
 export const RETIRED_PARALLEL_REVIEW_SUPPORT_COMMIT = "2b1f638dd587261be7e7b0e600db16657421971d";
+export const RETIRED_COORDINATION_SUPPORT_COMMIT = "fbdf62913b4fbe5fde1ebce26c3e290c8eac0e92";
 export function retiredImplementSupportCommit(schema: unknown): string {
+  if (schema === "sasu.implement.state.v11.stateless-verification") return RETIRED_COORDINATION_SUPPORT_COMMIT;
   return schema === "sasu.implement.state.v9.parallel-review" || schema === "sasu.implement.receipt.v5.parallel-review"
     ? RETIRED_PARALLEL_REVIEW_SUPPORT_COMMIT : RETIRED_IMPLEMENT_SUPPORT_COMMIT;
 }
@@ -270,9 +272,9 @@ export interface ObserverHandover {
 }
 
 /**
- * What the supervisor tick and `status --digest` read about a dispatched
+ * What Hide registration and `status --digest` read about a dispatched
  * run (D-04). Written by `dispatch`, refreshed by an escalation's replacement
- * and by a handover; never written by the tick, which only reads (D-02).
+ * and by a handover; Hide never writes this record.
  */
 export interface SupervisionRecord {
   /** Random per dispatch; the child pane carries it as SASU_RUN_INSTANCE_ID. */
@@ -286,18 +288,8 @@ export interface SupervisionRecord {
   /** HEAD of the judged tree when the implementor was dispatched; the digest measures from here. */
   dispatchHead: string | null;
   dispatchedAt: string;
-  patrolIntervalMs: number;
-  /** Who replaces a dead Observer: only one loop may input into a session (D-15). */
-  recoveryOwner: "supervisor" | "task-factory";
-  /** Existing runs remain on the Sasu supervisor; runs dispatched with `sasu supervisor use hcoord` belong only to hcoord. */
-  coordinationOwner?: "legacy" | "hcoord";
-  /**
-   * The hcoord participants this run is made of (D-19). hcoord knows only
-   * participants and their parent and watch relations, so this record is the
-   * one place that says which of them belong to the run; notices, status,
-   * handover, retire and delivery all address hcoord by these IDs.
-   */
-  hcoord?: { observer: string; implementor: string; intervalMs: number; recoveryOwner: "supervisor" | "task-factory"; registeredAt: string };
+  /** Hide registration is recorded only after the native child identity is durable. */
+  hide?: { observer: string; implementor: string; watchId: string; registeredAt: string };
   handovers: ObserverHandover[];
 }
 
@@ -323,13 +315,8 @@ export interface PendingDispatch {
   prdPath: string;
   dispatchHead: string | null;
   dispatchedAt: string;
-  patrolIntervalMs: number;
-  recoveryOwner: "supervisor" | "task-factory";
-  coordinationOwner?: "legacy" | "hcoord";
   /** Human-approved recovery-authority transfers before supervision exists. */
   handovers?: ObserverHandover[];
-  /** The hcoord implementor participant this dispatch replaces, kept so a resumed registration still ends it. */
-  hcoordReplacedImplementor?: string | null;
 }
 
 export type PrdJudgeRecord =
@@ -436,41 +423,7 @@ export interface ImplementCommandResult {
   summary?: string[];
 }
 
-/**
- * A run has stalled when BOTH its event log and the implementor's Herdr
- * activity have been silent this long (D-08). Herdr working counts as
- * activity, so an implementor that only codes and commits never trips it.
- *
- * NOT a measured value - an agent's initial default (D-18). The incident it
- * is sized against is the 2026-08-28 herdr-ide session, where an implementor
- * burned 4.3 hours over 8 rounds without emitting a single state event and
- * nothing woke up. Ten minutes is short enough to catch that and long enough
- * that a normal build-and-test cycle does not trip it. Retune by editing this
- * constant after observing a false wake or a missed stall on a real run; it is
- * deliberately not a config knob (AGENTS.md Review Guide 7).
- */
-export const STALL_THRESHOLD_MS = 10 * 60 * 1000;
-
-/**
- * A drift fact that persists is raised to the Observer again once per this
- * interval, measured from when the fact began, until it clears. The
- * measurement it rests on is herdr-ide `web-shell-pivot-s4` (2026-09-24):
- * attempts 6-8 reran one inputFingerprint for about 6.7 minutes and every one
- * failed, and nothing woke the Observer. Ten minutes is longer than that whole
- * loop, so a persisting fact reaches the Observer again about once per such
- * loop rather than every tick. It is not a measured optimum; retune it after
- * a real run shows a re-raise arriving too early or too late.
- */
-export const DRIFT_REPEAT_MS = 10 * 60 * 1000;
-
-/**
- * Uncommitted changes whose newest edit is this old, while herdr shows the
- * Implementor working, are a drift fact: it keeps working, but its changes
- * stopped moving and were never committed. An unmeasured initial default,
- * twice the stall threshold so a normal build-and-test cycle between two
- * edits does not trip it; the S4 run above measured the identical-input loop,
- * not this age.
- */
+/** The digest reports a working tree whose newest uncommitted edit is this old. */
 export const UNCOMMITTED_AGE_MS = 20 * 60 * 1000;
 
 /**

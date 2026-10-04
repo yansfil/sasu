@@ -130,10 +130,14 @@ It also states when consecutive FAIL attempts ran on identical input; a rerun wi
 
 ## Blocks And The Completion Notice
 
-`sasu implement status` names the run's supervision: hcoord or the legacy supervisor.
-On an hcoord run, a blocked Implementor runs `sasu implement block` with the question, recommendation, reversibility and scope impact, then ends its turn; the answer arrives as `HCOORD_ANSWER` or `HCOORD_RELAY`, and it acknowledges it with the `hcoord request ack` command the notice names.
-On a legacy run it emits the `OBSERVER_BLOCK` packet as final text instead.
-Right before the final report on an hcoord run, it runs `sasu implement report`; the notice tells the Observer to check the current verification and completes nothing by itself.
+`sasu implement status` names the run's recorded Hide participants and watch ID.
+`status --digest` reads the current watch through `hide agent show`; plain status does not query Hide.
+A blocked Implementor runs `sasu implement block` with the question, recommendation, reversibility and scope impact, then ends its turn.
+The Observer answers the resulting Hide block request from its own native pane; the Implementor reads the reply through normal mailbox intake.
+There is no legacy backend or automatic unanswered-question escalation.
+Right before its final report, the Implementor runs `sasu implement report`.
+The pending report asks the Observer to inspect the current verification and completes nothing by itself.
+Confirmed delivery stops the Hide watch without waiting for the parent's acknowledgement.
 
 ## Delivery
 
@@ -157,12 +161,12 @@ High-risk changes require the repository's independent specialist review and exp
 | --- | --- | --- |
 | `intake` | none | read-only |
 | `start` | `--prd` | Observer under Herdr; the implementing session outside Herdr |
-| `dispatch` | `--name`, `--prd` | after `start`; refused from a pane marked implementor; records the Observer and enrolls the run with the supervisor tick |
+| `dispatch` | `--name`, `--prd` | after `start`; refused from a pane marked implementor; records the Observer, registers both native identities with Hide, and starts an inactivity watch |
 | `status` | optional `--state` or `--slug` | read-only |
 | `artifact` | kind, path, description | registers runtime evidence |
-| `plan` | `--path` | records the execution plan, wakes the Observer once under Herdr |
-| `block` | `--kind`, `--question`, `--recommendation`, `--reversible`, `--scope-impact` | hcoord runs: records the block and asks the Observer through hcoord; end the turn and wait for its answer |
-| `report` | optional `--summary` | hcoord runs: right before the final report, sends the Observer the current verification verdict |
+| `plan` | `--path` | records the execution plan and sends an ordinary Hide request; implementation continues, and the Observer closes it with a confirmation reply |
+| `block` | `--kind`, `--question`, `--recommendation`, `--reversible`, `--scope-impact` | records the block and sends a Hide block request; end the turn and wait for the reply |
+| `report` | optional `--summary` | right before the final report, sends the current verification verdict as a Hide report letter |
 | `amend` | `--approval`, `--reason` | re-seals the PRD with the recorded human approval; invalidates the report |
 | `escalate` | `--reason` | Observer diagnosis; the recorded Observer needs no `--adopt`; refused from a pane marked implementor |
 | `retire` | active run | ends the run; another session's run needs `--adopt` |
@@ -173,7 +177,15 @@ Ownership is by session: a run owned by another session is mutated only with `--
 
 `finalize`, `confirm`, implementation `risk`, and the one-shot `await` waiter are retired.
 Reviewer judgment is no longer encoded as CLI state.
-Under Herdr the supervisor tick (`sasu supervisor tick`, run by a user LaunchAgent) wakes the recorded Observer; `sasu supervisor status`, `handover`, `install` and `uninstall` are its operator surface.
+Under Herdr, Hide owns inactivity watches and mailbox delivery.
+`sasu supervisor status` inspects recorded runs through `hide agent show`.
+`handover` assigns an active watch with explicit approval and its current generation before changing Sasu state.
+A positively observed ended watch permits the approved Observer update without restarting the watch; a transport refusal preserves the recorded Observer.
+No Sasu service is installed.
+Automatic replacement requires the actual current Observer, and watch assignment does not grant permission to end the original parent's child.
+An unstarted reset returns `reset_not_started` with the refusal and next action, rather than claiming a replacement exists.
+The actual Implementor may end its own registration from its native pane.
+Sasu omits `--actor` from `agent end` and lets Hide authorize the actual target or original parent.
 
 ## Final Report
 
