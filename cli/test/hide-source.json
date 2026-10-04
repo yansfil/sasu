@@ -1,5 +1,5 @@
 {
   "repo": "modakbul-gongbang/hide",
-  "ref": "a494bc3bd912186e811e5a09bc4debd838bfa18a",
-  "note": "The Hide candidate supplies agent registration, durable intake confirmation and watch handover. Native tests require this candidate's adjacent daemon and pinned Herdr resources."
+  "ref": "59d13d9b74e6b951fd2328674d29d255c315f34f",
+  "note": "Hide PR #409 is merged into main at this commit and supplies agent registration, durable intake confirmation and watch handover. Native tests require a private build of this merge commit with its adjacent daemon and pinned Herdr resources."
 }
