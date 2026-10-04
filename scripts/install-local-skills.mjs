@@ -181,14 +181,9 @@ function cleanupLegacyDirs(targetKey) {
   return removed;
 }
 
-// hcoord belongs to the hide app, which installs `~/.local/bin/hcoord`. Sasu
-// used to ship a copy of it and wrote two shims that exec that copy's built
-// entry: one beside the sasu shim and one under the hcoord data folder for the
-// HQ's SSH calls. The first is retired here, since it would shadow hide's
-// hcoord on PATH with a command that no longer exists; the second lives in
-// hcoord's data folder, which is not this installer's to change, so it is only
-// reported. Only a regular file with exactly the old shim's shape is ours: a
-// symlink (hide's link) or any other content is left alone.
+// Transition cleanup is limited to the exact regular-file shim this installer
+// used to write beside `sasu`. Foreign files and symlinks remain untouched.
+// The old coordinator's HOME and remote shim are outside this installer's scope.
 const OWN_HCOORD_SHIM = /^#!\/bin\/sh\nexec (?:node|"[^"\n]+") "[^"\n]*\/cli\/dist\/hcoord\/cli\.js" "\$@"\n$/;
 function ownHcoordShim(file) {
   let stat;
@@ -228,30 +223,12 @@ function installCliBinary() {
   const hcoordShimPath = path.join(binDir, "hcoord");
   const retiredHcoordShim = ownHcoordShim(hcoordShimPath);
   if (retiredHcoordShim) fs.rmSync(hcoordShimPath);
-  const oldRemoteShim = path.join(process.env.HCOORD_HOME || path.join(home, ".hcoord"), "bin", "hcoord");
   return {
     ok: true,
     shimPath,
     contractVersion: (version.stdout || "").trim(),
     ...(retiredHcoordShim ? { retiredHcoordShim: hcoordShimPath } : {}),
-    ...(ownHcoordShim(oldRemoteShim) ? { staleHcoordShim: oldRemoteShim, note: "this old Sasu hcoord shim now names a missing entry; hide's hcoord replaces it, so it was left in place" } : {}),
   };
-}
-
-// The LaunchAgent that runs `sasu supervisor tick` every interval. The CLI
-// owns the plist and the launchctl calls so they converge on repeat; the
-// installer only invokes it with the binary it just built, under this HOME.
-// Tests pass a fake launchctl on PATH and an isolated HOME; nothing here
-// knows the difference (B14, B20).
-function installSupervisor() {
-  const entry = path.join(repoRoot, "cli", "dist", "cli.js");
-  const result = spawnSync(process.execPath, [entry, "supervisor", "install", "--json"], { encoding: "utf8", env: process.env });
-  let report = null;
-  try { report = JSON.parse(result.stdout); } catch { report = null; }
-  if (result.status !== 0 || report === null) {
-    return { ok: false, error: `sasu supervisor install failed (${result.status ?? "no status"}): ${(report?.message ?? result.stderr ?? result.stdout ?? "").trim().slice(0, 500)}` };
-  }
-  return { ok: true, ...report.detail, message: report.message };
 }
 
 function runInstaller() {
@@ -290,25 +267,21 @@ function runInstaller() {
   // advisory context only; the reminder cannot commit or change run state.
   const challengeTriggerCommand = `node ${path.join(repoRoot, "scripts", "challenge_trigger.mjs")}`;
   const commitReminderCommand = `node ${path.join(repoRoot, "scripts", "commit_reminder.mjs")}`;
-  // The Stop hook confirms an Observer handover to the supervisor tick and
-  // never blocks a stop; it is the same entry on both runtimes.
-  const supervisorStopCommand = `node ${path.join(repoRoot, "scripts", "supervisor_stop.mjs")}`;
-  const legacyRetired = fs.existsSync(path.join(home, ".sasu", "supervisor", "legacy-retired"));
-  const lifecycleHooks = { UserPromptSubmit: challengeTriggerCommand, PostToolUse: commitReminderCommand, ...(legacyRetired ? {} : { Stop: supervisorStopCommand }) };
+  // Reconciliation retracts the owned legacy Stop hook through the retained
+  // marker list. It never installs or addresses a resident supervisor service.
+  const lifecycleHooks = { UserPromptSubmit: challengeTriggerCommand, PostToolUse: commitReminderCommand };
   const files = runtimeHookFiles(home);
   const hooks = {
     codex: ensureHooks(files.codex, lifecycleHooks),
     claude: ensureHooks(files.claude, lifecycleHooks),
   };
-  const supervisor = legacyRetired ? { ok: true, retired: true, message: "legacy supervisor remains retired" } : installSupervisor();
   return {
-    ok: supervisor.ok,
+    ok: true,
     repoRoot,
     cliBinary,
     installed,
     removedLegacy,
     hooks,
-    supervisor,
     note: "SKILL.md files are real copies (Claude copies are path/invocation substituted); auxiliary entries are symlinks.",
   };
 }

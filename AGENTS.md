@@ -40,7 +40,8 @@ Apply these principles together:
 
 The approved [stateless verification change](docs/plans/2026-09-15-stateless-verification.md) replaces receipt-backed completion, in-CLI implementation judges, correction budgets, and reviewer finding state.
 The [verification convergence plan](docs/plans/2026-09-24-verification-convergence.md) moves native review ahead of the full verify of the final committed candidate.
-The [observer drift plan](docs/plans/2026-09-25-observer-drift-advisor.md) makes the execution plan answer four questions and wakes the Observer on each commit and on drift facts.
+The [observer drift plan](docs/plans/2026-09-25-observer-drift-advisor.md) introduced the execution plan's four questions and inspectable progress and drift facts.
+The current Hide watch is an inactivity watch; it does not promise a wake on each commit or drift fact.
 Full reasoning lives in [PRINCIPLES.md](PRINCIPLES.md).
 
 ## Current Verification Contract
@@ -117,24 +118,18 @@ Ship validates the current deterministic PASS report, exact committed Git head, 
 The pull request carries review notes and reviewer-visible evidence.
 GitHub Actions and human review are the final delivery authority.
 
-### Hooks And The Supervisor
+### Hooks And Hide Coordination
 
-The installer registers the `challenge_trigger.mjs` routing hook, the advisory `commit_reminder.mjs` hook, and the `supervisor_stop.mjs` Stop hook.
-No hook changes verification or completion state; the Stop hook only confirms an Observer handover and always exits 0.
+The installer registers the `challenge_trigger.mjs` routing hook and the advisory `commit_reminder.mjs` hook.
+Neither hook changes verification or completion state.
 Any hook the installer has owned stays listed in `HARNESS_HOOK_MARKERS` in `cli/lib/hooks.js` so later installs can retire it without touching foreign hooks.
+The legacy Stop marker remains for cleanup; the installer does not register a Stop hook or install, query or change a supervisor LaunchAgent.
 
-The installer writes no `hcoord` shim: hcoord is installed by the hide app and Sasu calls whichever `hcoord` is on PATH.
-It removes only its own earlier `hcoord` shim beside the `sasu` shim, recognised by the old shim's exact shape, and never an `hcoord` it did not write.
-Tests never take `hcoord` from PATH.
-A test about sasu uses the fake in `cli/test/helpers/fake-hcoord.cjs`.
-A test that needs a real daemon uses the executable named by `SASU_TEST_HCOORD`, each daemon with its own `HCOORD_HOME`.
-`node scripts/build-test-hcoord.mjs` builds that executable from the hide commit pinned in `cli/test/hcoord-source.json` and prints its path; CI builds the same commit and exports the variable.
-Unset, those tests skip locally with that instruction and fail under `CI`, so a CI run cannot silently skip them.
-Move the pin only together with a green e2e run against the new commit.
-
-The installer also loads one user LaunchAgent (`com.sasu.supervisor`) that runs `sasu supervisor tick` every 30 seconds.
-The tick reads the index under `~/.sasu/supervisor/`, each watched `state.json` and its run's git tree, and herdr, and wakes a run's recorded Observer; it never writes run state.
-Tests exercise it only under an isolated `HOME` with a fake `herdr` and `launchctl` on `PATH`; never bootstrap a label into the real launchd domain or address a live pane from a test.
+Sasu uses the running Hide installation for registration, watches and requests.
+Dispatch creates the pane through the existing Herdr adapter, then registers its native identity with Hide and starts an inactivity watch.
+Tests never address the operator's Hide or Herdr.
+Boundary tests use a private fake Hide executable; runtime tests name the candidate explicitly and use their own HOME, state and Herdr server.
+The installer removes only the exact regular-file shim it formerly owned beside `sasu`, preserves foreign files and symlinks, and never inspects the old coordinator's HOME or remote shim.
 
 ### Concurrent Sessions
 

@@ -22,7 +22,8 @@ test("retired receipt and reviewer state fails explicitly", () => {
 });
 
 test("old schema has no compatibility reader", () => {
-  assert.throws(() => parseImplementState(JSON.stringify({ ...stateFixture(), schema: "sasu.implement.state.v10" })), /no migration is available/);
+  assert.throws(() => parseImplementState(JSON.stringify({ ...stateFixture(), schema: "sasu.implement.state.v10" })), /no automatic migration is available/);
+  assert.throws(() => parseImplementState(JSON.stringify({ ...stateFixture(), schema: "sasu.implement.state.v11.stateless-verification" })), /fbdf62913b4fbe5fde1ebce26c3e290c8eac0e92.*implement status --state.*implement start.*no automatic migration/);
 });
 
 test("verification history stays append-only", (t) => {

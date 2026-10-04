@@ -6,9 +6,8 @@
 - [Resolve The Current Role](#resolve-the-current-role)
 - [Dispatch One Implementor](#dispatch-one-implementor)
 - [Handoff Packet](#handoff-packet)
-- [hcoord Supervision](#hcoord-supervision)
-- [The Supervisor Tick](#the-supervisor-tick)
-- [Handling A Wake](#handling-a-wake)
+- [Hide Supervision](#hide-supervision)
+- [Handling A Letter](#handling-a-letter)
 - [Looking And Acting](#looking-and-acting)
 - [Recovery And Completion](#recovery-and-completion)
 
@@ -95,14 +94,15 @@ When `HERDR_PANE_ID` is unset the dispatch cannot tell which agent kind it is di
 On success it prints the new pane, workspace and tab ids, the agent name, kind, cwd, slug, and PRD as JSON, and records the dispatch in `state.json` (`dispatches`, and a `dispatch` event).
 The run is then the Implementor's: dispatch releases the Observer's ownership so the Implementor's first write claims it, and only a pane carrying the marker may make that claim - any other session needs `--adopt`, exactly as a takeover does; the flag records the takeover in `state.json`.
 The Implementor does not run `sasu implement start`; a session-less bookmark in the tree it works in makes its bare `sasu implement ...` commands resolve the run, and `sasu implement status` shows the current implementor under `implementor`.
-The kind defaults to the agent occupying the dispatching pane, so a Claude supervisor dispatches Claude unless `--kind` says otherwise.
+The kind defaults to the agent occupying the dispatching pane unless `--kind` says otherwise.
 `--model` and `--effort` are forwarded as the started agent's own native arguments: `--model`/`--effort` for Claude, `--model` and `-c model_reasoning_effort="<level>"` for Codex.
 The new pane's shell starts from the login environment, not the Observer's, so the dispatch always passes the Observer's own `PATH` to the new pane (a locally built `sasu` or a shim ahead of the login PATH stays visible to the Implementor) and forwards each `--env KEY=VALUE` on top of it; an explicit `--env PATH=...` replaces the inherited one, and `SASU_HERDR_ROLE` is refused because the marker is the dispatch's own to set.
 The new pane's shell takes a few seconds to print its first prompt, and herdr refuses `agent start` with `agent_pane_busy` until it has seen one; the adapter retries exactly that refusal once a second for up to 30 seconds and reports any other failure at once, so the wait is the harness's, never this skill's.
 
-Lineage is declared, not recorded by herdr: after the agent starts, the dispatch writes the pane token `parent_pane=<dispatching pane id>` on the new pane (`herdr pane report-metadata --source sasu`), which hide reads to draw the Implementor beneath the Observer.
-herdr's stable release has no lineage of its own, and the fork's `agent new --from-pane` cannot carry the role marker, so the token is the one mechanism that works on both.
-The dispatch result says `parentLineage: reported`, or names the refusal, in which case the row shows as a root and nothing else is affected.
+After the agent starts, dispatch records its native identity and registers the Observer and child with Hide.
+Hide owns the four lineage tokens (`parent_pane`, `parent_machine`, `child_session`, `parent_session`) and writes them outside its runtime lock.
+Sasu does not publish pane metadata or maintain a second lineage writer.
+A registration or watch refusal after start preserves the recorded pane and dispatch phase; the next action repairs that same dispatch.
 
 One cost is real and is not a bug to re-report:
 
@@ -134,175 +134,117 @@ Do not replace the PRD with a vague summary such as "implement what we discussed
 The ready PRD is the canonical implementation contract; accepted and rejected product decisions belong there rather than in a second handoff narrative.
 The Implementor cannot read the Observer's chat history.
 The handoff must state a routing contract that forbids the Implementor from invoking `AskUserQuestion`, `request_user_input`, or any interactive question UI.
-The Implementor has no direct user channel: when blocked on an hcoord run it runs `sasu implement block` and ends the turn, and on a legacy run it emits `OBSERVER_BLOCK` as final text and ends the turn, so the Observer can decide or escalate.
-On an hcoord run dispatch appends a fixed HCOORD NOTICES paragraph to the packet: it tells the Implementor that `HCOORD_` text in its composer comes from this run's Observer through the local coordinator, how to acknowledge an answer, and to run `sasu implement report` before its final report.
-An agent that received hcoord notices without that forewarning treated them as an injection (2026-09-25), so the Observer need not write it.
+The Implementor has no direct user channel: it runs `sasu implement block` with the missing decision and ends its turn, so the Observer can decide or ask the user.
+Dispatch appends a fixed Hide mailbox paragraph to the packet.
+It identifies plan, block and report letters as this run's coordination context, explains reply handling, and tells the Implementor to run `sasu implement report` before its final report.
+A letter does not authorize changes to the approved contract by itself.
 
 Dispatch does not focus the new pane.
-It records this pane's session UUID, terminal and pane as the run's Observer, mints a run instance id the new pane carries as `SASU_RUN_INSTANCE_ID`, and either registers the run with hcoord or enrolls its `state.json` with the legacy supervisor tick, as the next section decides.
-From that moment the run is watched; the Observer arms nothing and simply ends its turn.
-Do not run a background command to wait on the run: a finished background command does not create an agent turn by itself, and the one-shot waiter this replaced left runs silently unwatched whenever the re-arm was forgotten (2026-09-18).
+It records this pane's native session, terminal and pane as the run's Observer, mints the run instance id carried as `SASU_RUN_INSTANCE_ID`, then registers both participants and starts the Hide watch.
+From that moment Hide watches inactivity; the Observer arms no second loop and may end its turn.
+Do not run a background command to wait on the run: a finished background command does not create an agent turn by itself.
 
-## hcoord Supervision
+## Hide Supervision
 
-Dispatch pins each run's supervision owner before a pane exists, and a run never has two.
-After `sasu supervisor use hcoord` (stored as `~/.sasu/supervisor/use-hcoord`), a new run belongs to hcoord; `sasu supervisor use legacy` switches new runs back.
-Without it, and for every run first dispatched under the legacy supervisor, [The Supervisor Tick](#the-supervisor-tick) keeps the run until it ends.
-After the final legacy run leaves the supervisor index, `sasu supervisor retire-legacy` removes the tick's LaunchAgent and Stop hook and writes `~/.sasu/supervisor/legacy-retired`, so no later install restores them; it refuses while a legacy run or tick remains.
+Every dispatched run uses the current `hide` executable and running daemon.
+Sasu neither selects a backend nor installs a resident supervisor.
+A missing executable, unavailable daemon or changed native identity returns a failure and next action before dispatch creates anything.
+Hide knows native participants and their parent, watch and request relations; which participants belong to a run stays in Sasu's `state.json`.
+The `supervision.hide` record holds the Observer and Implementor participant IDs, watch ID and registration time.
 
-hcoord is the command the hide app installs (`~/.local/bin/hcoord`); Sasu ships none and calls whichever `hcoord` is on PATH.
-When it is missing, dispatch and `sasu supervisor use hcoord` fail with `hcoord is not on PATH; open the hide app, which installs it at ~/.local/bin/hcoord` and create nothing.
-hcoord knows participants and their parent, watch and request relations, and nothing about Sasu.
-Which participants make up a run is written only in its `state.json` (`supervision.hcoord`: the Observer and Implementor participant IDs, the interval and the recovery owner).
-An hcoord dispatch checks the Observer before it creates anything, with `hcoord agent register --check`: the daemon must answer, the Observer's pane must hold its recorded session, and hcoord must be able to deliver to it.
-An Observer pane without a Herdr agent name is recorded as `observer-<first 8 characters of its session id>`; the pane is not renamed.
-A refusal there creates nothing and never falls back to the legacy supervisor.
-After the Implementor starts, dispatch records its exact identity first, then registers the Observer, the Implementor as its child, and the Implementor's watch, whose interval is `--patrol` (default 15 minutes) and whose brief names the digest command and the recovery owner.
-A registration refused after start leaves a started record: fix the reported cause and run `sasu implement dispatch --resume-handoff` with the packet on stdin, which registers and then hands off.
-Runs registered before `state.json` held their participant IDs are moved once with `sasu supervisor migrate-hcoord --state <state.json> ...`, which finds both participants in `hcoord agent list` by pane and session and reports any run it cannot match.
-When one execution has several participant records from before D-18, it keeps the one the implementor's watch points at, else the latest.
-When the watch was handed to another Observer outside Sasu, the run is still recorded and the result names the `sasu supervisor handover` to run from that Observer's pane.
+Dispatch preflights the Observer with `hide agent register --check`.
+The caller's actual pane and native session must match the registration and be eligible for delivery.
+An unnamed Observer is given a registration name derived from its session; its pane is not renamed.
+After the Implementor starts, dispatch records its exact identity first, then registers the Observer, the implementor as its child, and an inactivity watch.
+A refusal after start leaves the pane and partial dispatch visible; fix the reported cause and run `sasu implement dispatch --resume-handoff` with the original packet on stdin.
+The same dispatch resumes its recorded creation steps and hands off once rather than spawning another pane.
 
-What reaches the Observer.
-Each notice is only an identifier line, the command that closes it, and its content; how to handle it is here, not in the message.
+Hide watches inactivity rather than a configured patrol interval.
+Twenty minutes without activity produces the first watch warning; an unchanged episode gets at most one further warning 60 minutes later.
+Activity resets the episode.
+If the first warning remains unconfirmed for 60 minutes, Hide may notify the operator through its existing channels.
+Commits and Sasu drift facts remain inspectable through the digest; they do not imply an automatic wake.
 
-| Notice | Sent when | The Observer |
+| Letter | Sent when | Observer action |
 | --- | --- | --- |
-| `HCOORD_WATCH_CHECK <implementor> cycle <cycle>` | every watch interval while the Implementor works, and once when it stops working | reads `sasu implement status --slug <slug> --digest` (the brief under the `close:` line) and the Implementor's pane, applies [Looking And Acting](#looking-and-acting) to the commits and drift facts there; if verify is PASS and the PR is merged it runs `sasu implement retire --slug <slug>`, otherwise it runs the `close:` command; when it cannot inspect, it leaves the cycle open and ends the turn |
-| `HCOORD_NOTICE` with `SASU_PLAN` | `sasu implement plan` | reads the plan; answers only a "What I decide and go with" item it disagrees with, or a structure that differs from the PRD |
-| `HCOORD_REQUEST` with `SASU_BLOCK` | `sasu implement block` | decides from the handoff or asks the user, as below, with the `reply:` or `escalate:` command the notice names |
-| `HCOORD_NOTICE` with `SASU_REPORT` | `sasu implement report` | reads the current status and report; the notice alone completes nothing |
-| `HCOORD_ANSWER` | a person's answer to an escalated block is recorded | relays it with the `relay:` command, as below |
-| `HCOORD_RELAY_PROBLEM`, `HCOORD_DELIVERY_PROBLEM` | a recorded answer is not relayed, or the Implementor has not acknowledged a relay, after 15 minutes | relays the recorded answer, or inspects the Implementor's pane and tells the user if it is gone |
+| Ordinary request with `SASU_PLAN` | `sasu implement plan` | Read the plan, reply with confirmation or a specific disagreement; the Implementor continues |
+| Block with `SASU_BLOCK` | `sasu implement block` | Resolve an in-contract decision or ask the user, then reply |
+| Report with `SASU_REPORT` | `sasu implement report` | Read current status and verification; the notice alone completes nothing |
+| Watch warning | Hide observes inactivity | Read the digest and pane, then resolve the cause or record the receipt |
 
-Patrol is quiet while the Implementor rests: once it stops working (idle, done, blocked or gone) the Observer gets one watch check for that change, and no further check, reminder or inbox item comes until it works again.
-So a run waiting only for a merge approval wakes the Observer once, and the Observer that sees verify PASS and the PR merged retires the run instead of closing the cycle.
-While the Implementor works, a cycle left unchecked is reminded once after 15 minutes and reaches `hcoord inbox` after 30 minutes (hcoord's `remindMs` and `escalateMs`).
-Commits and drift facts wake nobody on their own: the Observer reads them in the digest at the next cycle, and a drift fact found there still needs one move.
-The plan, block and report commands record their Sasu event first and send once per content; a stopped daemon keeps the notice in the outbox, and a refusal fails the command with the retry to run.
+Plan, block and report retain a stable intent for the same content; retrying after an interrupted send returns the same letter.
+A pending send is not delivery.
+Prompt-hook intake outputs the context and confirms it; an interrupted intake may repeat the same ID.
+A confirmed report delivered to its parent ends the implementor's watch without waiting for parent acknowledgement.
+Only an explicit `hide watch start` arms another watch after completion.
 
-Answering a block:
+The Observer answers from its own native pane:
 
-- The Observer decides: `hcoord request reply <request> --as <observer participant> --body "<answer>"`.
-  The Implementor receives `HCOORD_ANSWER` and acknowledges it.
-- A person decides: `hcoord request escalate <request> --actor <observer participant>`, ask the user in chat, and record their words verbatim with `hcoord request reply <request> --as human --recorded-by <observer participant> --body "<their words>"`.
-  hcoord returns the recorded answer as `HCOORD_ANSWER`; relay it within its scope with `hcoord request relay <request> --actor <observer participant> --body "<text>"`, and the Implementor acknowledges `HCOORD_RELAY`.
-  A summary is never recorded as the human answer.
-  A person may also answer in `hcoord inbox`; the same request continues.
-- After escalating, end the turn; hcoord wakes the Observer with the answer, so nothing polls.
-
-Recovery on an hcoord run:
-
-- A gone Implementor is found at the next watch cycle; dispatch one replacement with `--adopt`, as in [Recovery And Completion](#recovery-and-completion).
-  The replacement joins the same run as a child of the same Observer, and dispatch runs `hcoord agent end` for the gone one so hcoord stops watching it.
-- A changed Observer session receives nothing until `sasu supervisor handover --slug <slug> --approval "<verbatim user words>"` from the new Observer's pane registers it and runs `hcoord watch assign`, which moves the watch, any question still waiting, and any answer not yet relayed.
-- A Herdr restart that only rotates terminal ids or clears agent names changes nothing: hcoord knows a participant by its machine, pane and session, so notices keep arriving and no handover is needed.
-- `--recovery-owner task-factory` is recorded in `state.json`, shown by status, and written in the watch brief; hcoord still wakes only the recorded Observer.
-- `sasu implement retire` and a completed `/ship` delivery or merge run `hcoord agent end` for the Implementor: its watch stops and its open questions are canceled, and a rerun of either is the retry.
-
-Where to look: `sasu implement status` names the owner, participants and interval; `--digest` adds the coordinator's open and last closed cycle and whether patrol is quiet, read by the participant IDs in `state.json`; `hcoord watch list` shows each watch with its brief; `hcoord inbox` shows what waits on a person; `sasu supervisor status` lists hcoord-owned runs by slug.
-
-## The Supervisor Tick
-
-This section applies to legacy runs, those dispatched while new dispatches used the legacy supervisor.
-One user LaunchAgent runs `sasu supervisor tick` every 30 seconds for every run on the machine.
-It is level-triggered: each tick re-reads the index of watched `state.json` paths, each run's record and git tree, and herdr's `agent get` for the Implementor and the Observer, and reaches its verdict from those facts alone.
-It writes no run state and holds no cursor, so a tick killed at any point, or a machine rebooted, reaches the same verdict on the next tick; the only cost is one interval of delay.
-
-It wakes the recorded Observer for exactly these reasons:
-
-| Reason | Fact behind it |
-| --- | --- |
-| `settled` | the Implementor has been idle or done for at least one tick interval; the wake says it may be transient |
-| `blocked` | herdr reports the Implementor blocked |
-| `escalate` | an `escalate` event was recorded |
-| `plan` | a `plan` event was recorded by `sasu implement plan`; once per event, the Implementor keeps working |
-| `commit` | the run's HEAD moved and commits exist since dispatch (`git rev-list --count <dispatch head>..HEAD`); several commits between two ticks are one wake |
-| `drift` | any of: `repeated-fail`, the last two or more verify attempts since dispatch are FAIL on one `inputFingerprint` and the tree has not moved since the latest (HEAD is the head its report recorded and no uncommitted change is newer); `outside-boundary`, the digest's list of changed paths outside the delivery boundary is non-empty; `uncommitted-age`, uncommitted changes whose newest is 20 minutes old while the Implementor is working. The detail line names each fact present |
-| `stall` | no `state.json` event AND no herdr lifecycle activity for 10 minutes; a working Implementor is activity |
-| `implementor-gone` | the Implementor's pane is empty or holds another agent |
-| `terminal` | the run was retired; it leaves the index after this wake |
-| `patrol` | the Implementor is working and the Observer has not looked for the run's patrol interval (default 15 minutes, `dispatch --patrol <minutes>`) |
-
-Artifact, verify, dispatch and amendment events do not wake; they only reset the stall clock.
-A missing plan event is not a reason either: the tick reads nothing into its absence (D-11).
-`commit` and `drift` come from the run's git tree and verify attempts, read by the tick with bounded git calls and no model; a git tree it cannot read adds neither and shows as the run's current failure in `sasu supervisor status`.
-Each condition is answered once per episode; a working Observer is not interrupted and receives the same condition on the next tick it is idle; several runs watched by one Observer arrive in one wake.
-A `drift` fact that persists is the one exception to answering once: every 10 minutes since the fact began it becomes a new episode and is raised again, and its detail says `raised again`, until the fact clears.
-A `drift` rides along with `settled`, `blocked`, `stall` or a due `patrol` in the same wake instead of being suppressed by them, and an accepted `commit` wake counts as the Observer's look, so `patrol` waits a full interval after it.
-
-Before every wake the tick compares `agent get` on the recorded Observer pane with the recorded session UUID and terminal.
-A different session in the same pane, with the same name and cwd, receives nothing: the run shows `observer-gone` in `sasu supervisor status` until a person hands it over with `sasu supervisor handover --slug <slug> --approval "<verbatim user words>"` from the new Observer's pane.
-A herdr server restart rotates terminal ids and reads the same way; the handover is the recovery there too.
-`sasu supervisor status` and `status --digest` name each run's recovery owner (`supervisor` or `task-factory`, set by `dispatch --recovery-owner`).
-The owner says which loop may replace a vanished Observer; the supervisor never replaces one and wakes only the recorded Observer either way.
-When herdr returns an `input_guard` for the Observer the wake is sent with `--expected-input-guard`, and a guard the server then refuses is a routing failure, never a plain resend.
-
-## Handling A Wake
-
-The wake is an identity note, not an instruction:
-
-```text
-SASU_WAKE
-observer: <this session's UUID>
-run: <slug> instance <run instance id>
-reason: <reasons>
-  <reason>: <fact>
-inspect: sasu implement status --slug <slug> --digest
+```sh
+hide request reply <letter-id> --intent <stable-response-intent> --body '<answer>'
 ```
 
-Read the digest first.
-It reports deterministic facts since dispatch - elapsed time, the Implementor's herdr state and last activity, commits and recent subjects, changed files and lines, per-file churn, paths outside the delivery boundary, verify attempts and repeatedly failing suites, uncommitted changes and their age - and no judgment.
-It answers only the recorded Observer session; another session that receives a stray wake is refused and nothing changes.
-Then read the pane tail with `herdr agent read <implementor-name> --source recent-unwrapped --lines 120`, for diagnosis only.
-The plan at `agents/runs/<slug>/plan.md` is the Implementor's declared structure and order, the one place a wrong reading of the structure or a missing existing helper is visible before the code shows it.
+For a human decision, ask the user in chat and preserve their words in that reply.
+The actual sender remains the Observer; do not claim another sender or request an unavailable human relay.
+A required PRD change still needs the existing amendment procedure and human authority below.
 
-What each reason asks of the Observer:
+A gone Implementor is diagnosed from native pane state and the run record.
+Dispatch one replacement with `--adopt`, as in [Recovery And Completion](#recovery-and-completion).
+The replacement joins the same run as a child of the recorded Observer after authorized `hide agent end` retires the old participant.
+Automatic reset must run from the actual current recorded Observer, whose native identity Hide can attest.
+Watch assignment does not change the child's original registered parent: only that original parent or the actual target can end the old registration.
+The actual Implementor may end its own registration from its native pane.
+Sasu sends `agent end` without `--actor`; Hide authorizes the positively identified target or original parent as caller.
+A current Observer who lacks that ending authority receives a refusal rather than a new replacement pane.
+A changed Observer uses `sasu supervisor handover --slug <slug> --approval '<verbatim user approval>'` from the new native pane.
+Sasu registers it, reads the existing watch's generation and assigns that watch with the explicit approval and current caller identity.
+An active watch is assigned before Sasu updates its recorded Observer.
+If `hide agent show` positively reports no active watch, the approved handover updates the Observer without restarting the watch.
+Transport failures or malformed replies refuse the handover and preserve the recorded Observer; they never prove that a watch ended.
+A stale generation, absent approval or wrong caller leaves Sasu's Observer authority unchanged.
+Existing letters remain addressed to their original native recipient; watch assignment does not transfer them.
 
-- `plan`: read the file the detail line names.
-  Answer only a "What I decide and go with" item you disagree with, or a structure that differs from the approved PRD; otherwise end the turn.
-- `commit`: read the digest and the plan, and compare the commit subjects and changed paths with the plan's structure and order.
-  A commit off the structure, off the order, or touching what the plan said it would not gets one line of direction; otherwise end the turn.
-- `drift`: one move is required, never "fine"; [Looking And Acting](#looking-and-acting) says which.
-- `patrol`: read the digest, and on the first one the plan; end the turn or give one line of direction.
-- `settled` without a current deterministic report, `blocked`, an `OBSERVER_BLOCK`: decide from the handoff or escalate, as below.
-- `escalate`: an escalation was recorded; forward the suggested next step from its diagnosis, or follow the replacement it started.
-- `stall`, `implementor-gone`, `terminal`: [Recovery And Completion](#recovery-and-completion).
+`sasu implement retire` and completed delivery end the implementor registration through Hide.
+A repeated end converges on the ended record.
+Current old-format run records are rejected explicitly; no participant or ledger migration is performed.
+`sasu supervisor status` inspects registered runs, and `sasu implement status --digest` supplies their current progress and drift facts.
+There is no supervisor install, timer or Stop hook.
 
-The Implementor is working through most of these, so one line of direction lands in its composer and is read at its next prompt.
-Use Sasu state, not transcript keywords, as the source of truth.
+## Handling A Letter
 
-The Observer's Stop hook confirms the handover when a turn ends normally: it exits 0 in every case, never blocks a stop, and only asks launchd for an immediate tick when this session is the recorded Observer of an indexed run.
-It is not what watches the run; the tick has been watching since dispatch.
+The hook envelope is `Hide letter <id> from <name> (<native kind>) [<letter kind>]`.
+It identifies the sender and kind and includes the retained letter ID.
+Read `sasu implement status --slug <slug> --digest` first.
+The digest reports deterministic facts since dispatch: elapsed time, native lifecycle and last activity, commits and changed paths, churn, delivery-boundary drift, verify attempts and uncommitted changes.
+It gives no semantic completion judgment.
+Then read `herdr agent read <implementor-name> --source recent-unwrapped --lines 120` for diagnosis only.
+The execution plan is the Implementor's declared structure and order, so it exposes a wrong structural reading before verification.
+
+For a plan request, read the recorded plan and close the request with a confirmation reply.
+State a specific disagreement in that reply when the structure differs from the PRD or an in-contract choice needs direction.
+For a block, apply [Looking And Acting](#looking-and-acting).
+For a report, inspect current deterministic verification and native review rather than treating delivery as completion.
+For a watch warning, inspect native lifecycle before deciding whether the implementor has stalled or departed.
 
 ## Looking And Acting
 
-The normal path is a glance per commit, not silence.
-The tick wakes the Observer on progress (`plan`, `commit`) and on drift, and most of those wakes end in one read and no message.
+When inspecting a run, compare its progress and drift facts with the approved structure and execution plan.
+Hide's warnings and letters are cues to inspect; they do not evaluate commits or create a Sasu progress timer.
 The Observer never edits implementation files; its moves are one line of direction, `sasu implement escalate`, or stop.
 Beyond one line of direction it acts on `blocked`, an idle or done agent without a current deterministic report, `unknown` or exited runtime state, a scope or authority violation, an explicit user change, and drift.
 
-A `drift` wake is a recorded fact that the run is going wrong, so "fine" is not an answer to it.
+A current drift fact needs a concrete move rather than an unsupported "fine".
 Choose one:
 
 - One line of direction, when the cause is plain from the digest and the pane tail.
 - `sasu implement escalate --reason "<the drift fact>"` without `--agent`, then forward the suggested next step from the diagnosis it writes (`agents/runs/<slug>/artifacts/solver/diagnosis-<n>.md`) to the Implementor as the direction.
   The recorded Observer escalates on its own identity: the run stays the Implementor's and nobody passes `--adopt`.
 
-The second `drift` wake for the same fact kind on the same run, one whose detail says `raised again` because the fact persisted through a 10-minute interval, requires the escalation: one line of direction has already not cleared it.
+If the same inspected drift fact persists after one line of direction, diagnose it through `sasu implement escalate` rather than repeating the direction.
 The budget of three escalations per run stands and is the cap; once it is spent, surface the persisting drift to the user instead of looping (Sasu 13).
 
-Before waiting for an answer on a legacy run, the Implementor must emit this packet as final text and end its turn instead of opening an interactive question UI; on an hcoord run the same fields are the flags of `sasu implement block`:
-
-```text
-OBSERVER_BLOCK
-kind: implementation | product | authority | runtime
-question: <the missing decision or failure>
-recommendation: <the preferred next action and why>
-reversible: yes | no
-scope_or_requirement_impact: <none or exact impact>
-external_effect: none | <exact effect>
-```
+Before waiting for an answer, the Implementor sends `sasu implement block` with the kind, question, recommendation, reversibility and scope impact and ends its turn.
+It does not open an interactive user question UI or start a second coordinator.
 
 The Observer resolves a block without asking the user when the answer is already in the handoff, follows an established repository convention, or is an in-scope reversible default that does not weaken an acceptance criterion.
 For `$please`, this includes reversible product, copy, and implementation choices that can be listed for final review.
@@ -335,6 +277,9 @@ Inspect the lifecycle state, recent output, and Sasu status first.
 - On `unknown`, inspect the pane process and Sasu state before deciding that the agent died.
 - If the Implementor died, dispatch one replacement with the same verb: it refuses while herdr still lists the first Implementor, and otherwise opens the replacement in a new pane, and hand off the original invocation, current diff, ready PRD, and Sasu status.
   The run is owned by the dead Implementor's session, so the Observer passes `--adopt` to take it over; the takeover is recorded with the previous owner.
+- An automatic reset diagnosis may succeed while replacement is refused.
+  `reset_not_started` means no replacement was started: inspect its stated next action and old-child ending authority, then retry from the actual recorded Observer.
+  A partial replacement retains its exact phase and requires `dispatch --resume-handoff`; never present it as a fabricated successful replacement.
 - Allow one autonomous resolution for the same blocker signature.
   If that blocker repeats, stop the automatic loop and surface the failed approach and recommended replan to the user.
 

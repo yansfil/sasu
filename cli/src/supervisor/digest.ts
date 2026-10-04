@@ -4,9 +4,6 @@ import { spawnSync } from "node:child_process";
 import { getAgent, type HerdrEnvironment } from "../implement/herdr";
 import { requireWorkRoot, snapshotExcluded } from "../implement/store";
 import type { ImplementState, SupervisionRecord } from "../implement/types";
-import type { WorkObservation } from "./decide";
-import { runFacts } from "./facts";
-
 /**
  * Deterministic facts about a run since its dispatch (D-11, B16). No
  * judgment words: the Observer reads these from a distance and decides
@@ -17,8 +14,6 @@ import { runFacts } from "./facts";
 export interface RunDigest {
   slug: string;
   runInstanceId: string;
-  /** Which loop replaces a vanished Observer (D-15); the supervisor only wakes the recorded one. */
-  recoveryOwner: "supervisor" | "task-factory";
   generatedAt: string;
   dispatchedAt: string;
   dispatchHead: string | null;
@@ -57,13 +52,11 @@ export interface RunDigest {
     reportStatus: string | null;
   };
   events: { count: number; lastAt: string | null; lastKind: string | null; sinceDispatch: number };
-  /** Who wakes the Observer, and for an hcoord run the coordinator's own record of its watch (B18). */
-  supervision: { owner: "legacy" | "hcoord"; patrolIntervalMs: number; coordinator: CoordinatorFacts | null };
+  /** The watch facts Hide owns; Sasu never invents a patrol cycle. */
+  supervision: { coordinator: CoordinatorFacts | null };
 }
-
-/** The coordinator's view of an hcoord run, read by the caller; `problem` when it could not be read. */
 export type CoordinatorFacts =
-  | { run: string; observer: string | null; implementor: string | null; intervalMs: number | null; watchStatus: string | null; openCycle: string | null; lastCheckedAt: string | null; quietSince: string | null; stale: boolean }
+  | { run: string; observer: string | null; implementor: string | null; watchId: string | null; generation: number | null; warningCount: number; lastActivityAt: string | null }
   | { run: string; problem: string };
 
 const RECENT_COMMITS = 10;
@@ -155,50 +148,6 @@ function gitFacts(workRoot: string, dispatchHead: string | null): RunDigest["git
   };
 }
 
-/**
- * The slice of `gitFacts` the tick decides on, read on every tick for every
- * active run: the head, commits since dispatch, paths outside the delivery
- * boundary and uncommitted changes, from the same git calls and helpers the
- * digest uses so a wake and the digest the Observer then reads agree. It
- * leaves out what only the digest shows (the commit log, per-file line
- * counts) because the tick would pay for them every 30 seconds.
- *
- * All four calls share one budget, so one slow repository cannot hold the
- * tick past its deadline; running out is an unavailable read, never a guess.
- */
-export function readWork(state: ImplementState, dispatchHead: string | null, budgetMs: number): WorkObservation {
-  let workRoot: string;
-  try { workRoot = requireWorkRoot(state); } catch (error) { return { kind: "unavailable", detail: error instanceof Error ? error.message : String(error) }; }
-  const started = Date.now();
-  const call = (args: string[]) => git(workRoot, args, Math.max(1, budgetMs - (Date.now() - started)));
-  const head = call(["rev-parse", "--verify", "HEAD"]);
-  if (!head.ok) return { kind: "unavailable", detail: `git unavailable in ${workRoot}: ${head.detail}` };
-  const sha = head.stdout.trim();
-  // Without a recorded dispatch head the digest measures from HEAD, so
-  // nothing counts as committed since dispatch; the tick agrees with it.
-  const base = dispatchHead ?? sha;
-  const counted = call(["rev-list", "--count", `${base}..HEAD`]);
-  const commits = Number(counted.stdout.trim());
-  if (!counted.ok || !Number.isInteger(commits)) return { kind: "unavailable", detail: `git rev-list --count ${base}..HEAD failed in ${workRoot}: ${counted.ok ? `unreadable count ${counted.stdout.trim()}` : counted.detail}` };
-  const changed = call(["diff", "--name-only", "-z", base]);
-  if (!changed.ok) return { kind: "unavailable", detail: `git diff --name-only ${base} failed in ${workRoot}: ${changed.detail}` };
-  const status = call(STATUS_ARGS);
-  if (!status.ok) return { kind: "unavailable", detail: `git status failed in ${workRoot}: ${status.detail}` };
-  const { dirty, untracked } = statusPaths(status.stdout);
-  const outside = outsideDeliveryBoundary([...new Set([...changed.stdout.split("\0").filter((entry) => entry !== ""), ...untracked])]);
-  const outsideTimes = modificationTimes(workRoot, outside);
-  const dirtyTimes = modificationTimes(workRoot, dirty);
-  return {
-    kind: "read",
-    head: sha,
-    commitsSinceDispatch: commits,
-    outsideBoundary: outside,
-    outsideSince: outsideTimes.reduce<number | null>((oldest, time) => oldest === null || time < oldest ? time : oldest, null),
-    uncommittedFiles: dirty.length,
-    newestChangeAt: newestOf(dirtyTimes),
-  };
-}
-
 function verifyFacts(state: ImplementState, dispatchedAt: string): RunDigest["verify"] {
   const boundary = Date.parse(dispatchedAt);
   const attempts = state.verificationAttempts.filter((attempt) => Date.parse(attempt.finishedAt) >= boundary);
@@ -225,7 +174,7 @@ function scopedHerdr(environment: HerdrEnvironment, hostScope: string): HerdrEnv
 }
 
 export function buildDigest(state: ImplementState, supervision: SupervisionRecord, options: { herdr?: HerdrEnvironment; now?: () => number; coordinator?: (run: string) => CoordinatorFacts } = {}): RunDigest {
-  const facts = runFacts(state, supervision);
+  const dispatchedAt = Date.parse(supervision.dispatchedAt);
   const now = options.now ?? (() => Date.now());
   const workRoot = requireWorkRoot(state);
   const looked = getAgent(supervision.implementor.paneId, scopedHerdr(options.herdr ?? {}, supervision.implementor.hostScope));
@@ -237,11 +186,10 @@ export function buildDigest(state: ImplementState, supervision: SupervisionRecor
       ? `identity mismatch: found ${looked.agent.name ?? "unnamed"} session ${looked.agent.sessionId ?? "missing"} terminal ${looked.agent.terminalId ?? "missing"} in ${looked.agent.paneId}`
       : looked.agent.status, activityAt: looked.agent.activityAt === null ? null : new Date(looked.agent.activityAt).toISOString() }
     : { status: looked.kind === "absent" ? "gone: no agent in the pane" : `unavailable: ${looked.detail}`, activityAt: null };
-  const events = state.events.filter((event) => Date.parse(event.at) >= facts.dispatchedAt);
+  const events = state.events.filter((event) => Date.parse(event.at) >= dispatchedAt);
   return {
     slug: state.topicSlug,
     runInstanceId: supervision.runInstanceId,
-    recoveryOwner: supervision.recoveryOwner,
     generatedAt: new Date(now()).toISOString(),
     dispatchedAt: supervision.dispatchedAt,
     dispatchHead: supervision.dispatchHead,
@@ -250,11 +198,7 @@ export function buildDigest(state: ImplementState, supervision: SupervisionRecor
     git: gitFacts(workRoot, supervision.dispatchHead),
     verify: verifyFacts(state, supervision.dispatchedAt),
     events: { count: state.events.length, lastAt: state.events.at(-1)?.at ?? null, lastKind: state.events.at(-1)?.kind ?? null, sinceDispatch: events.length },
-    supervision: {
-      owner: supervision.coordinationOwner ?? "legacy",
-      patrolIntervalMs: supervision.patrolIntervalMs,
-      coordinator: supervision.coordinationOwner === "hcoord" && options.coordinator !== undefined ? options.coordinator(supervision.runInstanceId) : null,
-    },
+    supervision: { coordinator: options.coordinator?.(supervision.runInstanceId) ?? null },
   };
 }
 
@@ -270,7 +214,7 @@ function ago(from: string | null, now: number): string {
 export function renderDigest(digest: RunDigest): string[] {
   const now = Date.parse(digest.generatedAt);
   const lines = [
-    `${digest.slug} instance ${digest.runInstanceId}: dispatched ${ago(digest.dispatchedAt, now)} (${digest.dispatchedAt}), head at dispatch ${digest.dispatchHead ?? "unavailable"}; recovery owner ${digest.recoveryOwner}`,
+    `${digest.slug} instance ${digest.runInstanceId}: dispatched ${ago(digest.dispatchedAt, now)} (${digest.dispatchedAt}), head at dispatch ${digest.dispatchHead ?? "unavailable"}`,
     `Implementor ${digest.implementor.agent} in ${digest.implementor.paneId} on ${digest.implementor.hostScope}, session ${digest.implementor.sessionId}, terminal ${digest.implementor.terminalId}: ${digest.implementor.status}; last herdr activity ${ago(digest.implementor.activityAt, now)}`,
   ];
   if (!digest.git.available) lines.push(`Git: ${digest.git.problem}`);
@@ -283,9 +227,8 @@ export function renderDigest(digest: RunDigest): string[] {
   lines.push(`Verify: ${digest.verify.attempts} attempt(s); latest ${digest.verify.latestVerdict ?? "none"} ${ago(digest.verify.latestAt, now)}; report ${digest.verify.reportStatus ?? "none"}; repeatedly failing: ${digest.verify.repeatedlyFailing.length === 0 ? "none" : digest.verify.repeatedlyFailing.join(", ")}`);
   lines.push(`Events: ${digest.events.sinceDispatch} since dispatch; last ${digest.events.lastKind ?? "none"} ${ago(digest.events.lastAt, now)}`);
   const coordinator = digest.supervision.coordinator;
-  if (digest.supervision.owner === "legacy") lines.push(`Supervision: legacy supervisor tick; patrol every ${Math.round(digest.supervision.patrolIntervalMs / 60_000)} min`);
-  else if (coordinator === null) lines.push("Supervision: hcoord; coordinator record not read");
-  else if ("problem" in coordinator) lines.push(`Supervision: hcoord run ${coordinator.run}; coordinator record unavailable: ${coordinator.problem}`);
-  else lines.push(`Supervision: hcoord run ${coordinator.run}${coordinator.stale ? " (daemon stopped; saved record)" : ""}; Observer ${coordinator.observer ?? "none"}, implementor ${coordinator.implementor ?? "none"}; watch ${coordinator.watchStatus ?? "none"} every ${coordinator.intervalMs === null ? "unknown" : `${Math.round(coordinator.intervalMs / 60_000)} min`}; open cycle ${coordinator.openCycle ?? "none"}; last closed cycle ${coordinator.lastCheckedAt === null ? "never" : `${ago(coordinator.lastCheckedAt, now)} (${coordinator.lastCheckedAt})`}${coordinator.quietSince === null ? "" : `; quiet since ${coordinator.quietSince}`}`);
+  if (coordinator === null) lines.push("Supervision: Hide; watch record not read");
+  else if ("problem" in coordinator) lines.push(`Supervision: Hide run ${coordinator.run}; watch record unavailable: ${coordinator.problem}`);
+  else lines.push(`Supervision: Hide run ${coordinator.run}; Observer ${coordinator.observer ?? "none"}, implementor ${coordinator.implementor ?? "none"}; ${coordinator.watchId === null ? "no active watch" : `watch ${coordinator.watchId} generation ${coordinator.generation}; warnings ${coordinator.warningCount}; activity ${ago(coordinator.lastActivityAt, now)}`}`);
   return lines;
 }

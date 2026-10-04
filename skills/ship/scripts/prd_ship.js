@@ -255,7 +255,7 @@ function resolveState(options) {
   }
   if (!fs.existsSync(statePath)) throw new Error(`State file not found: ${statePath}`);
   const state = readJson(statePath);
-  assertSchema(state, "sasu.implement.state.v11.stateless-verification", "state");
+  assertSchema(state, "sasu.implement.state.v12.hide", "state");
   const stateDir = path.dirname(statePath);
   const reportPath = path.join(stateDir, "verification-report.json");
   const resultPath = path.join(stateDir, "verification-report.md");
@@ -286,7 +286,8 @@ const LAST_SUPPORTED_COMMIT = "9149d982";
 
 function assertSchema(value, expected, label) {
   if (value?.schema !== expected) {
-    throw new Error(`${label} received schema ${value?.schema ?? "missing"}; expected ${expected}; last supported commit ${LAST_SUPPORTED_COMMIT}. Start a new run with the current contract.`);
+    const supported = value?.schema === "sasu.implement.state.v11.stateless-verification" ? "fbdf62913b4fbe5fde1ebce26c3e290c8eac0e92" : LAST_SUPPORTED_COMMIT;
+    throw new Error(`${label} received schema ${value?.schema ?? "missing"}; expected ${expected}; last supported commit ${supported}. Finish the old run with that CLI using sasu implement status --state <old-state> and its supported delivery commands, or start a separate run with sasu implement start --prd <path> --slug <new-slug>. No automatic migration is available.`);
   }
 }
 
@@ -1264,32 +1265,31 @@ function cmdLocal(options) {
 }
 
 /**
- * A completed delivery ends an hcoord-supervised run's implementor
- * participant, so its Observer receives no watch cycle for delivered work
- * (sasu-on-hcoord B17, D-20). The participant IDs are the ones state.json
+ * A completed delivery ends a Hide-supervised run's implementor
+ * participant from its attested native caller. The participant IDs are the ones state.json
  * records. The delivery already happened, so a refusal here is reported with
  * its retry instead of failing the delivery.
  */
 function endCoordination(context) {
   const supervision = context.state && context.state.supervision;
-  if (!supervision || supervision.coordinationOwner !== "hcoord") return null;
-  const participants = supervision.hcoord;
+  if (!supervision) return null;
+  const participants = supervision.hide;
   if (!participants || !participants.implementor || !participants.observer) {
-    const problem = "state.json records no hcoord participants for this run";
-    const retry = "sasu supervisor migrate-hcoord, then hcoord agent end <implementor> --actor <observer>";
-    process.stderr.write(`Delivery is recorded, but hcoord may still watch this run: ${problem}. Retry with: ${retry}\n`);
+    const problem = "state.json records no Hide participants for this run";
+    const retry = "sasu implement dispatch --resume-handoff from the recorded Observer, then hide agent end <implementor> from the target or original parent pane";
+    process.stderr.write(`Delivery is recorded, but Hide may still watch this run: ${problem}. Retry with: ${retry}\n`);
     return { ended: false, problem, retry };
   }
-  const args = ["agent", "end", participants.implementor, "--actor", participants.observer];
-  const retry = `hcoord ${args.join(" ")}`;
-  const result = childProcess.spawnSync("hcoord", [...args, "--json"], { cwd: context.repoRoot, encoding: "utf8", shell: false });
+  const args = ["agent", "end", participants.implementor];
+  const retry = `hide ${args.join(" ")} from the target or original registered parent pane; watch handover does not transfer lineage authority`;
+  const result = childProcess.spawnSync("hide", args, { cwd: context.repoRoot, encoding: "utf8", shell: false });
   let parsed = null;
   try { parsed = JSON.parse(result.stdout || ""); } catch { parsed = null; }
-  if (parsed && parsed.ok === true) return { ended: true, implementor: participants.implementor, delivery: parsed.delivery || "delivered" };
+  if (parsed && parsed.ok === true && result.status === 0) return { ended: true, implementor: participants.implementor, delivery: "delivered" };
   const problem = parsed && parsed.error
     ? `${parsed.error.code}: ${parsed.error.message}`
-    : ((result.error && result.error.message) || result.stderr || result.stdout || `hcoord exited ${result.status}`).trim();
-  process.stderr.write(`Delivery is recorded, but hcoord still watches implementor ${participants.implementor}: ${problem}. Retry with: ${retry}\n`);
+    : ((result.error && result.error.message) || result.stderr || result.stdout || `Hide exited ${result.status}`).trim();
+  process.stderr.write(`Delivery is recorded, but Hide still watches implementor ${participants.implementor}: ${problem}. Retry with: ${retry}\n`);
   return { ended: false, implementor: participants.implementor, problem, retry };
 }
 

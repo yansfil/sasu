@@ -75,7 +75,7 @@ function fixture(baselineFiles = {}) {
   const reportText = `${JSON.stringify(report, null, 2)}\n`;
   identity.reportSha256 = crypto.createHash("sha256").update(reportText).digest("hex");
   const state = {
-    schema: "sasu.implement.state.v11.stateless-verification",
+    schema: "sasu.implement.state.v12.hide",
     status: "active",
     topicSlug: "fixture",
     projectRoot: root,
@@ -121,21 +121,21 @@ test("local delivery accepts a report bound to the already committed implementat
   assert.equal(run("git", ["log", "-1", "--format=%s"], { cwd: current.root }).stdout.trim(), "Implement feature");
 });
 
-test("a completed delivery of an hcoord-supervised run ends its implementor participant", () => {
+test("a completed delivery of a Hide-supervised run ends its implementor as the native caller", () => {
   const current = fixture();
-  current.state.supervision = { runInstanceId: "run-key-1", coordinationOwner: "hcoord", hcoord: { observer: "a_observer", implementor: "a_implementor" } };
+  current.state.supervision = { runInstanceId: "run-key-1", hide: { observer: "a_observer", implementor: "a_implementor" } };
   write(current.statePath, `${JSON.stringify(current.state, null, 2)}\n`);
   const bin = path.join(current.root, "agents", "test-bin");
-  write(path.join(bin, "hcoord"), `#!/usr/bin/env node
-require("node:fs").appendFileSync(${JSON.stringify(path.join(current.root, "agents", "hcoord-argv.log"))}, JSON.stringify(process.argv.slice(2)) + "\\n");
+  write(path.join(bin, "hide"), `#!/usr/bin/env node
+require("node:fs").appendFileSync(${JSON.stringify(path.join(current.root, "agents", "hide-argv.log"))}, JSON.stringify(process.argv.slice(2)) + "\\n");
 process.stdout.write(JSON.stringify({ ok: true, delivery: "delivered", value: {} }));
 `, 0o755);
   const result = run(process.execPath, [shipScript, "local", "--state", current.statePath, "--no-gpg-sign"], { cwd: current.root, env: current.env });
   const output = JSON.parse(result.stdout);
   assert.equal(output.ok, true);
   assert.deepEqual(output.coordination, { ended: true, implementor: "a_implementor", delivery: "delivered" });
-  const asked = fs.readFileSync(path.join(current.root, "agents", "hcoord-argv.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
-  assert.deepEqual(asked, [["agent", "end", "a_implementor", "--actor", "a_observer", "--json"]]);
+  const asked = fs.readFileSync(path.join(current.root, "agents", "hide-argv.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.deepEqual(asked, [["agent", "end", "a_implementor"]]);
 });
 
 test("local delivery never amends a verified checkpoint commit", () => {
@@ -343,6 +343,17 @@ test("old receipt-era state is rejected explicitly", () => {
     allowFailure: true,
   });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /expected sasu\.implement\.state\.v11\.stateless-verification/);
+  assert.match(result.stderr, /expected sasu\.implement\.state\.v12\.hide/);
   assert.match(result.stderr, /last supported commit/);
+});
+
+test("standalone delivery rejects v11 without rewriting the old run", () => {
+  const current = fixture(), state = JSON.parse(fs.readFileSync(current.statePath, "utf8"));
+  state.schema = "sasu.implement.state.v11.stateless-verification";
+  fs.writeFileSync(current.statePath, JSON.stringify(state));
+  const original = fs.readFileSync(current.statePath);
+  const refused = run(process.execPath, [shipScript, "body", "--state", current.statePath], { cwd: current.root, env: current.env, allowFailure: true });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /fbdf62913b4fbe5fde1ebce26c3e290c8eac0e92.*implement status --state.*No automatic migration/);
+  assert.deepEqual(fs.readFileSync(current.statePath), original);
 });

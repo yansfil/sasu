@@ -11,7 +11,7 @@ import { CLI, git, isolatedEnv, makeProject, PRD_PATH, STATE_PATH } from "../hel
 import { installFakeHerdr } from "../helpers/fake-herdr.mjs";
 import { attemptFixture } from "../helpers/implement-state.mjs";
 import { reconcileCurrentDispatchPrerequisites, repairPendingDispatchPrerequisites, runImplementCommand } from "../../dist/implement/commands.js";
-import { enrollRun, readIndex, unenrollRun, updateIndex } from "../../dist/supervisor/index.js";
+import { recordRegisteredRun, readIndex, forgetRegisteredRun, updateIndex } from "../../dist/supervisor/index.js";
 import { runSupervisorCommand } from "../../dist/supervisor/commands.js";
 
 const OBSERVER = "observer-session";
@@ -68,7 +68,7 @@ function herdrEnv(root, extra = {}) {
 
 const dispatch = (root, env, extra = []) => sasu(root, ["implement", "dispatch", "--name", "impl", "--prd", PRD_PATH, ...extra], { env, input: PACKET });
 
-test("Codex initialization precedes durable handoff and supervisor enrollment", () => {
+test("Codex initialization precedes durable handoff and supervisor registration", () => {
   const root = fs.realpathSync(makeProject());
   const { env, fake, home } = herdrEnv(root);
   const started = sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env });
@@ -81,7 +81,8 @@ test("Codex initialization precedes durable handoff and supervisor enrollment", 
   assert.equal(recorded.dispatches.length, 1);
   assert.equal(fake.prompts().length, 2, "initialization and executable work are separate official prompts");
   assert.match(fake.prompts()[0].text, /Session initialization only/);
-  assert.equal(fake.prompts()[1].text, PACKET);
+  assert.ok(fake.prompts()[1].text.startsWith(PACKET));
+  assert.match(fake.prompts()[1].text, /\nHIDE LETTERS:/);
   const launch = fake.argv().find((args) => args[0] === "agent" && args[1] === "start");
   assert.equal(launch.includes(PACKET), false, "launch-time arguments contain no task authority");
   assert.equal(launch.some((arg) => arg.includes("Session initialization only")), false, "Herdr readiness does not include a model turn");
@@ -120,7 +121,10 @@ test("a worktree run's implementor is opened in a workspace on that worktree, ne
   assert.deepEqual(created, ["workspace", "create", "--cwd", worktree, "--label", "fixture", "--env", "SASU_HERDR_ROLE=implementor", "--env", `PATH=${env.PATH}`, "--env", `SASU_RUN_INSTANCE_ID=${runInstanceId}`, "--no-focus"], "the pane carries the marker and the run instance it was opened for");
   assert.equal(asked.some((argv) => argv[0] === "pane" && argv[1] === "split"), false, "the Observer's pane is never split");
   assert.deepEqual(asked.find((argv) => argv[1] === "start").slice(0, 7), ["agent", "start", "impl", "--kind", "claude", "--pane", "w7Z:p1"]);
-  assert.deepEqual(asked.find((argv) => argv[1] === "prompt"), ["agent", "prompt", "w7Z:p1", PACKET]);
+  const handoff = asked.find((argv) => argv[1] === "prompt");
+  assert.deepEqual(handoff.slice(0, 3), ["agent", "prompt", "w7Z:p1"]);
+  assert.ok(handoff[3].startsWith(PACKET));
+  assert.match(handoff[3], /\nHIDE LETTERS:/);
   assert.deepEqual(asked.find((argv) => argv[1] === "report-metadata"), ["pane", "report-metadata", "w7Z:p1", "--source", "sasu", "--token", "parent_pane=w4G:p12"], "the Observer's pane is declared as the parent, for hide's tree");
   assert.equal(dispatched.json.detail.parentLineage, "reported");
 
@@ -138,8 +142,8 @@ test("a worktree run's implementor is opened in a workspace on that worktree, ne
   // are in state.json, and the path is in the supervisor index before the
   // Observer's first Stop.
   assert.deepEqual(
-    { runInstanceId: recorded.supervision.runInstanceId, observer: { sessionId: recorded.supervision.observer.sessionId, terminalId: recorded.supervision.observer.terminalId, paneId: recorded.supervision.observer.paneId, runtime: recorded.supervision.observer.runtime }, implementor: { ...recorded.supervision.implementor, recordedAt: "<timestamp>" }, patrolIntervalMs: recorded.supervision.patrolIntervalMs, recoveryOwner: recorded.supervision.recoveryOwner },
-    { runInstanceId, observer: { sessionId: OBSERVER, terminalId: "term_observer", paneId: "w4G:p12", runtime: "claude" }, implementor: { paneId: "w7Z:p1", agent: "impl", sessionId: "impl-session", terminalId: "term_impl", hostScope: "default", recordedAt: "<timestamp>" }, patrolIntervalMs: 15 * 60 * 1000, recoveryOwner: "supervisor" },
+    { runInstanceId: recorded.supervision.runInstanceId, observer: { sessionId: recorded.supervision.observer.sessionId, terminalId: recorded.supervision.observer.terminalId, paneId: recorded.supervision.observer.paneId, runtime: recorded.supervision.observer.runtime }, implementor: { ...recorded.supervision.implementor, recordedAt: "<timestamp>" } },
+    { runInstanceId, observer: { sessionId: OBSERVER, terminalId: "term_observer", paneId: "w4G:p12", runtime: "claude" }, implementor: { paneId: "w7Z:p1", agent: "impl", sessionId: "impl-session", terminalId: "term_impl", hostScope: "default", recordedAt: "<timestamp>" } },
   );
   assert.equal(recorded.supervision.dispatchHead, git(root, ["rev-parse", "HEAD"]), "the digest measures from the head at dispatch");
   const index = readIndex(path.join(home, ".sasu", "supervisor", "index.json"));
@@ -212,14 +216,14 @@ test("dispatch refuses when the Observer's identity cannot be read, before any p
 
   const badPatrol = dispatch(root, env, ["--patrol", "0"]);
   assert.notEqual(badPatrol.status, 0);
-  assert.match(badPatrol.text, /--patrol must be a whole number of minutes/);
+  assert.match(badPatrol.text, /--patrol is retired/);
   const badOwner = dispatch(root, env, ["--recovery-owner", "someone"]);
-  assert.match(badOwner.text, /--recovery-owner must be supervisor or task-factory/);
+  assert.match(badOwner.text, /--recovery-owner is retired/);
   const smuggled = dispatch(root, env, ["--env", "SASU_RUN_INSTANCE_ID=x"]);
   assert.match(smuggled.text, /minted by the dispatch/);
 });
 
-test("D-04: an enrollment write that commits before cleanup failure restores the prior supervised run", async () => {
+test("D-04: a registration write that commits before cleanup failure restores the prior supervised run", async () => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
   const { env, fake, home } = herdrEnv(root);
@@ -230,7 +234,7 @@ test("D-04: an enrollment write that commits before cleanup failure restores the
   const index = path.join(home, ".sasu", "supervisor", "index.json");
   fake.setAgents({});
 
-  // Hold four immutable revisions so the replacement enrollment commits its
+  // Hold four immutable revisions so the replacement registration commits its
   // new head and then reaches pruning. The round-two review reproduced an EIO
   // at that exact boundary: the external write existed even though its caller
   // received an exception.
@@ -273,14 +277,14 @@ test("D-04: an enrollment write that commits before cleanup failure restores the
 
   assert.equal(injected, true, `the regression reaches cleanup after the replacement revision is committed: ${refused?.message ?? "no result"}`);
   assert.equal(refused.ok, false);
-  assert.match(refused.message, /supervision enrollment failed before child start/);
+  assert.match(refused.message, /supervision registration failed before child start/);
   const after = state(root);
   assert.equal(after.pendingDispatch, null, "no child exists, so the failed replacement intent is cleared");
   assert.equal(after.supervision.runInstanceId, priorRunInstanceId, "state keeps the previously supervised run");
   assert.equal(readIndex(index).entries[0].runInstanceId, priorRunInstanceId, "the index is reconciled to the state authority before returning the failure");
 });
 
-test("D-04: identity and enrollment persist before handoff, and a failed handoff has an explicit recovery path", () => {
+test("D-04: identity and registration persist before handoff, and a failed handoff has an explicit recovery path", () => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
   const { env, fake, home } = herdrEnv(root);
@@ -302,7 +306,8 @@ test("D-04: identity and enrollment persist before handoff, and a failed handoff
   });
   assert.equal(resumed.status, 0, resumed.text);
   assert.equal(state(root).pendingDispatch, null);
-  assert.deepEqual(fake.prompts().map((entry) => [entry.target, entry.text]), [["w4G:p13", PACKET]]);
+  assert.deepEqual(fake.prompts().map((entry) => entry.target), ["w4G:p13"]);
+  assert.ok(fake.prompts()[0].text.startsWith(PACKET));
 });
 
 test("B2/B18: an approved Observer handover transfers partial-handoff recovery authority", async () => {
@@ -314,11 +319,8 @@ test("B2/B18: an approved Observer handover transfers partial-handoff recovery a
   assert.equal(failed.status, 1, failed.text);
   assert.equal(state(root).pendingDispatch.phase, "started");
   const supervisorIndex = path.join(home, ".sasu", "supervisor", "index.json");
-  const priorEnrollmentId = readIndex(supervisorIndex).entries[0].enrollmentId;
-  updateIndex(supervisorIndex, (index) => {
-    index.entries[0].pendingWake = { episode: "blocked:1", attempts: 2, at: "2026-09-20T15:00:00.000Z", operationId: null, status: "unknown" };
-    index.entries[0].lastFailure = { at: "2026-09-20T15:00:00.000Z", detail: "old Observer delivery budget exhausted" };
-  });
+  const priorRegistrationId = readIndex(supervisorIndex).entries[0].registrationId;
+
 
   fake.patchAgent("w4G:p12", { name: "observer", agent: "claude", agent_status: "working", pane_id: "w4G:p12", terminal_id: "term_replacement", agent_session: { value: "replacement-session" }, tokens: { activity: "2000" }, state_change_seq: 2 });
   const replacementEnv = { ...env, CLAUDE_SESSION_ID: "replacement-session" };
@@ -331,22 +333,22 @@ test("B2/B18: an approved Observer handover transfers partial-handoff recovery a
   });
   assert.equal(interrupted.ok, false);
   assert.equal(state(root).pendingDispatch.observer.sessionId, "replacement-session", "the retry begins from durable recipient authority");
-  assert.equal(readIndex(supervisorIndex).entries[0].enrollmentId, priorEnrollmentId, "the interrupted attempt did not reach index reconciliation");
+  assert.equal(readIndex(supervisorIndex).entries[0].registrationId, priorRegistrationId, "the interrupted attempt did not reach index reconciliation");
   const handed = sasu(root, ["supervisor", "handover", "--slug", "fixture", "--approval", "user: replacement Observer takes over"], { env: replacementEnv });
   assert.equal(handed.status, 0, handed.text);
   assert.equal(state(root).pendingDispatch.observer.sessionId, "replacement-session");
-  const replacementEnrollment = readIndex(supervisorIndex).entries[0];
-  assert.notEqual(replacementEnrollment.enrollmentId, priorEnrollmentId, "recipient authority change starts a new delivery generation");
-  assert.equal(replacementEnrollment.pendingWake, null, "the former Observer's uncertain-delivery budget cannot starve the replacement");
-  assert.equal(replacementEnrollment.lastFailure, null);
+  const replacementRegistration = readIndex(supervisorIndex).entries[0];
+  assert.notEqual(replacementRegistration.registrationId, priorRegistrationId, "recipient authority change starts a new delivery generation");
+  assert.deepEqual(Object.keys(replacementRegistration).sort(), ["addedAt", "recipientAuthorityKey", "registrationId", "runInstanceId", "statePath"]);
   const repeated = sasu(root, ["supervisor", "handover", "--slug", "fixture", "--approval", "user: same Observer retries handover"], { env: replacementEnv });
   assert.equal(repeated.status, 0, repeated.text);
-  assert.equal(readIndex(supervisorIndex).entries[0].enrollmentId, replacementEnrollment.enrollmentId, "same-recipient retry keeps the replacement delivery generation");
+  assert.equal(readIndex(supervisorIndex).entries[0].registrationId, replacementRegistration.registrationId, "same-recipient retry keeps the replacement delivery generation");
 
   const resumed = sasu(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff"], { env: replacementEnv, input: PACKET });
   assert.equal(resumed.status, 0, resumed.text);
   assert.equal(state(root).pendingDispatch, null);
-  assert.deepEqual(fake.prompts().map((entry) => [entry.target, entry.text]), [["w4G:p13", PACKET]]);
+  assert.deepEqual(fake.prompts().map((entry) => entry.target), ["w4G:p13"]);
+  assert.ok(fake.prompts()[0].text.startsWith(PACKET));
 });
 
 test("B2/B18: approved handover transfers a planned dispatch before supervision exists", () => {
@@ -365,6 +367,11 @@ test("B2/B18: approved handover transfers a planned dispatch before supervision 
 
   fake.patchAgent("w4G:p12", { name: "observer", agent: "claude", agent_status: "working", pane_id: "w4G:p12", terminal_id: "term_replacement", agent_session: { value: "replacement-session" }, tokens: { activity: "2000" }, state_change_seq: 2 });
   const replacementEnv = { ...env, CLAUDE_SESSION_ID: "replacement-session" };
+  const original = fs.readFileSync(path.join(root, STATE_PATH));
+  const unattested = sasu(root, ["supervisor", "handover", "--slug", "fixture", "--approval", "user: replacement Observer takes planned recovery"], { env: { ...replacementEnv, HIDE_FAKE_DOWN: "1" } });
+  assert.notEqual(unattested.status, 0);
+  assert.match(unattested.text, /planned recovery handover was not recorded/);
+  assert.deepEqual(fs.readFileSync(path.join(root, STATE_PATH)), original);
   const handed = sasu(root, ["supervisor", "handover", "--slug", "fixture", "--approval", "user: replacement Observer takes planned recovery"], { env: replacementEnv });
   assert.equal(handed.status, 0, handed.text);
   assert.equal(state(root).pendingDispatch.observer.sessionId, "replacement-session");
@@ -385,7 +392,7 @@ test("engineering 10: a refused handover resolves to the structured command outc
 
   assert.equal(refused.ok, false);
   assert.equal(refused.exitCode, 2);
-  assert.match(refused.message, /requires --approval/);
+  assert.match(refused.message, /requires nonempty --approval/);
 });
 
 test("D-06/engineering 4: handover reports refusal when the committed Observer identity changes", async () => {
@@ -413,7 +420,7 @@ test("D-06/engineering 4: handover reports refusal when the committed Observer i
   assert.match(handed.message, /handover authority changed after persistence/);
 });
 
-test("B18/engineering 11/13: handover cannot replace a newer dispatch enrollment after its state commit", async () => {
+test("B18/engineering 11/13: handover cannot replace a newer dispatch registration after its state commit", async () => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
   const { env, fake, home } = herdrEnv(root);
@@ -442,12 +449,10 @@ test("B18/engineering 11/13: handover cannot replace a newer dispatch enrollment
         prdPath: newer.prdPath,
         dispatchHead: null,
         dispatchedAt: "2026-09-20T15:00:00.000Z",
-        patrolIntervalMs: 15 * 60 * 1000,
-        recoveryOwner: "supervisor",
         handovers: [],
       };
       fs.writeFileSync(path.join(root, STATE_PATH), `${JSON.stringify(newer, null, 2)}\n`);
-      enrollRun(path.join(home, ".sasu", "supervisor", "index.json"), { statePath: path.join(root, STATE_PATH), runInstanceId: newerInstance, recoveryOwner: "supervisor", at: "2026-09-20T15:00:00.000Z" });
+      recordRegisteredRun(path.join(home, ".sasu", "supervisor", "index.json"), { statePath: path.join(root, STATE_PATH), runInstanceId: newerInstance, at: "2026-09-20T15:00:00.000Z" });
     },
   });
   assert.equal(barrierReached, true);
@@ -479,7 +484,7 @@ test("D-04/engineering 10: a positively absent started child has an idempotent r
   assert.equal(repeated.json.detail.recovered, "already-clear");
 });
 
-test("D-04: absent-child recovery revalidates handover before changing enrollment", async () => {
+test("D-04: absent-child recovery revalidates handover before changing registration", async () => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
   const { env, fake, home } = herdrEnv(root);
@@ -504,11 +509,11 @@ test("D-04: absent-child recovery revalidates handover before changing enrollmen
   assert.match(recovered.text, /partial dispatch changed|authority/i);
   assert.equal(state(root).pendingDispatch.observer.sessionId, "replacement-session");
   const entries = readIndex(path.join(home, ".sasu", "supervisor", "index.json")).entries;
-  assert.equal(entries.length, 1, "stale recovery cannot remove the replacement Observer's enrollment");
+  assert.equal(entries.length, 1, "stale recovery cannot remove the replacement Observer's registration");
   assert.equal(entries[0].runInstanceId, state(root).pendingDispatch.runInstanceId);
 });
 
-test("D-04/engineering 11: prerequisite repair binds enrollment generation to freshly validated dispatch authority", () => {
+test("D-04/engineering 11: prerequisite repair binds registration generation to freshly validated dispatch authority", () => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
   const { env, home } = herdrEnv(root);
@@ -525,10 +530,9 @@ test("D-04/engineering 11: prerequisite repair binds enrollment generation to fr
       replacement.pendingDispatch.runInstanceId = "replacement-instance";
       replacement.pendingDispatch.observer.sessionId = "replacement-observer";
       fs.writeFileSync(path.join(root, STATE_PATH), `${JSON.stringify(replacement, null, 2)}\n`);
-      enrollRun(index, {
+      recordRegisteredRun(index, {
         statePath: path.join(root, STATE_PATH),
         runInstanceId: replacement.pendingDispatch.runInstanceId,
-        recoveryOwner: replacement.pendingDispatch.recoveryOwner,
         at: new Date().toISOString(),
       });
     }), /dispatch authority changed/);
@@ -567,10 +571,9 @@ test("D-04/engineering 11: current prerequisite reconciliation binds generation 
         pendingSpawns: 0,
       };
       fs.writeFileSync(path.join(root, STATE_PATH), `${JSON.stringify(replacement, null, 2)}\n`);
-      enrollRun(index, {
+      recordRegisteredRun(index, {
         statePath: path.join(root, STATE_PATH),
         runInstanceId: replacement.pendingDispatch.runInstanceId,
-        recoveryOwner: replacement.pendingDispatch.recoveryOwner,
         at: new Date().toISOString(),
       });
     }), /verification still active/);
@@ -579,7 +582,7 @@ test("D-04/engineering 11: current prerequisite reconciliation binds generation 
     else process.env.HOME = previousHome;
   }
   assert.equal(state(root).pendingDispatch.runInstanceId, "replacement-current-instance");
-  assert.deepEqual(readIndex(index).entries.map((entry) => entry.runInstanceId), ["replacement-current-instance"], "a later actionable refusal cannot leave the replacement enrollment overwritten");
+  assert.deepEqual(readIndex(index).entries.map((entry) => entry.runInstanceId), ["replacement-current-instance"], "a later actionable refusal cannot leave the replacement registration overwritten");
 });
 
 test("D-04/engineering 10: navigation failure leaves absent recovery retryable", () => {
@@ -604,7 +607,7 @@ test("D-04/engineering 10: navigation failure leaves absent recovery retryable",
   assert.ok(fs.existsSync(pointer), "the retry repairs navigation instead of trusting a stale converged result");
 });
 
-test("D-04: resumed handoff restores navigation and enrollment before executable input", async () => {
+test("D-04: resumed handoff restores navigation and registration before executable input", async () => {
   const root = fs.realpathSync(makeProject());
   fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
   const { env, fake, home } = herdrEnv(root);
@@ -613,7 +616,7 @@ test("D-04: resumed handoff restores navigation and enrollment before executable
   const partial = state(root).pendingDispatch;
   const pointer = path.join(root, POINTER);
   fs.rmSync(pointer, { force: true });
-  unenrollRun(path.join(home, ".sasu", "supervisor", "index.json"), { statePath: path.join(root, STATE_PATH), runInstanceId: partial.runInstanceId, at: new Date().toISOString(), cause: "test removes prerequisites" });
+  forgetRegisteredRun(path.join(home, ".sasu", "supervisor", "index.json"), path.join(root, STATE_PATH), partial.runInstanceId);
   const ready = path.join(root, "resume-prerequisites.ready");
   const release = path.join(root, "resume-prerequisites.release");
   const running = sasuAsync(root, ["implement", "dispatch", "--slug", "fixture", "--resume-handoff"], {
@@ -624,7 +627,7 @@ test("D-04: resumed handoff restores navigation and enrollment before executable
     await waitForFile(ready);
     assert.ok(fs.existsSync(pointer), "navigation exists before the prompt process starts");
     const entries = readIndex(path.join(home, ".sasu", "supervisor", "index.json")).entries;
-    assert.deepEqual(entries.map((entry) => entry.runInstanceId), [partial.runInstanceId], "enrollment exists before the prompt process starts");
+    assert.deepEqual(entries.map((entry) => entry.runInstanceId), [partial.runInstanceId], "registration exists before the prompt process starts");
   } finally {
     fs.writeFileSync(release, "release\n");
   }

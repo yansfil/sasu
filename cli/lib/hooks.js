@@ -1,8 +1,8 @@
 "use strict";
-// Hook reconciliation shared by the installer and `sasu supervisor uninstall`.
+// Hook reconciliation for current advisory hooks and owned transition cleanup.
 //
 // One marker list and one reconcile function, so an entry the installer
-// registers can always be retracted by the CLI and vice versa. Both
+// registers can always be retracted on a later installation. Both
 // runtimes use the same hooks shape ({ hooks: { <Event>: [ { hooks: [...] } ] } }).
 const fs = require("node:fs");
 const path = require("node:path");

@@ -222,7 +222,7 @@ export function parseImplementState(text: string): ImplementState {
   catch (error) { throw new Error(`malformed implement state JSON: ${error instanceof Error ? error.message : String(error)}`); }
   assertRecord(parsed, "root");
   if (parsed["schema"] !== IMPLEMENT_SCHEMA) {
-    throw new Error(`unsupported implement state schema ${String(parsed["schema"] ?? "missing")}; only ${IMPLEMENT_SCHEMA} is accepted. Retired contracts were last supported by ${retiredImplementSupportCommit(parsed["schema"])}; start a new run, no migration is available`);
+    throw new Error(`unsupported implement state schema ${String(parsed["schema"] ?? "missing")}; only ${IMPLEMENT_SCHEMA} is accepted. Finish the old run with the CLI built from ${retiredImplementSupportCommit(parsed["schema"])} using \`sasu implement status --state <old-state>\` and its supported delivery commands, or start a separate run with \`sasu implement start --prd <path> --slug <new-slug>\`; no automatic migration is available`);
   }
   for (const field of ["rows", "activeCheck", "qaBriefs", "trails", "designComments", "tasks", "checks", "findings", "riskFindings", "budgetGrants", "completion"]) {
     if (field in parsed) throw new Error(`retired implement state field: ${field}; start a new run under the stateless verification contract`);
@@ -290,16 +290,12 @@ export function parseImplementState(text: string): ImplementState {
     for (const field of ["runInstanceId", "canonicalRepository", "prdPath"] as const) assertString(supervision[field], `supervision.${field}`);
     assertIsoTimestamp(supervision["dispatchedAt"], "supervision.dispatchedAt");
     assertNullableString(supervision["dispatchHead"], "supervision.dispatchHead");
-    positiveInteger(supervision["patrolIntervalMs"], "supervision.patrolIntervalMs");
-    enumValue(supervision["recoveryOwner"], ["supervisor", "task-factory"], "supervision.recoveryOwner");
-    if (supervision["coordinationOwner"] !== undefined) enumValue(supervision["coordinationOwner"], ["legacy", "hcoord"], "supervision.coordinationOwner");
-    if (supervision["hcoord"] !== undefined) {
-      const hcoord = supervision["hcoord"] as Record<string, unknown>;
-      assertRecord(hcoord, "supervision.hcoord");
-      for (const field of ["observer", "implementor"] as const) assertString(hcoord[field], `supervision.hcoord.${field}`);
-      positiveInteger(hcoord["intervalMs"], "supervision.hcoord.intervalMs");
-      enumValue(hcoord["recoveryOwner"], ["supervisor", "task-factory"], "supervision.hcoord.recoveryOwner");
-      assertIsoTimestamp(hcoord["registeredAt"], "supervision.hcoord.registeredAt");
+    for (const field of ["coordinationOwner", "hcoord", "patrolIntervalMs", "recoveryOwner"]) if (field in supervision) throw new Error(`malformed implement state: retired supervision field ${field}`);
+    if (supervision["hide"] !== undefined) {
+      const hide = supervision["hide"];
+      assertRecord(hide, "supervision.hide");
+      for (const field of ["observer", "implementor", "watchId"] as const) assertString(hide[field], `supervision.hide.${field}`);
+      assertIsoTimestamp(hide["registeredAt"], "supervision.hide.registeredAt");
     }
     const identity = (value: unknown, label: string): void => {
       assertRecord(value, label);
@@ -326,10 +322,7 @@ export function parseImplementState(text: string): ImplementState {
     enumValue(pending["phase"], ["planned", "prepared", "started"], "pendingDispatch.phase");
     assertIsoTimestamp(pending["dispatchedAt"], "pendingDispatch.dispatchedAt");
     assertNullableString(pending["dispatchHead"], "pendingDispatch.dispatchHead");
-    positiveInteger(pending["patrolIntervalMs"], "pendingDispatch.patrolIntervalMs");
-    enumValue(pending["recoveryOwner"], ["supervisor", "task-factory"], "pendingDispatch.recoveryOwner");
-    if (pending["coordinationOwner"] !== undefined) enumValue(pending["coordinationOwner"], ["legacy", "hcoord"], "pendingDispatch.coordinationOwner");
-    if (pending["hcoordReplacedImplementor"] !== undefined) assertNullableString(pending["hcoordReplacedImplementor"], "pendingDispatch.hcoordReplacedImplementor");
+    for (const field of ["coordinationOwner", "hcoordReplacedImplementor", "patrolIntervalMs", "recoveryOwner"]) if (field in pending) throw new Error(`malformed implement state: retired pending dispatch field ${field}`);
     const observer = pending["observer"] as Record<string, unknown>;
     assertRecord(observer, "pendingDispatch.observer");
     for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(observer[field], `pendingDispatch.observer.${field}`);

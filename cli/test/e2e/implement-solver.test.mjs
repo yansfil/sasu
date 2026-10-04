@@ -83,7 +83,7 @@ test("R1: the recorded Observer escalates without --adopt and the Implementor ke
     cwd: root, encoding: "utf8", env: isolatedEnv(observerEnv), input: "ROLE: Implementor\nSOURCE: fixture\nRETURN CONTRACT: status", timeout: 30_000,
   });
   assert.equal(dispatched.status, 0, dispatched.stderr + dispatched.stdout);
-  const implementorEnv = { ...fake.env, HOME: home, HERDR_ENV: "1", SASU_HERDR_ROLE: "implementor", SASU_RUN_INSTANCE_ID: state(root).supervision.runInstanceId, CLAUDE_SESSION_ID: "impl-session" };
+  const implementorEnv = { ...fake.env, HOME: home, HERDR_ENV: "1", HERDR_PANE_ID: state(root).supervision.implementor.paneId, HERDR_WORKSPACE_ID: "w4G", SASU_HERDR_ROLE: "implementor", SASU_RUN_INSTANCE_ID: state(root).supervision.runInstanceId, CLAUDE_SESSION_ID: "impl-session" };
   fs.mkdirSync(path.join(root, "notes"), { recursive: true });
   fs.writeFileSync(path.join(root, "notes", "plan.md"), "# plan\n");
   const claimed = run(root, ["implement", "plan", "--path", "notes/plan.md"], implementorEnv);

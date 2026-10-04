@@ -1,6 +1,0 @@
-{
-  "repo": "modakbul-gongbang/hide",
-  "ref": "1fee4ebc83798cb6b2a324be0073b5c3bff63146",
-  "path": "plugins/hcoord",
-  "note": "The hcoord these tests drive is built from this exact commit of hide's repository; sasu ships no copy. ref is the merge commit of hide's home-layout pull request (#319), which moved hcoord's home to ~/.hide/hcoord. Move it only together with a green run of the e2e suite against the new ref."
-}
