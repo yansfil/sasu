@@ -213,7 +213,10 @@ export function prepareCodexFirstTurn(prepared: Pick<PreparedSpawn, "paneId" | "
     if (agent.paneId !== prepared.paneId || agent.name !== prepared.name || agent.kind !== "codex" || agent.terminalId === null
       || (initialTerminal !== null && agent.terminalId !== initialTerminal)) return { kind: "unavailable", detail: "Codex first-turn target changed before submission" };
     initialTerminal = agent.terminalId;
-    if (agent.status === "blocked" || agent.interactiveReady !== true || (agent.status !== "idle" && agent.status !== "done")) return { kind: "unavailable", detail: "Codex first-turn target is not interactive-ready" };
+    if (agent.status === "blocked") return { kind: "unavailable", detail: "Codex first-turn target is blocked" };
+    // `agent start` returns before Codex finishes loading its MCP servers and
+    // hooks, so readiness arrives a few seconds later; poll until the deadline.
+    if (agent.interactiveReady !== true || (agent.status !== "idle" && agent.status !== "done")) { clock.sleep(CODEX_INITIALIZATION_POLL_MS); continue; }
     if (agent.sessionId !== null) return observed;
     const screen = run(["agent", "read", prepared.paneId, "--source", "visible"], undefined, Math.min(2000, deadline - clock.now()));
     if (screen.status !== 0) return { kind: "unavailable", detail: "Codex first-turn screen could not be inspected" };
@@ -237,7 +240,9 @@ export function prepareCodexFirstTurn(prepared: Pick<PreparedSpawn, "paneId" | "
     // Herdr reports idle and interactive_ready for a Codex startup menu too.
     // The visible composer is the only affirmative TUI signal available in
     // official 0.9.1, so an unknown first-run screen cannot receive Enter.
-    if (!hasComposer) return { kind: "unavailable", detail: "Codex first-turn composer is not visible; no prompt was submitted" };
+    // The composer is drawn a moment after Herdr reports readiness; keep
+    // polling, and let the deadline report a screen that never showed it.
+    if (!hasComposer) { clock.sleep(CODEX_INITIALIZATION_POLL_MS); continue; }
     return observed;
   }
   return { kind: "unavailable", detail: "Codex first-turn readiness did not settle in 30 seconds" };
@@ -663,7 +668,8 @@ export function spawnImplementor(
       || beforeInitialization.agent.name !== input.name || beforeInitialization.agent.kind !== "codex"
       || beforeInitialization.agent.terminalId === null || beforeInitialization.agent.interactiveReady !== true
       || (beforeInitialization.agent.status !== "idle" && beforeInitialization.agent.status !== "done")) {
-      return { ok: false, value: null, problem: `implementor ${input.name} in ${created} is not confirmed ready for session initialization; no handoff was sent` };
+      const why = beforeInitialization.kind === "found" ? `found ${beforeInitialization.agent.name ?? "unnamed"} (${beforeInitialization.agent.kind ?? "unknown kind"}) in ${beforeInitialization.agent.paneId}, status ${beforeInitialization.agent.status}, interactive_ready ${String(beforeInitialization.agent.interactiveReady)}, terminal ${beforeInitialization.agent.terminalId ?? "missing"}` : beforeInitialization.detail;
+      return { ok: false, value: null, problem: `implementor ${input.name} in ${created} is not confirmed ready for session initialization (${why}); no handoff was sent` };
     }
     if (beforeInitialization.agent.sessionId === null) {
       const finalReady = prepareCodexFirstTurn(prepared, { ...environment, run }, false);

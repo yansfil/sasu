@@ -39,16 +39,43 @@ test("a first-turn preflight clears the exact update menu before allowing the vi
 
 test("first-turn preflight refuses hook consent, active update and an unknown idle screen without sending input", () => {
   for (const screen of ["Hooks need review\n3. Continue without trusting (hooks won't run)", "Updating Codex via pnpm add -g @openai/codex", "Unknown first-run dialog"]) {
+    let now = 0;
     const calls = [];
-    const result = prepareCodexFirstTurn({ paneId: "owned:p1", name: "worker" }, { run: (args) => {
-      calls.push(args);
-      if (args[1] === "get") return { status: 0, stderr: "", stdout: JSON.stringify({ result: { type: "agent_info", agent: { pane_id: "owned:p1", name: "worker", agent: "codex", terminal_id: "term-owned", agent_status: "idle", interactive_ready: true } } }) };
-      if (args[1] === "read") return { status: 0, stderr: "", stdout: screen };
-      throw new Error(`unexpected operation: ${args.join(" ")}`);
-    } });
+    const result = prepareCodexFirstTurn({ paneId: "owned:p1", name: "worker" }, {
+      clock: { now: () => now, sleep: (ms) => { now += ms; } },
+      run: (args) => {
+        calls.push(args);
+        if (args[1] === "get") return { status: 0, stderr: "", stdout: JSON.stringify({ result: { type: "agent_info", agent: { pane_id: "owned:p1", name: "worker", agent: "codex", terminal_id: "term-owned", agent_status: "idle", interactive_ready: true } } }) };
+        if (args[1] === "read") return { status: 0, stderr: "", stdout: screen };
+        throw new Error(`unexpected operation: ${args.join(" ")}`);
+      },
+    });
     assert.equal(result.kind, "unavailable", screen);
     assert.equal(calls.some((args) => args[1] === "send-keys" || args[1] === "prompt"), false, screen);
   }
+});
+
+test("first-turn preflight waits for late readiness and a late composer without sending input", () => {
+  let now = 0, gets = 0, reads = 0;
+  const calls = [];
+  const result = prepareCodexFirstTurn({ paneId: "owned:p1", name: "worker" }, {
+    clock: { now: () => now, sleep: (ms) => { now += ms; } },
+    run: (args) => {
+      calls.push(args);
+      if (args[1] === "get") {
+        gets += 1;
+        // `agent start` returned while Codex was still loading: not ready, then working, then idle.
+        const lifecycle = gets === 1 ? { agent_status: "idle", interactive_ready: false } : gets === 2 ? { agent_status: "working", interactive_ready: true } : { agent_status: "idle", interactive_ready: true };
+        return { status: 0, stderr: "", stdout: JSON.stringify({ result: { type: "agent_info", agent: { pane_id: "owned:p1", name: "worker", agent: "codex", terminal_id: "term-owned", ...lifecycle } } }) };
+      }
+      if (args[1] === "read") { reads += 1; return { status: 0, stderr: "", stdout: reads === 1 ? "" : "› Ask Codex to do anything" }; }
+      throw new Error(`unexpected operation: ${args.join(" ")}`);
+    },
+  });
+  assert.equal(result.kind, "found");
+  assert.equal(reads, 2, "the screen is read again after a frame without the composer");
+  assert.equal(calls.some((args) => args[1] === "send-keys" || args[1] === "prompt"), false);
+  assert.ok(now < 30_000, "readiness settled before the deadline");
 });
 
 test("post-prompt session wait never presses a startup menu", () => {
