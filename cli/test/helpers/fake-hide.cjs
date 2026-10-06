@@ -20,12 +20,16 @@ if (process.env.HIDE_FAKE_DOWN === "1") refuse("delivery_unavailable", "Check th
 const file = process.env.HIDE_FAKE_STATE;
 const state = file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : { seq: 0, participants: {}, requests: {} };
 const save = () => file && fs.writeFileSync(file, JSON.stringify(state, null, 2));
-const actor = (participant) => ({ pane_id: participant.pane, name: participant.name, kind: "claude", device_id: "local", session: participant.session });
+// The machine the caller's pane capability names: "local" beside its hided, a device id on a connected device.
+const device = process.env.HIDE_FAKE_DEVICE || "local";
+const actor = (participant) => ({ pane_id: participant.pane, name: participant.name, kind: "claude", device_id: device, session: participant.session });
 const nativeAgents = () => process.env.HERDR_FAKE_AGENTS_FILE && fs.existsSync(process.env.HERDR_FAKE_AGENTS_FILE) ? JSON.parse(fs.readFileSync(process.env.HERDR_FAKE_AGENTS_FILE, "utf8")) : {};
 const nativeSession = (pane) => (nativeAgents()[pane] ?? (pane === "w4G:p12" ? { agent_session: { value: "observer-session" } } : null))?.agent_session?.value;
 const caller = () => Object.values(state.participants).find((p) => p.registered && p.pane === process.env.HERDR_PANE_ID && p.session === nativeSession(p.pane));
 if (topic === "agent" && action === "register") {
-  for (const required of ["machine", "host-scope", "session", "instance", "name", "pane"]) if (typeof flags[required] !== "string") refuse("invalid_registration");
+  for (const required of ["host-scope", "session", "instance", "name", "pane"]) if (typeof flags[required] !== "string") refuse("invalid_registration");
+  if ("machine" in flags && typeof flags.machine !== "string") refuse("invalid_registration");
+  if ("machine" in flags && flags.machine !== device) refuse("machine_identity_conflict");
   const agents = process.env.HERDR_FAKE_AGENTS_FILE && fs.existsSync(process.env.HERDR_FAKE_AGENTS_FILE) ? JSON.parse(fs.readFileSync(process.env.HERDR_FAKE_AGENTS_FILE, "utf8")) : {};
   const hosted = agents[flags.pane] ?? (flags.pane === "w4G:p12" ? { agent_session: { value: "observer-session" } } : null);
   if (hosted === null || hosted.agent_session?.value !== flags.session) refuse("session_identity_conflict");
@@ -34,10 +38,10 @@ if (topic === "agent" && action === "register") {
     const parent = state.participants[flags.parent];
     if (!parent || parent.pane !== process.env.HERDR_PANE_ID || parent.session !== nativeSession(parent.pane)) refuse("parent_identity_conflict");
   } else if (flags.pane !== process.env.HERDR_PANE_ID) refuse("caller_identity_conflict");
-  const same = Object.values(state.participants).find((p) => p.registered && p.machine === flags.machine && p.hostScope === flags["host-scope"] && p.pane === flags.pane && p.session === flags.session);
+  const same = Object.values(state.participants).find((p) => p.registered && p.machine === device && p.hostScope === flags["host-scope"] && p.pane === flags.pane && p.session === flags.session);
   if (flags.check) reply(same ?? { registered: false, name: flags.name, pane: flags.pane });
   if (same) { same.instance = flags.instance; same.name = flags.name; save(); reply(same); }
-  const participant = { id: `a_${++state.seq}`, name: flags.name, machine: flags.machine, hostScope: flags["host-scope"], pane: flags.pane, session: flags.session, instance: flags.instance, parent: flags.parent ?? null, project: flags.project ?? null, runtime: "running", connection: "connected", registered: true, watch: null };
+  const participant = { id: `a_${++state.seq}`, name: flags.name, machine: device, hostScope: flags["host-scope"], pane: flags.pane, session: flags.session, instance: flags.instance, parent: flags.parent ?? null, project: flags.project ?? null, runtime: "running", connection: "connected", registered: true, watch: null };
   state.participants[participant.id] = participant; save(); reply(participant);
 }
 if (topic === "agent" && action === "show") { if (!state.participants[target]) refuse("agent_unavailable"); reply(state.participants[target]); }

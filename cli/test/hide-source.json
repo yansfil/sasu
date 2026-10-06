@@ -1,5 +1,5 @@
 {
   "repo": "modakbul-gongbang/hide",
-  "ref": "59d13d9b74e6b951fd2328674d29d255c315f34f",
-  "note": "Hide PR #409 is merged into main at this commit and supplies agent registration, durable intake confirmation and watch handover. Native tests require a private build of this merge commit with its adjacent daemon and pinned Herdr resources."
+  "ref": "b520d6eb5443ebe0789d43feef40bac6b5692653",
+  "note": "Hide PR #639 is merged into main at this commit: agent registration takes the machine from the caller's pane capability, so Sasu names none, and a plain inbox hook carries only a count while the bell turn carries letters. Native tests require a private build of this merge commit with its adjacent daemon and pinned Herdr resources."
 }

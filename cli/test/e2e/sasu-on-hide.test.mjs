@@ -51,7 +51,7 @@ test("pinned native Hide: dispatch, plan confirmation, block reply, approved han
   const blockArgs = ["implement", "block", "--kind", "product", "--question", "Which approved behavior applies?", "--recommendation", "Use the approved behavior", "--reversible", "yes", "--scope-impact", "No scope change"];
   const block = success(await fixture.sasu(implementor, blockArgs)), blockId = block.detail.hide.requestId;
   assert.equal(block.detail.hide.delivery, "pending");
-  const intake = delivered(await fixture.hide(observer, ["inbox", "--hook"]));
+  const intake = delivered(await fixture.hide(observer, ["inbox", "--hook", "--bell"]));
   assert.ok(intake.ids.includes(blockId)); assert.match(intake.context, /Hide letter .* from impl \(claude\) \[block\]/);
   delivered(await fixture.hide(observer, ["inbox", "--confirm", blockId]));
   const answered = delivered(await fixture.hide(observer, ["request", "reply", blockId, "--intent", "native-block-answer", "--body", "Use the approved behavior"]));
@@ -78,7 +78,7 @@ test("pinned native Hide: dispatch, plan confirmation, block reply, approved han
   const report = success(await fixture.sasu(implementor, reportArgs)), reportId = report.detail.hide.requestId;
   assert.equal(report.detail.hide.delivery, "pending");
   assert.ok(success(await fixture.hide(next, ["agent", "show", ids.implementor])).value.watch, "send alone does not end the watch");
-  const pulled = delivered(await fixture.hide(next, ["inbox", "--hook"]));
+  const pulled = delivered(await fixture.hide(next, ["inbox", "--hook", "--bell"]));
   assert.ok(pulled.ids.includes(reportId));
   assert.ok(success(await fixture.hide(next, ["agent", "show", ids.implementor])).value.watch, "hook pull without confirmation keeps the watch");
   delivered(await fixture.hide(next, ["request", "ack", reportId]));
@@ -90,7 +90,7 @@ test("pinned native Hide: dispatch, plan confirmation, block reply, approved han
   assert.equal(reportAfterAck.detail.hide.delivery, "pending");
   assert.match(reportAfterAck.message, /delivery is not confirmed/);
   assert.ok(success(await fixture.hide(next, ["agent", "show", ids.implementor])).value.watch, "acknowledgement and notice retry do not end the watch");
-  assert.ok(delivered(await fixture.hide(next, ["inbox", "--hook"])).ids.includes(reportId), "interrupted intake replays the same acknowledged report");
+  assert.ok(delivered(await fixture.hide(next, ["inbox", "--hook", "--bell"])).ids.includes(reportId), "interrupted intake replays the same acknowledged report");
   delivered(await fixture.hide(next, ["inbox", "--confirm", reportId]));
   assert.equal(success(await fixture.hide(next, ["agent", "show", ids.implementor])).value.watch, null);
   const confirmedReport = delivered(await fixture.hide(next, ["request", "show", reportId]));
