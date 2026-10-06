@@ -77,27 +77,13 @@ function registrationId(value: unknown): string {
   return value.id;
 }
 export function showParticipant(id: string, env: NodeJS.ProcessEnv = process.env): { value: ParticipantView; stale: false } { return { value: participantView(call<unknown>(["agent", "show", id], "agent", env)), stale: false }; }
-export function listParticipants(): { value: ParticipantView[]; stale: false } {
-  const value = call<{ items: ParticipantView[] }>(["agent", "list"], "agent");
-  if (!Array.isArray(value.items)) throw new HideCallFailed("hide agent list returned no items", "invalid_response");
-  return { value: value.items.map(participantView).filter((item) => item.registered === true), stale: false };
-}
-
-export interface ExecutionBinding { machine: string; hostScope: string; pane: string | null; session: string | null; instance: string | null }
-export function sameExecution(recorded: ExecutionBinding, observed: ExecutionBinding): boolean {
-  if (recorded.machine !== observed.machine || recorded.hostScope !== observed.hostScope || recorded.pane === null || observed.pane !== recorded.pane) return false;
-  if (recorded.session !== null && observed.session !== null) return observed.session === recorded.session;
-  return recorded.instance !== null && observed.instance === recorded.instance;
-}
-export function participantsOf(participants: ParticipantView[], identity: Pick<ObserverIdentity, "paneId" | "sessionId" | "terminalId" | "hostScope">): ParticipantView[] {
-  return participants.filter((participant) => sameExecution(participant, { machine: "local", hostScope: identity.hostScope, pane: identity.paneId, session: identity.sessionId, instance: identity.terminalId }));
-}
 export function observerParticipantName(herdrName: string | null | undefined, sessionId: string): string {
   return herdrName?.trim() || `observer-${sessionId.slice(0, 8)}`;
 }
 export interface Execution { name: string; paneId: string; sessionId: string; terminalId: string; hostScope: string }
 export interface ObserverRegistration { identity: ObserverIdentity; name: string }
-const executionArgs = (execution: Execution): string[] => ["--machine", "local", "--host-scope", execution.hostScope, "--session", execution.sessionId, "--instance", execution.terminalId, "--name", execution.name, "--pane", execution.paneId];
+/** No machine: Hide registers the caller's own, which its pane capability names, so a device pane registers as that device. */
+const executionArgs = (execution: Execution): string[] => ["--host-scope", execution.hostScope, "--session", execution.sessionId, "--instance", execution.terminalId, "--name", execution.name, "--pane", execution.paneId];
 const observerExecution = (observer: ObserverRegistration): Execution => ({ name: observer.name, paneId: observer.identity.paneId, sessionId: observer.identity.sessionId, terminalId: observer.identity.terminalId, hostScope: observer.identity.hostScope });
 
 export function checkObserver(observer: ObserverRegistration, env: NodeJS.ProcessEnv = process.env): void {

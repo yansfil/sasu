@@ -91,6 +91,22 @@ test("Codex initialization precedes durable handoff and supervisor registration"
   assert.equal(readIndex(path.join(home, ".sasu", "supervisor", "index.json")).entries.length, 1);
 });
 
+// An Observer in a connected device's pane is that device to Hide; a dispatch
+// that asserted "local" was refused with machine_identity_conflict (2026-10-06).
+test("an Observer in a device pane registers itself and its Implementor as that device", () => {
+  const root = fs.realpathSync(makeProject());
+  const { env } = herdrEnv(root, { HIDE_FAKE_DEVICE: "mini" });
+  const started = sasu(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env });
+  assert.equal(started.status, 0, started.text);
+  const dispatched = dispatch(root, env);
+  assert.equal(dispatched.status, 0, dispatched.text);
+  const participants = Object.values(JSON.parse(fs.readFileSync(env.HIDE_FAKE_STATE, "utf8")).participants);
+  assert.deepEqual(participants.map((participant) => participant.machine), ["mini", "mini"]);
+  const registrations = argvLog(env.HIDE_FAKE_LOG).filter((argv) => argv[0] === "agent" && argv[1] === "register");
+  assert.ok(registrations.length >= 2);
+  assert.equal(registrations.some((argv) => argv.includes("--machine")), false, "Hide names the caller's machine");
+});
+
 // Hide lists a pane under the Herdr workspace that owns it, so an implementor
 // split beside the Observer was listed under the root checkout however far
 // away its worktree was, and sat in the operator's own layout (2026-09-18).
