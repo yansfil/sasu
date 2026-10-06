@@ -1,5 +1,5 @@
 {
   "repo": "modakbul-gongbang/hide",
-  "ref": "02e84a868344a560c3ed0595f05139dfe6817a84",
-  "note": "Hide PR #639 head: agent registration takes the machine from the caller's pane capability, so Sasu no longer names one. Repin to the merge commit once #639 lands on main. Native tests require a private build of this commit with its adjacent daemon and pinned Herdr resources."
+  "ref": "b520d6eb5443ebe0789d43feef40bac6b5692653",
+  "note": "Hide PR #639 is merged into main at this commit: agent registration takes the machine from the caller's pane capability, so Sasu names none, and a plain inbox hook carries only a count while the bell turn carries letters. Native tests require a private build of this merge commit with its adjacent daemon and pinned Herdr resources."
 }
