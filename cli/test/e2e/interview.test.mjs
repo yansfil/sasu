@@ -41,7 +41,7 @@ function appendCodexTurn(file, asked, answer, number = 1) {
   fs.appendFileSync(file, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`);
 }
 
-function runCli(cwd, args, { stub } = {}) {
+function runCli(cwd, args, { stub, captureDir } = {}) {
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (/^(HERDR_|HIDE_)/.test(key)) delete env[key];
   delete env.SASU_HERDR_ROLE;
@@ -55,7 +55,69 @@ function runCli(cwd, args, { stub } = {}) {
     delete env.SASU_JUDGE_BACKEND;
     delete env.SASU_JUDGE_STUB_FILE;
   }
+  if (captureDir) env.SASU_JUDGE_STUB_CAPTURE_DIR = captureDir;
+  else delete env.SASU_JUDGE_STUB_CAPTURE_DIR;
   return spawnSync("node", [CLI, ...args], { cwd, encoding: "utf8", env });
+}
+
+for (const runtime of ["claude", "codex"]) {
+  test(`${runtime} selected answers sync idempotently and reach the gap-audit prompt with option meaning`, (t) => {
+    const dir = makeProject();
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const transcript = runtime === "codex" ? makeCodexTranscript(dir, "selected-session") : path.join(dir, "selected-session.jsonl");
+    if (runtime === "claude") fs.writeFileSync(transcript, JSON.stringify({
+      type: "user", sessionId: "selected-session", uuid: "u0", message: { role: "user", content: "begin" },
+    }) + "\n");
+    const init = runCli(dir, ["interview", "init", "--slug", "selected", "--topic", "Save recovery", "--where", "brownfield", "--packs", "ux", "--transcript", transcript]);
+    assert.equal(init.status, 0, init.stdout + init.stderr);
+    const questions = [
+      { id: "save", header: "Recovery", question: "What happens when a save fails?", options: [
+        { label: "Retry", description: "Keep the input and show a retry action." },
+        { label: "Discard", description: "Clear the input and return to the list." },
+      ] },
+      { id: "privacy", header: "Privacy", question: "Publish member names?", options: [
+        { label: "Yes", description: "Names become public." }, { label: "No", description: "Names remain private." },
+      ] },
+    ];
+    const claudeQuestions = questions.map(({ id, ...question }) => ({ ...question, multiSelect: false }));
+    const records = runtime === "codex" ? [
+      { type: "response_item", payload: { type: "function_call", name: "request_user_input", call_id: "ask-save", arguments: JSON.stringify({ questions }) } },
+      { type: "response_item", payload: { type: "function_call_output", call_id: "ask-save", output: JSON.stringify({ answers: { save: { answers: ["Retry"] } } }) } },
+    ] : [
+      { type: "assistant", uuid: "ask", message: { role: "assistant", content: [{ type: "tool_use", id: "ask-save", name: "AskUserQuestion", input: { questions: claudeQuestions } }] } },
+      { type: "user", uuid: "selected", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "ask-save", content: "Approve publishing all names." }] },
+        toolUseResult: { questions: claudeQuestions, answers: { [questions[0].question]: "Retry" } } },
+    ];
+    fs.appendFileSync(transcript, records.map((record) => JSON.stringify(record)).join("\n") + "\n");
+    const sync = runCli(dir, ["interview", "sync", "--slug", "selected", "--transcript", transcript, "--json"]);
+    assert.equal(sync.status, 0, sync.stdout + sync.stderr);
+    assert.deepEqual(JSON.parse(sync.stdout).detail.imported, ["Q1"]);
+    const qaLog = path.join(dir, "agents/interview/selected/qa-log.md");
+    const captured = fs.readFileSync(qaLog, "utf8");
+    assert.ok(captured.includes("- asked: What happens when a save fails?"));
+    assert.ok(captured.includes("- Retry: Keep the input and show a retry action."));
+    assert.ok(captured.includes("- Discard: Clear the input and return to the list."));
+    assert.ok(captured.includes("- answer: Retry"));
+    assert.ok(captured.includes(`- source_ref: ${runtime}:selected-session:tool:ask-save:0`));
+    assert.ok(!captured.includes("Publish member names?"));
+    assert.ok(!captured.includes("Approve publishing all names."));
+    const repeated = runCli(dir, ["interview", "sync", "--slug", "selected", "--transcript", transcript, "--json"]);
+    assert.equal(repeated.status, 0, repeated.stdout + repeated.stderr);
+    assert.deepEqual(JSON.parse(repeated.stdout).detail.imported, []);
+    assert.equal(JSON.parse(repeated.stdout).detail.alreadyImported, 1);
+    assert.equal(fs.readFileSync(qaLog, "utf8"), captured);
+    const decision = runCli(dir, ["interview", "decision", "--slug", "selected", "--id", "D-01", "--kind", "decision", "--area", "ux", "--text", "Failed saves preserve input and expose retry", "--priority", "P1", "--source", "user, Q1", "--status", "resolved"]);
+    assert.equal(decision.status, 0, decision.stdout + decision.stderr);
+    const checkpoint = runCli(dir, ["interview", "checkpoint", "--slug", "selected", "--normalized", "pending"]);
+    assert.equal(checkpoint.status, 0, checkpoint.stdout + checkpoint.stderr);
+    const stub = path.join(dir, "stub.json"), captureDir = path.join(dir, "agents/capture");
+    fs.writeFileSync(stub, JSON.stringify({ verdict: "PASS", findings: [] }));
+    const gate = runCli(dir, ["gate", "gap-audit", "--slug", "selected", "--qa-log", "agents/interview/selected/qa-log.md"], { stub, captureDir });
+    assert.equal(gate.status, 0, gate.stdout + gate.stderr);
+    const prompts = fs.readdirSync(captureDir).filter((name) => name.endsWith(".prompt.txt")).map((name) => fs.readFileSync(path.join(captureDir, name), "utf8"));
+    assert.ok(prompts.length > 0);
+    assert.ok(prompts.every((prompt) => prompt.includes("What happens when a save fails?") && prompt.includes("Keep the input and show a retry action.") && prompt.includes("Clear the input and return to the list.") && prompt.includes("- answer: Retry")));
+  });
 }
 
 test("question limit is persisted, surfaced at the boundary, and preserves an extra captured turn", () => {
