@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { makeProject, ok, readState, run, runAsync, runText, start, STATE_PATH } from "../helpers/implement-fixture.mjs";
+import { CLI, git, isolatedEnv, makeProject, ok, readState, run, runAsync, runText, start, STATE_PATH } from "../helpers/implement-fixture.mjs";
 
 // Contract: letter-735 permits a transient execution lease, never a preview
 // attempt, result, evidence registration, report, or refusal history write.
@@ -186,3 +187,65 @@ test("preview refuses a live real verification without touching its attempt or l
   const finished = await running.done;
   assert.equal(finished.status, 0, finished.stdout + finished.stderr);
 });
+
+for (const mode of ["preview", "verify"]) {
+  test(`${mode} execution blocks status and standalone delivery until its lease closes`, async (t) => {
+    // The report must come from a real committed verification. Only ignored
+    // control files change between the PASS and the blocked execution.
+    const root = project(t, {
+      suiteSource: "const fs=require('node:fs'); if(fs.existsSync('agents/block')){fs.writeFileSync('agents/ready',String(process.pid)); const timer=setInterval(()=>{if(fs.existsSync('agents/release')){clearInterval(timer); console.log('RELEASED');}},20);} else console.log('VERIFIED');\n",
+      timeout: 15000,
+    });
+    start(root);
+    git(root, ["add", "implementation.txt"]);
+    git(root, ["-c", "user.name=test", "-c", "user.email=test@example.test", "-c", "commit.gpgsign=false", "commit", "-qm", "Implement fixture"]);
+    ok(run(root, ["implement", "verify"]));
+    const before = stateText(root);
+    const report = readState(root).verificationReport;
+    const reports = [report.jsonPath, report.markdownPath].map((file) => fs.readFileSync(path.join(root, file), "utf8"));
+    const bin = path.join(root, "agents/bin");
+    fs.mkdirSync(bin, { recursive: true });
+    // Standalone delivery resolves the real built CLI, never a status double.
+    fs.writeFileSync(path.join(bin, "sasu"), `#!/usr/bin/env node\nrequire(${JSON.stringify(CLI)});\n`, { mode: 0o755 });
+    const ship = () => spawnSync(process.execPath, [path.resolve(import.meta.dirname, "../../../skills/ship/scripts/prd_ship.js"), "local", "--state", path.join(root, STATE_PATH), "--no-gpg-sign"], {
+      cwd: root, encoding: "utf8", timeout: 10000,
+      env: isolatedEnv({ PATH: `${bin}${path.delimiter}${process.env.PATH}` }),
+    });
+    assert.equal(ok(run(root, ["implement", "status"])).detail.delivery.eligible, true);
+    const initialShip = ship();
+    assert.equal(initialShip.status, 0, initialShip.stderr + initialShip.stdout);
+    const deliveryPath = path.join(root, "agents/runs/fixture/delivery/delivery-result.json");
+    const deliveryBefore = fs.readFileSync(deliveryPath, "utf8");
+    fs.writeFileSync(path.join(root, "agents/block"), "block\n");
+    const running = runAsync(root, ["implement", "verify", ...(mode === "preview" ? ["--preview"] : [])]);
+    let during, duringShip, held, finished;
+    try {
+      await waitFor(() => fs.existsSync(path.join(root, "agents/ready")), `${mode} child never became ready`);
+      held = stateText(root);
+      during = ok(run(root, ["implement", "status"]));
+      assert.equal(during.detail.activeVerification.pid, running.child.pid);
+      assert.ok(during.detail.activeVerification.executionPids.includes(Number(fs.readFileSync(path.join(root, "agents/ready"), "utf8"))));
+      duringShip = ship();
+      const summary = runText(root, ["implement", "status"]);
+      assert.equal(summary.status, 0, summary.stderr);
+      assert.match(summary.stdout, /Next: wait for verification execution to finish, then check status/);
+      assert.equal(stateText(root), held, "status and delivery checks must not change the held run record");
+      assert.equal(fs.readFileSync(deliveryPath, "utf8"), deliveryBefore);
+    } finally {
+      fs.writeFileSync(path.join(root, "agents/release"), "release\n");
+      finished = await running.done;
+    }
+    assert.equal(finished.status, 0, finished.stdout + finished.stderr);
+    assert.deepEqual({ eligible: during.detail.delivery.eligible, shipExit: duringShip.status }, { eligible: false, shipExit: 1 }, duringShip.stderr + duringShip.stdout);
+    assert.match(during.detail.delivery.reasons.join("; "), /execution is active/);
+    assert.match(duringShip.stderr, /execution is active/);
+    assert.equal(ok(run(root, ["implement", "status"])).detail.delivery.eligible, true);
+    const afterShip = ship();
+    assert.equal(afterShip.status, 0, afterShip.stderr + afterShip.stdout);
+    if (mode === "preview") {
+      assert.equal(during.detail.verification.verdict, "PASS", "preview does not replace the recorded verdict");
+      assert.equal(stateText(root), before, "preview completion restores the exact prior record");
+      assert.deepEqual([report.jsonPath, report.markdownPath].map((file) => fs.readFileSync(path.join(root, file), "utf8")), reports);
+    }
+  });
+}

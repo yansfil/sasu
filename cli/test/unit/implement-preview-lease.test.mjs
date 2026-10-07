@@ -132,17 +132,20 @@ test("preview parser rejects an attempt identity and unknown execution modes", (
 
 test("dead preview cleanup records no attempt or deviation and retains uncertain leases", async (t) => {
   const f = fixture(t);
-  beginPreview(f.file, f.state, SHA);
+  const expected = f.reload();
+  const original = JSON.stringify(expected, null, 1).replaceAll("\n", "\r\n") + "\r\n";
+  fs.writeFileSync(f.file, original);
+  beginPreview(f.file, f.reload(), SHA);
   const exited = spawnSync(process.execPath, ["-e", ""], { encoding: "utf8" });
   assert.equal(exited.status, 0);
   const active = f.reload();
   active.activeVerification.pid = exited.pid;
   // Emulate an abrupt owner exit on disk, never a live operator process.
-  fs.writeFileSync(f.file, JSON.stringify(active));
+  fs.writeFileSync(f.file, JSON.stringify(active, null, 1).replaceAll("\n", "\r\n") + "\r\n");
   const recovered = await recoverVerification(f.file, f.reload());
   assert.equal(recovered.activeVerification, undefined);
-  assert.deepEqual(f.reload().verificationAttempts, [attemptFixture()]);
-  assert.deepEqual(f.reload().deviations, []);
+  assert.deepEqual(f.reload(), expected, "abrupt recovery preserves every domain field, timestamp and history entry");
+  // Formatting may normalize after a crash; only domain identity is promised.
   beginPreview(f.file, f.reload(), SHA);
   const uncertain = f.reload();
   uncertain.activeVerification.pid = exited.pid;

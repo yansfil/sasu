@@ -726,6 +726,9 @@ function verificationNextActions(state: ImplementState, attempt: UnifiedVerifica
 
 function delivery(state: ImplementState, freshness: string[] = []) {
   const reasons = [...freshness];
+  // A preview preserves the prior PASS report while executing; the shared
+  // lease blocks delivery until its child cleanup has actually finished.
+  if (state.activeVerification !== undefined) reasons.push("verification execution is active; wait for it to finish and check status");
   if (state.status === "retired") reasons.push("run is retired");
   if (state.verificationReport === null) reasons.push("current deterministic verification report is missing");
   else if (state.verificationReport.status !== "PASS") reasons.push(`deterministic verification is ${state.verificationReport.status}`);
@@ -788,6 +791,7 @@ function currentInputs(state: ImplementState) {
 /** The one move `status` names for the run's current verification verdict. */
 function statusNextStep(state: ImplementState, verdict: string, eligible: boolean, problems: string[]): string {
   if (state.status !== "active") return "start a new run if more work is required";
+  if (state.activeVerification !== undefined) return "wait for verification execution to finish, then check status";
   if (verdict === "PASS" && eligible) return "ship, after one native review set on this head unless the last review already covered it";
   if (problems.length > 0) return "resolve the reported input or evidence problem, commit, rerun verify";
   if (verdict === "FAIL") return "reproduce the failed required command(s) in isolation, fix, commit, rerun verify";

@@ -27,6 +27,9 @@ Preview uses the real verification executor, environment, timeout, exclusions an
 It reports all required command outputs and failures without creating a verification attempt, evidence registration or report.
 Suite commands still perform their normal work, so inspect source changes they produce.
 Preview is never a delivery verdict.
+Delivery is blocked while either preview or verification holds the execution lease.
+Normal preview completion restores the prior state bytes when no independent command changed the record.
+Recovery after an abrupt preview owner exit preserves the record's content, timestamps and history, but may normalize JSON whitespace and line endings.
 
 If a generated command log was lost, recover its registration explicitly:
 
