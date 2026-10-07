@@ -33,13 +33,13 @@ The operator chooses the transition time and retains the backup.
 
 | When | Hide command |
 | --- | --- |
-| Before dispatch creates anything | `agent register --check` for the Observer |
-| Dispatch | `agent register` for the Observer and implementor, with the implementor's `--parent` and `--project`; then `watch start` |
+| Before dispatch creates anything | `agent list` for the Observer pane's live registration; `agent register --check` only when it has none |
+| Dispatch | `agent register` for an unregistered Observer and for the implementor, with the implementor's `--parent` and `--project`; then `watch start` |
 | Replacement implementor | `agent end` for the old participant, followed by registration and a new watch |
 | `implement plan` | `request send` with an ordinary request and a stable intent; the implementor continues |
 | `implement block` | `request send --kind block` with the missing decision and a stable intent |
 | `implement report` | `request send --kind report` with a stable intent |
-| Approved Observer handover | `agent register --check`, `agent register`, `agent show`; assign an active watch with approval and its current generation |
+| Approved Observer handover | `agent list`, then `agent register` only for an unregistered Observer, `agent show`; assign an active watch with approval and its current generation |
 | Retire or completed delivery | `agent end` for the implementor |
 | `implement status` | Reads the recorded Sasu state; no Hide call |
 | `implement status --digest`, `supervisor status` | `agent show` for the recorded implementor, including its current watch |
@@ -84,7 +84,7 @@ The Observer may explicitly start a new watch when more observation is needed.
 ## Handover and recovery
 
 The new Observer runs `sasu supervisor handover --slug <slug> --approval '<verbatim approval>'` from its native pane.
-Sasu registers that identity, reads the current generation and calls `hide watch assign` with the new Observer as caller and actor.
+Sasu adopts that pane's live registration or registers it, reads the current generation and calls `hide watch assign` with the new Observer as caller and actor.
 A missing approval, stale generation or wrong native caller refuses the transfer.
 An active watch is assigned before Sasu updates its recorded Observer.
 If the participant is positively read with no active watch, the approved handover updates the Observer without starting a new watch.

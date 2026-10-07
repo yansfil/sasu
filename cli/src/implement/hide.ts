@@ -86,7 +86,32 @@ export interface ObserverRegistration { identity: ObserverIdentity; name: string
 const executionArgs = (execution: Execution): string[] => ["--host-scope", execution.hostScope, "--session", execution.sessionId, "--instance", execution.terminalId, "--name", execution.name, "--pane", execution.paneId];
 const observerExecution = (observer: ObserverRegistration): Execution => ({ name: observer.name, paneId: observer.identity.paneId, sessionId: observer.identity.sessionId, terminalId: observer.identity.terminalId, hostScope: observer.identity.hostScope });
 
+/**
+ * The Observer pane's live Hide registration, whatever its name and parent.
+ * A lead that spawns the Observer registers it under the lead, and Hide
+ * refuses to register that identity again with another parent or name
+ * (registration_conflict) while only the lead may name the lead as parent
+ * (parent_authority_required): both Observers spawned on 2026-10-07 were
+ * refused at dispatch, and ending the registration to get past it cut the
+ * lead's lineage and watch (sasu#19). Hide keys a live registration on the
+ * pane and native session, so those and the host scope find it.
+ */
+function liveObserverId(identity: ObserverIdentity, env: NodeJS.ProcessEnv): string | null {
+  const listed = call<unknown>(["agent", "list"], "agent", env);
+  if (!record(listed) || !Array.isArray(listed.items)) throw new HideCallFailed("hide returned an unusable participant list; observe it again before changing the run", "invalid_response");
+  const live = listed.items.map(participantView).filter((participant) => participant.registered !== false && participant.runtime !== "ended"
+    && participant.pane === identity.paneId && participant.session === identity.sessionId && participant.hostScope === identity.hostScope);
+  if (live.length > 1) throw new HideCallFailed(`hide lists ${live.length} live registrations for the Observer pane ${identity.paneId}; end the stale one before dispatching`, "invalid_response");
+  return live[0]?.id ?? null;
+}
+
+/** Adopts the pane's live registration, so a lead's lineage and watch survive; registers only an unregistered pane. */
+function registerObserver(observer: ObserverRegistration, env: NodeJS.ProcessEnv): string {
+  return liveObserverId(observer.identity, env) ?? registrationId(call<unknown>(["agent", "register", ...executionArgs(observerExecution(observer))], "agent", env));
+}
+
 export function checkObserver(observer: ObserverRegistration, env: NodeJS.ProcessEnv = process.env): void {
+  if (liveObserverId(observer.identity, env) !== null) return;
   const checked = call<unknown>(["agent", "register", "--check", ...executionArgs(observerExecution(observer))], "agent", env);
   if (!record(checked) || typeof checked.registered !== "boolean" || checked.name !== observer.name || checked.pane !== observer.identity.paneId) throw new HideCallFailed("hide returned an unusable registration check; retry from the actual Observer pane", "invalid_response");
 }
@@ -94,7 +119,7 @@ export interface RunSupervision { project: string }
 
 /** Runs in the actual Observer pane. Every step converges after a partial refusal. */
 export function registerRun(run: RunSupervision, observer: ObserverRegistration, implementor: Execution, env: NodeJS.ProcessEnv = process.env): NonNullable<SupervisionRecord["hide"]> {
-  const observerId = registrationId(call<unknown>(["agent", "register", ...executionArgs(observerExecution(observer))], "agent", env));
+  const observerId = registerObserver(observer, env);
   const implementorId = registrationId(call<unknown>(["agent", "register", ...executionArgs(implementor), "--parent", observerId, "--project", run.project], "agent", env));
   const watch = watchView(call<unknown>(["watch", "start", implementorId, "--observer", observerId, "--actor", observerId], "delivery", env));
   return { observer: observerId, implementor: implementorId, watchId: watch.id, registeredAt: new Date().toISOString() };
@@ -102,8 +127,7 @@ export function registerRun(run: RunSupervision, observer: ObserverRegistration,
 
 /** Assign before Sasu changes its Observer. A completed report never arms a new watch. */
 export function handoverRun(implementorId: string, observer: ObserverRegistration, approval: string, env: NodeJS.ProcessEnv = process.env): { observer: string; watch: WatchView | null } {
-  checkObserver(observer, env);
-  const observerId = registrationId(call<unknown>(["agent", "register", ...executionArgs(observerExecution(observer))], "agent", env));
+  const observerId = registerObserver(observer, env);
   const current = showParticipant(implementorId, env).value.watch;
   if (current === null) return { observer: observerId, watch: null };
   if (current.parent.pane_id === observer.identity.paneId && current.parent.session === observer.identity.sessionId) return { observer: observerId, watch: current };
