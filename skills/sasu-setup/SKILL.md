@@ -65,16 +65,15 @@ Then interview:
    Remind the user that `pr` means implement runs end into `ship`
    (branch, PR, CI) automatically after verification, and that per-PRD approval
    still happens in the PRD Summary checklist.
-2. When mode is `pr`: base branch and branch prefix (default `gen-prd`).
-   Always write `baseBranch` explicitly: when it is omitted, the harness
-   defaults to whatever branch is current at `implement start` time, not
-   `main`, so a run started from a feature branch would open its PR against
-   that feature branch.
+2. When mode is `pr`: `delivery.baseBranch` (default `main`).
+   Prepare the intended branch before sealing the run.
+   Verification and delivery use the checkout containing the run record and its current attached branch.
+   The baseline is the current merge-base with `origin/<delivery.baseBranch>` when origin is configured, otherwise the local configured base branch.
 3. Checkout preparation: use Hide to create or reuse the intended branch and checkout before sealing the run.
    Prepare required local configuration and dependencies there under the existing project policy.
    The retired `worktree.enabled`, `worktree.root`, `worktree.link`, `worktree.copy` and `worktree.setup` keys no longer provision anything.
    Remove configured provisioning from `agents/config.json`; nonempty old configuration is refused rather than silently skipped.
-4. CI: `ci.maxFixAttempts` (default 2), `ci.timeoutSeconds` (default 240).
+4. CI: `delivery.ci.timeoutSeconds` (default 240).
 5. `agents/` tracking policy:
    - Human-approved assets are committed and reviewable: `agents/prd/**`,
      `agents/rules/**`, `agents/config.json`.
@@ -86,34 +85,18 @@ Then interview:
    - Any sasu command auto-provisions both runtime roots into
      `.git/info/exclude`; a committed `.gitignore` line is the project's
      decision and is what a team shares.
-6. Required suites and judge profiles (defaults work without config):
-   - `judge.profiles.routine`: primary and fallback target for interview,
-     document gates and comprehensive implementation/quick review.
+6. Required suites and document judges (defaults work without config):
+   - `judge.profiles.routine`: primary and fallback target for interview coherence, gap-audit and spec.
      The default is Codex `gpt-5.6-luna` high, then Claude Sonnet 5 high.
-   - `judge.profiles.high-risk`: primary and fallback target for the final
-     high-risk lane.
-     The default is Codex `gpt-5.6-sol` high, then Claude Opus 5 high.
-     Keep configured models fixed when comparing workflow changes.
-   - Each target has `backend`, `model`, and `effort`; `fallback: null`
-     explicitly disables fallback for that profile.
-   - `judge.retryBudget`: autonomous fix-and-regate attempts per gate
-     (default 5 for implementation correction; extra work after exhaustion
-     requires the recorded user grant).
+   - Each target has `backend`, `model`, and `effort`; `fallback: null` explicitly disables fallback for that profile.
+     Remove unused `judge.profiles.high-risk` and `judge.retryBudget` settings from project config.
+     Implementation review uses native subagents, and `implement verify` runs deterministic checks without a model.
    - `judge.timeoutMs`: wall-clock cap for one judge call (default 900000 = 15 minutes).
-     The primary and the fallback each get the full budget, so a call that
-     times out on both costs up to twice this. Raise it per project when
-     large contracts time out on the fallback: the 2026-09-10 pilot's
-     32-requirement Fidelity review on the claude fallback needed more than
-     the default and passed only on retry.
-   - `judge.laneEffort`: pins one reasoning budget (`low` to `max`) across
-     the gap-audit, spec and verify lanes instead of each lane's measured
-     default (default `null`); measure with `cli/scripts/effort_sweep.mjs`
-     before setting it.
-   - `judge.readMaxRounds`: read rounds a non-exploring agentic judge may
-     spend before its reply is discarded (default 29). Rounds only: claude's
-     API-turn cap is a separate constant. Raise it per project when a
-     non-exploring PRD review is rejected for over-reading
-     rather than for a wrong answer; explore calls are already exempt.
+     The primary and fallback each get the full timeout, so a call that times out on both can take twice this long.
+   - `judge.laneEffort`: overrides the gap-audit and spec reasoning effort (`low` to `max`).
+     The default `null` uses each gate's measured effort.
+   - `judge.readMaxRounds`: read rounds a non-exploring agentic judge may spend before its reply is discarded (default 29).
+     It does not limit native implementation reviewers.
    - `judge.fanout`: lane-parallel judging for gap-audit (4 document-area
      lanes) and spec (2 review-axis lanes), merged mechanically by the CLI
      (default `true`; set `false` to restore the single exhaustive judge).
@@ -161,21 +144,15 @@ Reference shape:
   "delivery": {
     "mode": "pr",
     "baseBranch": "main",
-    "branchPrefix": "prd",
     "staging": { "include": [], "exclude": [] },
-    "ci": { "watch": true, "maxFixAttempts": 2, "timeoutSeconds": 240 }
+    "ci": { "timeoutSeconds": 240 }
   },
   "judge": {
-    "retryBudget": 5,
     "fanout": true,
     "profiles": {
       "routine": {
-        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" },
+        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "high" },
         "fallback": { "backend": "claude", "model": "claude-sonnet-5", "effort": "high" }
-      },
-      "high-risk": {
-        "primary": { "backend": "codex", "model": "gpt-5.6-luna", "effort": "max" },
-        "fallback": { "backend": "claude", "model": "claude-opus-5", "effort": "high" }
       }
     }
   },
@@ -199,7 +176,9 @@ one-line judgment each (fix now, fix later, or intentional).
 
 ## Hard Stops
 
-- Do not flip an in-flight run's delivery mode by editing state.json; config
-  changes apply from the next `init`.
+- Do not edit `state.json` to change delivery policy.
+  Approved changes belong in `agents/config.json` in the checkout containing the run record.
+  Delivery reads the current config on each invocation.
+  Rerun verification before delivery when its inputs change.
 - Do not enable `pr` mode when the user has not confirmed the repository may
   receive automated pushes and PRs.

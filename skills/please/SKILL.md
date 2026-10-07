@@ -20,10 +20,10 @@ Those skills keep authority over their own stage.
 current request
   -> interview only unresolved product decisions
   -> generate and approve the complete PRD
-  -> implement and observe actual behavior
-  -> deterministic sasu implement verify
-  -> visible native Fidelity and Code subagents
-  -> fix current-scope defects and rerun on the new head
+  -> implement, observe actual behavior, and commit
+  -> visible native Fidelity and Code subagents on the committed head
+  -> fix current-scope defects, commit, and follow-up review
+  -> deterministic sasu implement verify on the final committed candidate
   -> local delivery or pull request with CI and human review
 ```
 

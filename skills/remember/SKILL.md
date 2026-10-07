@@ -27,7 +27,7 @@ Every lesson gets classified twice, then landed:
 | Kind | What it is | Landing | Enforced by |
 | --- | --- | --- | --- |
 | fact | something agents must know (build quirks, gotchas, commands) | body in `docs/**`, one index line in AGENTS.md | auto-loaded context |
-| invariant | "when X changes, Y must hold" | `agents/rules/invariants/<ID>.md` via `rules add` | `ship` pre-push gate + implement plan injection |
+| invariant | "when X changes, Y must hold" | `agents/rules/invariants/<ID>.md` via `rules add` | `ship` pre-push gate + agent consultation during execution planning |
 | regression | "a test would have caught this" | a real test in the project's own suite | the project's CI / verification plan |
 
 | Route | Where it goes |

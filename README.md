@@ -36,7 +36,7 @@ Read [PRINCIPLES.md](PRINCIPLES.md) for the project rules and [the approved stat
 | `gen-prd` | Write the complete approved PRD with decisions and observable behaviors. |
 | `implement` | Implement the PRD, observe real behavior, run deterministic verification, and request visible native review. |
 | `ship` | Validate the current report and committed head, create a pull request, watch CI, and perform an explicitly approved merge. |
-| `sasu-setup` | Configure delivery mode, worktrees, ignored run state, and doctor checks. |
+| `sasu-setup` | Configure delivery mode, the Git base branch, ignored run state, and doctor checks. |
 | `quick` | Implement a small conversation-scoped change with repository checks and native review. |
 | `please` | Run the full conversation-to-delivery pipeline with only necessary human decisions. |
 | `remember` | Turn a reusable lesson into documentation, a machine rule, or a regression test. |
