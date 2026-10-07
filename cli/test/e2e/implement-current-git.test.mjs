@@ -197,3 +197,39 @@ test("start refuses a nested record root before writing a run record or seal", (
   assert.notEqual(refused.status, 0); assert.match(refused.text, /Git checkout root/);
   assert.equal(fs.existsSync(path.join(nested, "agents/runs/fixture")), false);
 });
+
+for (const linked of [false, true]) test(`start keeps new records in the selected checkout (${linked ? "linked" : "unrelated"} destination)`, (t) => {
+  const f = fixture(t);
+  let other;
+  if (linked) {
+    other = path.join(f.outside, "sibling");
+    git(f.root, ["worktree", "add", "-qb", "other/candidate", other, "main"]);
+  } else {
+    other = fs.realpathSync(makeProject({ count: 1 }));
+    t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  }
+  const localRuns = path.join(f.root, "agents/runs"), otherRuns = path.join(other, "agents/runs");
+  fs.mkdirSync(otherRuns, { recursive: true });
+  fs.symlinkSync(otherRuns, localRuns, "dir");
+  assert.deepEqual(fs.readdirSync(localRuns), []);
+  assert.deepEqual(fs.readdirSync(otherRuns), []);
+  const refused = f.cli(["implement", "start", "--prd", PRD_PATH]);
+  assert.notEqual(refused.status, 0, refused.text);
+  assert.match(refused.text, /selected checkout/);
+  assert.deepEqual(fs.readdirSync(localRuns), [], "refusal must not write a local run, seal or artifact");
+  assert.deepEqual(fs.readdirSync(otherRuns), [], "refusal must not write into the other checkout");
+});
+
+test("start accepts an intentionally selected sibling checkout through its canonical alias", (t) => {
+  const f = fixture(t), sibling = path.join(f.outside, "sibling"), alias = path.join(f.outside, "selected");
+  git(f.root, ["worktree", "add", "-qb", "other/candidate", sibling, "main"]);
+  fs.mkdirSync(path.dirname(path.join(sibling, PRD_PATH)), { recursive: true });
+  fs.copyFileSync(path.join(f.root, PRD_PATH), path.join(sibling, PRD_PATH));
+  fs.symlinkSync(sibling, alias, "dir");
+  ok(f.cli(["implement", "start", "--prd", PRD_PATH], alias));
+  assert.equal(fs.existsSync(path.join(f.root, STATE_PATH)), false);
+  assert.equal(fs.existsSync(path.join(sibling, STATE_PATH)), true);
+  const selected = ok(f.cli(["implement", "status", "--state", path.join(sibling, STATE_PATH)])).detail;
+  assert.equal(selected.recordRoot, fs.realpathSync(sibling));
+  assert.equal(ok(f.cli(["implement", "status", "--slug", "fixture"])).detail.recordRoot, selected.recordRoot);
+});

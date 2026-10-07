@@ -209,7 +209,12 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
         gapAudit: null,
         spec: null,
       };
-  const statePath = recordContext(statePathFor(projectRoot, slug)).statePath;
+  const context = recordContext(statePathFor(projectRoot, slug));
+  // A new record, sealed contract and suite must share the selected checkout.
+  if (context.recordRoot !== fs.realpathSync(projectRoot)) {
+    throw new Error("implement start requires its run record in the selected checkout; restore agents/runs there and retry");
+  }
+  const statePath = context.statePath;
   const existingPath = resolveStatePath(projectRoot, { slug });
   if (fs.existsSync(existingPath)) {
     let existingSchema = "unknown";
