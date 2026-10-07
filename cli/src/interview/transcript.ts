@@ -242,11 +242,111 @@ function isTurnComplete(runtime: TranscriptRuntime, record: JsonRecord): boolean
   return record["type"] === "system" && record["subtype"] === "turn_duration" && record["isSidechain"] !== true;
 }
 
+interface QuestionToolAnswer {
+  ref: string;
+  turns: TranscriptTurn[];
+}
+
+/** Only a known question call can make a tool result human-authored evidence. */
+function questionToolEvents(
+  identity: TranscriptIdentity,
+  record: JsonRecord,
+  pending: Map<string, unknown>,
+): { hasCall: boolean; answers: QuestionToolAnswer[] } {
+  const { runtime, sessionId } = identity;
+  let calls: JsonRecord[] = [];
+  let results: JsonRecord[] = [];
+  if (runtime === "codex") {
+    const payload = objectValue(record["payload"]);
+    if (record["type"] === "response_item" && payload !== null) {
+      if (payload["type"] === "function_call" && payload["name"] === "request_user_input") calls = [payload];
+      if (payload["type"] === "function_call_output") results = [payload];
+    }
+  } else if (record["isSidechain"] !== true && record["isMeta"] !== true && record["isCompactSummary"] !== true) {
+    const message = objectValue(record["message"]);
+    const parts = Array.isArray(message?.["content"])
+      ? message["content"].map(objectValue).filter((part): part is JsonRecord => part !== null)
+      : [];
+    if (record["type"] === "assistant" && message?.["role"] === "assistant"
+      && record["error"] == null && message["model"] !== "<synthetic>") {
+      calls = parts.filter((part) => part["type"] === "tool_use" && part["name"] === "AskUserQuestion");
+    }
+    if (record["type"] === "user" && message?.["role"] === "user") {
+      results = parts.filter((part) => part["type"] === "tool_result");
+    }
+  }
+  for (const call of calls) {
+    const id = stringValue(call[runtime === "codex" ? "call_id" : "id"]);
+    if (id === null) throw new Error("transcript question tool call is missing its ID");
+    // Completed requests are removed below; bound unresolved requests in a damaged log.
+    if (!pending.has(id) && pending.size >= 64) throw new Error("transcript has more than 64 unresolved question tool calls");
+    pending.set(id, call[runtime === "codex" ? "arguments" : "input"]);
+  }
+  const answers: QuestionToolAnswer[] = [];
+  for (const result of results) {
+    const id = stringValue(result[runtime === "codex" ? "call_id" : "tool_use_id"]);
+    if (id === null || !pending.has(id)) continue;
+    const input = pending.get(id);
+    pending.delete(id);
+    if (result["is_error"] === true) continue;
+    let response: JsonRecord | null;
+    if (runtime === "claude") {
+      response = objectValue(record["toolUseResult"]);
+    } else {
+      // Unavailable/cancelled calls return diagnostic text, not a human response.
+      try { response = objectValue(JSON.parse(String(result["output"]))); }
+      catch { continue; }
+    }
+    const byQuestion = objectValue(response?.["answers"]);
+    if (byQuestion === null) continue;
+    let request: JsonRecord | null;
+    try { request = objectValue(runtime === "codex" ? JSON.parse(String(input)) : input); }
+    catch { throw new Error(`transcript question request ${id} has invalid JSON`); }
+    if (!Array.isArray(request?.["questions"])) throw new Error(`transcript question request ${id} is missing its questions`);
+    const ref = `tool:${id}`;
+    const turns: TranscriptTurn[] = [];
+    const keys = new Set<string>();
+    for (const [index, value] of request["questions"].entries()) {
+      const question = objectValue(value);
+      const text = stringValue(question?.["question"]);
+      const key = runtime === "codex" ? stringValue(question?.["id"]) : text;
+      if (text === null || key === null || keys.has(key)) throw new Error(`transcript question request ${id} has invalid or duplicate questions`);
+      keys.add(key);
+      const options = question?.["options"];
+      if (options !== undefined && !Array.isArray(options)) throw new Error(`transcript question request ${id} has invalid options`);
+      const descriptions = (options ?? []).map((value: unknown) => {
+        const option = objectValue(value);
+        const label = stringValue(option?.["label"]);
+        const description = option?.["description"];
+        if (label === null || typeof description !== "string") throw new Error(`transcript question request ${id} has invalid options`);
+        return `- ${label}: ${description}`;
+      });
+      if (!Object.hasOwn(byQuestion, key)) continue;
+      const answer = runtime === "claude" ? byQuestion[key] : objectValue(byQuestion[key])?.["answers"];
+      let answerText: string;
+      if (runtime === "claude" && typeof answer === "string") answerText = answer;
+      else if (runtime === "codex" && Array.isArray(answer) && answer.every((part) => typeof part === "string")) answerText = answer.join("\n");
+      else throw new Error(`transcript question response ${id} has an unsupported answer format`);
+      if (answerText.trim() === "") continue;
+      turns.push({
+        asked: text + (descriptions.length === 0 ? "" : `\n\nOptions:\n${descriptions.join("\n")}`),
+        answer: answerText,
+        // The call and original question position survive result reordering and retries.
+        sourceRef: `${runtime}:${sessionId}:${ref}:${index}`,
+      });
+    }
+    if (turns.length > 0) answers.push({ ref, turns });
+  }
+  return { hasCall: calls.length > 0, answers };
+}
+
 export async function latestHumanRef(identity: TranscriptIdentity): Promise<string> {
   let latest: string | null = null;
+  const pending = new Map<string, unknown>();
   for await (const record of jsonRecords(identity.file)) {
     const message = messageFor(identity.runtime, record, "user");
     if (message !== null) latest = message.ref;
+    for (const answer of questionToolEvents(identity, record, pending).answers) latest = answer.ref;
   }
   if (latest === null) throw new Error(`transcript has no human message to use as a start boundary: ${identity.file}`);
   return latest;
@@ -264,6 +364,7 @@ export async function extractTranscriptTurns(
   let sawVisibleHuman = false;
   let completionMarkers = 0;
   const turns: TranscriptTurn[] = [];
+  const questionTools = new Map<string, unknown>();
 
   for await (const record of jsonRecords(identity.file)) {
     if (identity.runtime === "claude" && isClaudeTaskNotification(record)) {
@@ -272,20 +373,30 @@ export async function extractTranscriptTurns(
       continue;
     }
     const human = messageFor(identity.runtime, record, "user");
+    const tool = questionToolEvents(identity, record, questionTools);
     if (!started) {
-      if (human?.ref === startRef) {
+      if (human?.ref === startRef || tool.answers.some((answer) => answer.ref === startRef)) {
         started = true;
         sawStart = true;
         assistantCandidate = null;
         pendingQuestion = null;
+        questionTools.clear();
       }
       continue;
     }
 
     const assistant = messageFor(identity.runtime, record, "assistant");
-    if (assistant !== null) {
+    if (assistant !== null && !tool.hasCall) {
       assistantCandidate = assistant;
       sawVisibleAssistant = true;
+    }
+
+    if (tool.hasCall || tool.answers.length > 0) {
+      // A question tool owns its answer boundary, even while the assistant turn runs.
+      // Its narration must not become a second question for a later human message.
+      assistantCandidate = null;
+      pendingQuestion = null;
+      for (const answer of tool.answers) turns.push(...answer.turns);
     }
 
     if (isTurnComplete(identity.runtime, record)) {

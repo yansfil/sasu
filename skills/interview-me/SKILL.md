@@ -67,13 +67,18 @@ The explicit path is the override; do not pass it in a normal current-session fl
 Ordinary answered questions require no tool call and no qa-log write.
 Keep the unresolved decision queue in the live conversation and deliver only the next question already owned by gap-audit.
 If none remains, record reversible delegated assumptions and collect hard-authority gaps for the next audit instead of inventing another question.
-At a checkpoint, on resume after interruption or compaction, and immediately before closure, import every completed assistant-text -> human-answer pair in one command:
+At a checkpoint, on resume after interruption or compaction, and immediately before closure, import completed text exchanges and answered user-question tools in one command:
 
 ~~~sh
 sasu interview sync --slug <slug>
 ~~~
 
-- `sync` reads JSONL line by line, ignores tool results, sidechains, system and developer messages, and imports only completed visible assistant text paired with the next human input.
+- `sync` reads JSONL line by line and imports completed visible assistant text paired with the next human input, plus answers to Claude `AskUserQuestion` and Codex `request_user_input` matched to their actual tool call IDs.
+It ignores unrelated tool results, sidechains, system and developer messages.
+- Question-tool entries preserve the question, every option label and description, and the returned selected labels or free text.
+Unanswered questions and asynchronous acceptance receipts do not supply answers; a clarification remains a clarification, not approval.
+- Question-tool `source_ref` values use `<runtime>:<session-id>:tool:<call-id>:<question-index>` with the original zero-based question position.
+An answered tool call may also be the session's start boundary as `tool:<call-id>`.
 - Every imported entry carries a stable `source_ref`; rerunning `sync` is idempotent and reports already-present turns without duplicating them.
 - A resumed agent session is bound on its first `sync`; run it before asking the first resumed question so its invocation becomes the new start boundary.
 - The CLI maintains question_count, updated_at, the Intake Cursor, outstanding_raw_entries, next_decision_id, and needs_normalization; never maintain them by hand.
