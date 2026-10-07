@@ -8,8 +8,6 @@ import { contractVersion } from "./version";
 import { RUNTIME_IGNORE_ROOTS, ignoreState } from "./support/ensure-setup";
 import { loadState } from "./implement/store";
 import { IMPLEMENT_SCHEMA, retiredImplementSupportCommit } from "./implement/types";
-import { currentSessionId } from "./runs/session";
-import { supervisorStatusView } from "./supervisor/commands";
 
 const skillContract: {
   SKILL_NAMES: readonly string[];
@@ -19,7 +17,7 @@ const skillContract: {
 } = require("../lib/skill-contract.js");
 
 export interface DoctorSection {
-  section: "judge" | "verify" | "namespace" | "runs" | "supervisor" | "skills" | "contract";
+  section: "judge" | "verify" | "namespace" | "runs" | "skills" | "contract";
   ok: boolean;
   lines: string[];
 }
@@ -35,7 +33,7 @@ function binaryVersion(binary: string): string | null {
   return `${result.stdout ?? ""}${result.stderr ?? ""}`.trim().split("\n")[0] ?? null;
 }
 
-export function runIntegritySection(projectRoot: string, sessionId: string | null = currentSessionId()): DoctorSection {
+export function runIntegritySection(projectRoot: string): DoctorSection {
   const runsDir = path.join(projectRoot, "agents", "runs");
   const retire: string[] = [];
   const orphans: string[] = [];
@@ -58,13 +56,7 @@ export function runIntegritySection(projectRoot: string, sessionId: string | nul
         // second parser that can silently drop an unknown status.
         const state = loadState(projectRoot, { state: path.relative(projectRoot, statePath) }).state;
         if (state.status === "active") {
-          const owner = state.ownerSessionId ?? null;
-          const adoption = owner !== null && owner !== sessionId
-            ? " --adopt"
-            : "";
-          retire.push(
-            `retire candidate: ${entry.name} owner=${owner ?? "unowned"} command=sasu implement retire --slug ${entry.name}${adoption}`,
-          );
+          retire.push(`retire candidate: ${entry.name} command=sasu implement retire --slug ${entry.name}`);
         }
         if (state.status === "retired" && state.worktree !== null && state.worktree !== undefined && fs.existsSync(state.worktree.path)) {
           orphans.push(
@@ -232,9 +224,6 @@ export function runDoctor(projectRoot: string, options: DoctorOptions = {}): { o
   sections.push(runIntegritySection(projectRoot));
 
   const home = options.home ?? os.homedir();
-  // Registry health and native Hide watch reads share one command contract.
-  const supervisor = supervisorStatusView({ ...process.env, HOME: home });
-  sections.push({ section: "supervisor", ok: supervisor.ok, lines: supervisor.lines });
   const harnessRoot = options.harnessRoot ?? path.resolve(__dirname, "../..");
   sections.push(skillFreshnessSection(home, harnessRoot));
 

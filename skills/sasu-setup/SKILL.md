@@ -3,7 +3,7 @@ name: sasu-setup
 description: |
   Project-local PRD pipeline configuration. Use when the user invokes
   "$sasu-setup", asks to enable or change PR delivery mode, configure
-  worktree/secrets sync for implement, configure the agents/ namespace
+  checkout preparation for implement, configure the agents/ namespace
   gitignore policy, inspect the current PRD pipeline settings, or diagnose why
   implement/ship delivery is not working.
 ---
@@ -30,7 +30,7 @@ sasu doctor
 ```
 
 It reports the effective delivery config (config file plus defaults), unknown or
-misspelled config keys, git/origin/gh readiness, worktree sync source problems,
+misspelled config keys, git/origin/gh readiness, checkout preparation problems,
 ship availability, hook registration, sasu gate
 CLI readiness (binary contract version, judge backends, verify commands), and
 any active run with its ship-pending state.
@@ -70,19 +70,10 @@ Then interview:
    defaults to whatever branch is current at `implement start` time, not
    `main`, so a run started from a feature branch would open its PR against
    that feature branch.
-3. Worktree isolation: `worktree.enabled` (default false), with `worktree.root`
-   (parent directory, default `../<repo>.worktrees`), `worktree.link`
-   (read-only shared files symlinked in), `worktree.copy` (files copied per
-   worktree) and `worktree.setup` (one-time preparation commands).
-   The harness always isolates a run whose target tree already hosts an
-   active in-place run; `enabled: true` additionally isolates every run from
-   the start (the human keeps using the main checkout while runs work in
-   worktrees). Either way ask which gitignored local files the app needs:
-   - `link`: read-only shared files (`.env`, certs).
-   - `copy`: files the app writes to (`.dev.vars`, local DBs).
-   - `setup`: install commands to run once in the new worktree
-     (for example `pnpm install`).
-   Warn that dev servers in two checkouts share ports and linked local DBs.
+3. Checkout preparation: use Hide to create or reuse the intended branch and checkout before sealing the run.
+   Prepare required local configuration and dependencies there under the existing project policy.
+   The retired `worktree.enabled`, `worktree.root`, `worktree.link`, `worktree.copy` and `worktree.setup` keys no longer provision anything.
+   Remove configured provisioning from `agents/config.json`; nonempty old configuration is refused rather than silently skipped.
 4. CI: `ci.maxFixAttempts` (default 2), `ci.timeoutSeconds` (default 240).
 5. `agents/` tracking policy:
    - Human-approved assets are committed and reviewable: `agents/prd/**`,
@@ -173,12 +164,6 @@ Reference shape:
     "branchPrefix": "prd",
     "staging": { "include": [], "exclude": [] },
     "ci": { "watch": true, "maxFixAttempts": 2, "timeoutSeconds": 240 }
-  },
-  "worktree": {
-    "enabled": true,
-    "link": [".env"],
-    "copy": [],
-    "setup": ["pnpm install"]
   },
   "judge": {
     "retryBudget": 5,

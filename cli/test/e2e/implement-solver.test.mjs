@@ -1,378 +1,99 @@
+// #21 replaces hidden diagnosis subprocesses with three visible advisor intents.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import os from "node:os";
 import test from "node:test";
-import { ESCALATE_LIMIT_PER_RUN } from "../../dist/implement/types.js";
-import { readIndex } from "../../dist/supervisor/index.js";
-import { makeProject as createProject, start, run as runCli, registerEvidence, CLI, isolatedEnv, PRD_PATH } from "../helpers/implement-fixture.mjs";
-import { installFakeHerdr } from "../helpers/fake-herdr.mjs";
-function makeProject() { const root = createProject({ count: 1 }); start(root); return root; }
-const run = (root, args, env = {}) => runCli(root, args, { env });
-const DIAGNOSIS = {
-  summary: "the implementor keeps re-running the same failing command",
-  likelyCause: "the check reads a fixture the run never wrote, so it never sees the built output",
-  suggestedNextStep: "write the fixture, then run the check once from the repository root",
-};
+import { runtimeFixture } from "../helpers/implement-hide-fixture.mjs";
+import { STATE_PATH } from "../helpers/implement-fixture.mjs";
+import { attemptFixture } from "../helpers/implement-state.mjs";
 
-const STATE_REL = path.join("agents", "runs", "fixture", "state.json");
-const state = (root) => JSON.parse(fs.readFileSync(path.join(root, STATE_REL), "utf8"));
+const ok = (result) => { assert.equal(result.status, 0, result.text); return result.json.detail; };
+const refuses = (result, pattern) => { assert.notEqual(result.status, 0, result.text); assert.match(result.json.message, pattern); };
+const escalate = (f, intent, flags = [], options = {}) => f.cli(["implement", "escalate", "--intent", intent, ...flags], options);
 
-function stubEnv(root, diagnosis = DIAGNOSIS) {
-  const file = path.join(root, "agents", "judge.json");
-  const capture = path.join(root, "agents", "captures");
-  fs.writeFileSync(file, JSON.stringify({ byPurpose: { "implement:solver": diagnosis } }));
-  return { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file, SASU_JUDGE_STUB_CAPTURE_DIR: capture, capture };
-}
-
-const escalate = (root, env, extra = []) => run(root, [
-  "implement", "escalate", "--issuer", "observer", "--reason", "repeated incomplete verification", ...extra,
-], env);
-
-test("D-04: escalation persists replacement identity and enrollment before submitting the handoff", async () => {
-  const root = fs.realpathSync(createProject({ count: 1 }));
-  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
-  const outside = fs.mkdtempSync(`${root}-herdr-`);
-  const fake = installFakeHerdr(outside);
-  const home = path.join(outside, "home");
-  fs.mkdirSync(home, { recursive: true });
-  const observerEnv = { ...fake.env, HOME: home, HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12", HERDR_WORKSPACE_ID: "w4G", CLAUDE_SESSION_ID: "observer-session" };
-  assert.equal(runCli(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env: observerEnv }).status, 0);
-  const dispatched = spawnSync(process.execPath, [CLI, "implement", "dispatch", "--name", "impl", "--prd", PRD_PATH, "--json"], {
-    cwd: root, encoding: "utf8", env: isolatedEnv(observerEnv), input: "ROLE: Implementor\nSOURCE: fixture\nRETURN CONTRACT: status", timeout: 30_000,
-  });
-  assert.equal(dispatched.status, 0, dispatched.stderr + dispatched.stdout);
-
-  const judge = stubEnv(root);
-  const ready = path.join(outside, "prompt-ready");
-  const release = path.join(outside, "prompt-release");
-  const env = isolatedEnv({ ...observerEnv, ...judge, HERDR_FAKE_PROMPT_BARRIER_READY: ready, HERDR_FAKE_PROMPT_BARRIER_RELEASE: release });
-  const child = spawn(process.execPath, [CLI, "implement", "escalate", "--issuer", "observer", "--reason", "stuck", "--agent", "impl", "--adopt", "user requested replacement", "--json"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk) => { stdout += chunk; });
-  child.stderr.on("data", (chunk) => { stderr += chunk; });
-  const deadline = Date.now() + 15_000;
-  while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(fs.existsSync(ready), true, stderr || stdout);
-  const during = state(root);
-  assert.equal(during.pendingDispatch.phase, "started");
-  assert.equal(during.pendingDispatch.implementor.sessionId, "impl-session");
-  assert.equal(during.supervision.runInstanceId, during.pendingDispatch.runInstanceId);
-  const indexed = readIndex(path.join(home, ".sasu", "supervisor", "index.json"));
-  assert.equal(indexed.entries[0].runInstanceId, during.pendingDispatch.runInstanceId);
-  fs.writeFileSync(release, "release\n");
-  const exitCode = await new Promise((resolve) => child.on("close", resolve));
-  assert.equal(exitCode, 0, stderr + stdout);
-  assert.equal(state(root).pendingDispatch, null);
+test("advisor reservation prints a native spawn and letter reply instructions without running diagnosis", (t) => {
+  const f = runtimeFixture(t);
+  const before = f.state();
+  const detail = ok(escalate(f, "failed-suite", ["--reason", "the required command keeps failing", "--target", "B1"], {
+    env: { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: path.join(f.outside, "does-not-exist.json") },
+  }));
+  assert.equal(detail.escalationsRemaining, 2);
+  assert.equal(detail.escalation.id, 1);
+  assert.equal(detail.escalation.reason, "the required command keeps failing");
+  assert.equal(detail.escalation.target, "B1");
+  assert.equal(detail.effort, "high");
+  assert.deepEqual(detail.argv.slice(0, 4), ["agent", "spawn", "--parent", "here"]);
+  const prompt = fs.readFileSync(detail.promptPath, "utf8");
+  assert.match(prompt, /Read-only advisor/);
+  assert.match(prompt, /Sealed PRD:/);
+  assert.match(prompt, /Blockage: the required command keeps failing/);
+  assert.match(prompt, /hide request send <parent-id> .* --kind report/);
+  assert.ok(f.hide.argv().every((argv) => ["agent list", "workspace info"].includes(argv.join(" "))));
+  assert.deepEqual(Object.keys(f.runtime().participants), ["observer"]);
+  const after = f.state();
+  for (const key of ["requirements", "suite", "artifacts", "verificationAttempts", "verificationReport", "dispatchIntent"]) assert.deepEqual(after[key], before[key], key);
+  for (const key of ["diagnosis", "judge", "handoff", "sessionId", "terminalId"]) assert.equal(key in detail.escalation, false, key);
 });
 
-// Review R1: the drift rule makes escalation the Observer's required move, so
-// the recorded Observer escalates on its own identity instead of taking the
-// run over with --adopt and leaving the Implementor to take it back.
-test("R1: the recorded Observer escalates without --adopt and the Implementor keeps the run; any other session is still refused", () => {
-  const root = fs.realpathSync(createProject({ count: 1 }));
-  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
-  const outside = fs.mkdtempSync(`${root}-herdr-`);
-  const fake = installFakeHerdr(outside);
-  const home = path.join(outside, "home");
-  fs.mkdirSync(home, { recursive: true });
-  const observerEnv = { ...fake.env, HOME: home, HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12", HERDR_WORKSPACE_ID: "w4G", CLAUDE_SESSION_ID: "observer-session" };
-  assert.equal(runCli(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env: observerEnv }).status, 0);
-  const dispatched = spawnSync(process.execPath, [CLI, "implement", "dispatch", "--name", "impl", "--prd", PRD_PATH, "--json"], {
-    cwd: root, encoding: "utf8", env: isolatedEnv(observerEnv), input: "ROLE: Implementor\nSOURCE: fixture\nRETURN CONTRACT: status", timeout: 30_000,
-  });
-  assert.equal(dispatched.status, 0, dispatched.stderr + dispatched.stdout);
-  const implementorEnv = { ...fake.env, HOME: home, HERDR_ENV: "1", HERDR_PANE_ID: state(root).supervision.implementor.paneId, HERDR_WORKSPACE_ID: "w4G", SASU_HERDR_ROLE: "implementor", SASU_RUN_INSTANCE_ID: state(root).supervision.runInstanceId, CLAUDE_SESSION_ID: "impl-session" };
-  fs.mkdirSync(path.join(root, "notes"), { recursive: true });
-  fs.writeFileSync(path.join(root, "notes", "plan.md"), "# plan\n");
-  const claimed = run(root, ["implement", "plan", "--path", "notes/plan.md"], implementorEnv);
-  assert.equal(claimed.status, 0, claimed.stderr + claimed.stdout);
-  assert.equal(state(root).ownerSessionId, "impl-session");
-
-  const judge = stubEnv(root);
-  const escalated = run(root, ["implement", "escalate", "--issuer", "observer", "--reason", "drift: repeated-fail: 2 consecutive FAIL verify attempts"], { ...observerEnv, ...judge });
-  assert.equal(escalated.status, 0, escalated.stderr + escalated.stdout);
-  assert.equal(state(root).escalations.length, 1);
-  assert.equal(state(root).ownerSessionId, "impl-session", "the escalation takes nothing from the Implementor");
-  assert.deepEqual(state(root).adoptions ?? [], [], "no takeover is recorded");
-
-  const stranger = run(root, ["implement", "escalate", "--issuer", "observer", "--reason", "stuck"], { ...observerEnv, ...judge, CLAUDE_SESSION_ID: "someone-else" });
-  assert.notEqual(stranger.status, 0);
-  assert.match(stranger.json.message, /owned by another session/);
-  assert.equal(state(root).escalations.length, 1, "a refused escalation spends nothing");
-
-  const continued = run(root, ["implement", "plan", "--path", "notes/plan.md"], implementorEnv);
-  assert.equal(continued.status, 0, continued.stderr + continued.stdout);
+test("three distinct advisor intents are allowed; retries at the cap spend no additional slot", (t) => {
+  const f = runtimeFixture(t);
+  const first = ok(escalate(f, "one", ["--reason", "first blockage"]));
+  ok(escalate(f, "two", ["--reason", "second blockage"]));
+  const third = ok(escalate(f, "three", ["--reason", "third blockage"]));
+  assert.equal(third.escalationsRemaining, 0);
+  const before = f.state();
+  const retry = ok(escalate(f, "one"));
+  assert.equal(retry.command, first.command);
+  assert.equal(retry.reused, true);
+  assert.deepEqual(f.state().escalations, before.escalations);
+  assert.equal(f.state().events.filter((event) => event.kind === "escalate").length, 3);
+  refuses(escalate(f, "four", ["--reason", "new blockage"]), /limit reached.*ask a human/);
+  assert.equal(f.state().escalations.length, 3);
+  assert.equal(Object.keys(f.runtime().spawns).length, 0);
 });
 
-test("D-04: escalation rechecks run authority after its final target lookup", async () => {
-  const root = fs.realpathSync(createProject({ count: 1 }));
-  fs.writeFileSync(path.join(root, "agents", "config.json"), JSON.stringify({ worktree: { enabled: false } }));
-  const outside = fs.mkdtempSync(`${root}-herdr-`);
-  const fake = installFakeHerdr(outside);
-  const home = path.join(outside, "home");
-  fs.mkdirSync(home, { recursive: true });
-  const observerEnv = { ...fake.env, HOME: home, HERDR_ENV: "1", HERDR_PANE_ID: "w4G:p12", HERDR_WORKSPACE_ID: "w4G", CLAUDE_SESSION_ID: "observer-session" };
-  assert.equal(runCli(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], { env: observerEnv }).status, 0);
-  const dispatched = spawnSync(process.execPath, [CLI, "implement", "dispatch", "--name", "impl", "--prd", PRD_PATH, "--json"], {
-    cwd: root, encoding: "utf8", env: isolatedEnv(observerEnv), input: "ROLE: Implementor\nSOURCE: fixture\nRETURN CONTRACT: status", timeout: 30_000,
-  });
-  assert.equal(dispatched.status, 0, dispatched.stderr + dispatched.stdout);
-  const promptsBefore = fake.prompts().length;
-
-  const judge = stubEnv(root);
-  const ready = path.join(outside, "replacement-get.ready");
-  const release = path.join(outside, "replacement-get.release");
-  const count = path.join(outside, "replacement-get.count");
-  const env = isolatedEnv({
-    ...observerEnv,
-    ...judge,
-    HERDR_FAKE_GET_BARRIER_TARGET: "w4G:p13",
-    HERDR_FAKE_GET_BARRIER_OCCURRENCE: "2",
-    HERDR_FAKE_GET_BARRIER_COUNT: count,
-    HERDR_FAKE_GET_BARRIER_READY: ready,
-    HERDR_FAKE_GET_BARRIER_RELEASE: release,
-  });
-  const child = spawn(process.execPath, [CLI, "implement", "escalate", "--issuer", "observer", "--reason", "stuck", "--agent", "impl", "--adopt", "user requested replacement", "--json"], { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk) => { stdout += chunk; });
-  child.stderr.on("data", (chunk) => { stderr += chunk; });
-  const deadline = Date.now() + 15_000;
-  while (!fs.existsSync(ready) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(fs.existsSync(ready), true, stderr || stdout);
-  try {
-    const retired = runCli(root, ["implement", "retire", "--issuer", "human", "--adopt", "user: retire during replacement"], { env: observerEnv });
-    assert.equal(retired.status, 0, retired.stderr + retired.stdout);
-  } finally {
-    fs.writeFileSync(release, "release\n");
+test("same advisor intent refuses conflicting inputs instead of spending or changing its slot", (t) => {
+  const f = runtimeFixture(t);
+  const first = ok(escalate(f, "advice", ["--reason", "blocked", "--target", "B1", "--kind", "codex", "--model", "first-model"]));
+  const original = f.state().escalations;
+  for (const flags of [["--reason", "different"], ["--target", "B2"], ["--name", "other-advisor"], ["--kind", "claude"], ["--model", "other-model"], ["--effort", "xhigh"]]) {
+    refuses(escalate(f, "advice", flags), /conflicts with reserved/);
   }
-  const exitCode = await new Promise((resolve) => child.on("close", resolve));
-  assert.equal(exitCode, 0, stderr + stdout);
-  const outcome = JSON.parse(stdout);
-  assert.equal(outcome.detail.contextReset, false);
-  assert.match(outcome.detail.contextResetProblem, /final handoff authority validation failed.*retired/);
-  assert.equal(fake.prompts().length, promptsBefore, "retirement at the replacement's final lookup prevents new handoff input");
-  assert.equal(state(root).pendingDispatch.phase, "started");
+  assert.deepEqual(f.state().escalations, original);
+  assert.equal(ok(escalate(f, "advice")).command, first.command);
 });
 
-// --- AC33: no state write during the solver's execution ---------------------
-
-test("AC33: the solver runs read-only and the run's only write happens after it returns", () => {
-  const root = makeProject();
-  const env = stubEnv(root);
-  const before = state(root);
-
-  const escalated = escalate(root, env);
-  assert.equal(escalated.status, 0, escalated.stderr + escalated.stdout);
-
-  // The stub writes its capture at the moment the solver is called. The state
-  // file is younger than that capture, so nothing wrote state while the solver
-  // was running.
-  const capturedAt = fs.statSync(path.join(env.capture, "implement_solver.prompt.txt")).mtimeMs;
-  assert.ok(fs.statSync(path.join(root, STATE_REL)).mtimeMs >= capturedAt);
-
-  // And the write that did happen changed only the escalation ledger and the
-  // event log - no row or verification moved under the solver.
-  const after = state(root);
-  for (const key of ["requirements", "suite", "artifacts", "verificationAttempts", "verificationReport"]) assert.deepEqual(after[key], before[key], `${key} must remain unchanged by diagnosis`);
-  assert.equal(after.escalations.length, before.escalations.length + 1);
+test("missing intent or reason and unavailable Hide consume no advisor slot", (t) => {
+  const f = runtimeFixture(t);
+  refuses(f.cli(["implement", "escalate", "--reason", "blocked"]), /missing required --intent/);
+  refuses(escalate(f, "advice"), /missing required --reason/);
+  refuses(escalate(f, "advice", ["--reason", "blocked"], { env: { HIDE_FAKE_DOWN: "1" } }), /delivery_unavailable/);
+  assert.deepEqual(f.state().escalations, []);
+  assert.equal(ok(escalate(f, "advice", ["--reason", "blocked"])).escalationsRemaining, 2);
 });
 
-test("AC33: what comes back is a diagnosis, and it is recorded as text", () => {
-  const root = makeProject();
-  const env = stubEnv(root);
-  const escalated = escalate(root, env);
-  assert.equal(escalated.status, 0, escalated.stderr + escalated.stdout);
-
-  const record = escalated.json.detail.escalation;
-  assert.equal(record.outcome, "diagnosed");
-  assert.equal(record.profile, "high-risk", "the solver reuses the high-risk judge routing rather than a knob of its own");
-  assert.equal(record.diagnosis, DIAGNOSIS.summary);
-  assert.equal(record.error, null);
-
-  const written = fs.readFileSync(path.join(root, record.handoff.diagnosisPath), "utf8");
-  assert.match(written, /re-running the same failing command/);
-  assert.match(written, /never wrote/);
-  assert.match(written, /run the check once from the repository root/);
-});
-
-test("AC33: a solver that returns anything but the three fields is not accepted", () => {
-  const root = makeProject();
-  const env = stubEnv(root, { ...DIAGNOSIS, patch: "diff --git a b" });
-  const escalated = escalate(root, env);
-  assert.notEqual(escalated.status, 0);
-  assert.equal(escalated.json.detail.escalation.outcome, "summon-failed");
-  assert.match(escalated.json.message, /remove patch/);
-});
-
-// --- AC34: the handoff ------------------------------------------------------
-
-test("AC34: the replacement briefing carries the three artifacts and no conversation", () => {
-  const root = makeProject();
-  const env = stubEnv(root);
-  const escalated = escalate(root, env);
-  assert.equal(escalated.status, 0, escalated.stderr + escalated.stdout);
-
-  const { handoff, briefing } = escalated.json.detail;
-  assert.equal(handoff.prdSnapshotPath, "agents/runs/fixture/prd.md");
-  for (const rel of Object.values(handoff)) {
-    assert.ok(fs.existsSync(path.join(root, rel)), `${rel} exists for the replacement to read`);
-    assert.ok(briefing.includes(rel), `${rel} is named in the briefing`);
+test("Implementor and advisor panes cannot escalate regardless of issuer or old role marker", (t) => {
+  const f = runtimeFixture(t);
+  const dispatch = ok(f.dispatch());
+  const implementor = f.execute(dispatch).json.value;
+  const advisor = ok(escalate(f, "advice", ["--reason", "blocked"]));
+  const advisorChild = f.execute(advisor).json.value;
+  for (const pane of [implementor.pane, advisorChild.pane]) {
+    refuses(escalate(f, "recursive", ["--reason", "blocked", "--issuer", "observer"], { env: { HERDR_PANE_ID: pane, SASU_HERDR_ROLE: "observer" } }), /run child in Hide/);
   }
-  assert.match(briefing, /clean context/);
-  assert.match(briefing, /previous implementor's conversation is not available/);
-
-  // The ledger handed over is current deterministic verification, not a transcript.
-  const ledger = JSON.parse(fs.readFileSync(path.join(root, handoff.verificationPath), "utf8"));
-  assert.ok(Array.isArray(ledger.attempts));
-  assert.ok(Object.hasOwn(ledger, "currentReport"));
+  assert.equal(f.state().escalations.length, 1);
+  assert.equal(Object.keys(f.runtime().spawns).length, 2);
 });
 
-test("AC34: with no herdr the reset is reported as the supervisor's to perform, not silently skipped", () => {
-  const root = makeProject();
-  const env = stubEnv(root);
-  const escalated = escalate(root, env);
-  assert.equal(escalated.status, 0);
-  assert.equal(escalated.json.detail.contextReset, false);
-  assert.match(escalated.json.detail.contextResetProblem, /reset the implementor's context yourself/);
-  assert.match(escalated.json.message, /Context reset not performed automatically/);
-  assert.match(state(root).events.at(-1).summary, /the context reset is the supervisor's to perform/);
-});
-
-// --- AC35: the bound and the failed summon ----------------------------------
-
-test("AC35: a summon failure is recorded as a failed escalation and the implementor is not reset", () => {
-  const root = makeProject();
-  const file = path.join(root, "agents", "judge.json");
-  fs.writeFileSync(file, JSON.stringify({ byPurpose: { "not-the-solver": { verdict: "PASS" } } }));
-  const escalated = escalate(root, { SASU_JUDGE_BACKEND: "stub", SASU_JUDGE_STUB_FILE: file });
-
-  assert.notEqual(escalated.status, 0);
-  const record = escalated.json.detail.escalation;
-  assert.equal(record.outcome, "summon-failed");
-  assert.equal(record.handoff, null);
-  assert.ok(record.error !== null && record.error !== "");
-  assert.match(escalated.json.message, /The implementor was NOT reset/);
-  assert.equal(state(root).escalations.length, 1, "a failed summon is still a spent escalation and is on the record");
-  assert.equal(state(root).events.at(-1).kind, "escalate");
-});
-
-test("AC35: the run-wide bound refuses the escalation past the constant", () => {
-  const root = makeProject();
-  const env = stubEnv(root);
-  for (let spent = 0; spent < ESCALATE_LIMIT_PER_RUN; spent += 1) {
-    const accepted = escalate(root, env);
-    assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
-    assert.equal(accepted.json.detail.escalationsRemaining, ESCALATE_LIMIT_PER_RUN - spent - 1);
-  }
-  const refused = escalate(root, env);
-  assert.notEqual(refused.status, 0);
-  assert.equal(refused.json.detail.rejectedCheck, "transition");
-  assert.match(refused.json.message, new RegExp(`used all ${ESCALATE_LIMIT_PER_RUN} escalations`));
-  assert.match(refused.json.message, /amend the PRD or record the unresolved limitation/);
-  assert.equal(state(root).escalations.length, ESCALATE_LIMIT_PER_RUN, "a refused escalation is not charged");
-});
-
-test("AC35: escalate needs a reason and accepts a freeform diagnostic target", () => {
-  const root = makeProject();
-  const env = stubEnv(root);
-  const noReason = run(root, ["implement", "escalate", "--issuer", "observer"], env);
-  assert.notEqual(noReason.status, 0);
-  assert.match(noReason.json.message, /requires --reason/);
-
-  const labeled = escalate(root, env, ["--target", "B9"]);
-  assert.equal(labeled.status, 0, labeled.stderr + labeled.stdout);
-  assert.equal(state(root).escalations.at(-1).target, "B9");
-  assert.equal(state(root).escalations.length, 1, "only the actual diagnosis spends an escalation");
-});
-
-test("AC35: a pane marked implementor may not summon its own replacement", () => {
-  const root = makeProject();
-  const env = { ...stubEnv(root), SASU_HERDR_ROLE: "implementor" };
-  // The guard is the pane marker, not the typed label: the same command with
-  // an observer label from a marked pane is refused just the same.
-  const refused = run(root, ["implement", "escalate", "--issuer", "observer", "--reason", "stuck"], env);
-  assert.notEqual(refused.status, 0);
-  assert.match(refused.json.message, /marked SASU_HERDR_ROLE=implementor/);
-  assert.equal(state(root).escalations.length, 0, "a refused summon spends nothing");
-});
-
-// --- AC41/AC43: what the record says after the solver path is spent ---------
-
-test("AC41: once the bound is spent, status names the run's state and the move that is left", () => {
-  const root = makeProject();
-  const env = stubEnv(root);
-  for (let i = 0; i < ESCALATE_LIMIT_PER_RUN; i += 1) {
-    const each = escalate(root, env);
-    assert.equal(each.status, 0, each.stderr + each.stdout);
-  }
-  const refused = escalate(root, env);
-  assert.notEqual(refused.status, 0, refused.stdout);
-  assert.match(refused.json.message, /used all 3 escalations/);
-  // The refusal is history too, and the roster survives it.
-  assert.equal(state(root).escalations.length, ESCALATE_LIMIT_PER_RUN, "a refused escalation summons nobody");
-
-  // AC41: the supervisor deciding what to do next reads status, not the
-  // message of a command it has not run yet.
-  const merged = isolatedEnv();
-  const summary = spawnSync(process.execPath, [CLI, "implement", "status"], { cwd: root, encoding: "utf8", env: merged }).stdout;
-  assert.match(summary, /escalations: 3 of 3 used/);
-  assert.match(summary, /bound (?:is )?spent/);
-  assert.match(summary, /Next: commit, request native review with verdict NOT_RUN disclosed, run verify on the final committed candidate/);
-  assert.doesNotMatch(summary, /Next: ship/);
-  // ...and the verb it can no longer issue is not offered.
-  assert.doesNotMatch(summary, /escalate \(\d+ of 3 left\)/);
-});
-
-test("AC43: the solver's input envelope and its output both hold their declared shape", () => {
-  const root = makeProject();
-  const env = stubEnv(root);
-  const summoned = escalate(root, env);
-  assert.equal(summoned.status, 0, summoned.stderr + summoned.stdout);
-
-  // The envelope that actually reached the solver: diagnosis-only framing,
-  // plus the three things it is allowed to read.
-  const prompt = fs.readFileSync(path.join(env.capture, "implement_solver.prompt.txt"), "utf8");
-  assert.match(prompt, /Your entire job is to diagnose/);
-  assert.match(prompt, /you do not change state/);
-  assert.match(prompt, /## What the implementor is stuck on/);
-  assert.match(prompt, /## Why the supervisor escalated/);
-  assert.match(prompt, /## Sealed PRD/);
-  assert.match(prompt, /## Deterministic verification history/);
-
-  // The output shape, recorded on success.
-  const record = state(root).escalations.at(-1);
-  assert.equal(record.outcome, "diagnosed");
-  assert.equal(record.profile, "high-risk", "the solver reuses the routing table; it has no knob of its own");
-  assert.equal(record.error, null);
-  // The ledger row carries the headline; the three fields live in full in the
-  // diagnosis the replacement is handed.
-  assert.equal(record.diagnosis, DIAGNOSIS.summary);
-
-  // The three handoff artifacts, in the shape a replacement is briefed with.
-  assert.deepEqual(Object.keys(record.handoff).sort(), ["diagnosisPath", "prdSnapshotPath", "verificationPath"]);
-  for (const rel of Object.values(record.handoff)) {
-    assert.ok(fs.existsSync(path.join(root, rel)), `${rel} must exist for the replacement to read`);
-  }
-  const written = fs.readFileSync(path.join(root, record.handoff.diagnosisPath), "utf8");
-  for (const field of Object.values(DIAGNOSIS)) {
-    assert.ok(written.includes(field), `the diagnosis file must carry "${field}"`);
-  }
-  const briefing = summoned.json.detail.briefing;
-  assert.match(briefing, /1\. The sealed PRD/);
-  assert.match(briefing, /2\. The solver's diagnosis/);
-  assert.match(briefing, /3\. The deterministic verification history/);
-
-  // ...and a failed summon records the other half of the shape.
-  const failing = makeProject();
-  const failEnv = stubEnv(failing, { summary: "", likelyCause: "x", suggestedNextStep: "y" });
-  const failed = escalate(failing, failEnv);
-  assert.notEqual(failed.status, 0, failed.stdout);
-  const failure = state(failing).escalations.at(-1);
-  assert.equal(failure.outcome, "summon-failed");
-  assert.equal(failure.diagnosis, null);
-  assert.equal(failure.handoff, null);
-  assert.ok(failure.error.length > 0, "a failed summon says why");
+test("a live verification lease refuses advisor reservation and keeps the lease intact", (t) => {
+  const f = runtimeFixture(t);
+  const state = f.state(), attempt = attemptFixture({ prdSha256: state.prd.sha256 });
+  state.verificationAttempts.push(attempt);
+  state.activeVerification = { token: "lease", attemptId: attempt.id, pid: process.pid, hostname: os.hostname(), startedAt: attempt.startedAt, inputFingerprint: attempt.inputFingerprint, prdSha256: attempt.prdSha256, executionPids: [], pendingSpawns: 0 };
+  fs.writeFileSync(path.join(f.root, STATE_PATH), JSON.stringify(state));
+  refuses(escalate(f, "advice", ["--reason", "blocked"]), /verification still active/);
+  assert.deepEqual(f.state().escalations, []);
+  assert.deepEqual(f.state().activeVerification, state.activeVerification);
+  assert.deepEqual(f.hide.argv(), []);
 });

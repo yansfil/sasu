@@ -67,6 +67,19 @@ test("removed tier settings fail explicitly instead of being ignored", () => {
   assert.throws(() => loadConfig(tempProject({ judge: { tierModels: {} } })), /were removed/);
 });
 
+test("retired checkout provisioning accepts inert configuration and refuses lost setup work", (t) => {
+  const read = (worktree) => {
+    const root = tempProject({ worktree });
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    return loadConfig(root);
+  };
+  assert.equal("worktree" in read({ enabled: false }), false);
+  assert.equal("worktree" in read({ enabled: false, root: null, link: [], copy: [], setup: [] }), false);
+  for (const value of [{ enabled: true }, { setup: ["npm ci"] }, { link: [".env"] }, { root: "../trees" }, { unknown: true }]) {
+    assert.throws(() => read(value), /worktree provisioning configuration is retired/);
+  }
+});
+
 test("invalid profile targets and timeouts fail explicitly", () => {
   assert.throws(
     () => loadConfig(tempProject({ judge: { profiles: { routine: { primary: { effort: "turbo" } } } } })),

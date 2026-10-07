@@ -3,22 +3,18 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import {
-  IMPLEMENT_ACTIVE_SCHEMA,
   IMPLEMENT_SCHEMA,
   RETIRED_IMPLEMENT_SUPPORT_COMMIT,
+  ESCALATE_LIMIT_PER_RUN,
   retiredImplementSupportCommit,
-  type ImplementActivePointer,
   type ImplementState,
   type DirtyAttribution,
   type SourceEntry,
   type SourceSnapshot,
 } from "./types";
 import { ISSUED_COMMANDS } from "./verbs";
-import { ACTIVE_POINTER_REL, activePointerReadPath, activePointerWriteRel, implementStatePathFor } from "../runs/paths";
-import { currentSessionId } from "../runs/session";
+import { implementStatePathFor } from "../runs/paths";
 import { siblingWorktrees } from "./worktree";
-
-export const ACTIVE_POINTER = ACTIVE_POINTER_REL;
 
 export function nowIso(): string {
   return new Date().toISOString();
@@ -56,36 +52,42 @@ export function statePathFor(projectRoot: string, slug: string): string {
   return implementStatePathFor(projectRoot, slug);
 }
 
-export function writeActivePointer(projectRoot: string, state: ImplementState, sessionId: string | null = currentSessionId()): void {
-  const statePathRel = path.relative(projectRoot, statePathFor(projectRoot, state.topicSlug)).split(path.sep).join("/");
-  const pointer: ImplementActivePointer = {
-    schema: IMPLEMENT_ACTIVE_SCHEMA,
-    statePath: statePathRel,
-    topicSlug: state.topicSlug,
-    updatedAt: nowIso(),
-  };
-  writeJsonAtomic(path.join(projectRoot, activePointerWriteRel(sessionId)), pointer);
-  // A worktree run gets a second bookmark inside its judged tree, carrying an
-  // explicit record-tree root: bare commands typed from either tree then
-  // resolve the same record. Bookmarks are navigation, not authority, so the
-  // duplicate is harmless; ownership lives in state.json alone.
-  const worktreePath = state.worktree?.path;
-  if (worktreePath !== undefined && fs.existsSync(worktreePath)) {
-    writeJsonAtomic(path.join(worktreePath, activePointerWriteRel(sessionId)), { ...pointer, projectRoot });
+function repositoryRunPaths(projectRoot: string): string[] {
+  const found = new Set<string>();
+  for (const tree of [projectRoot, ...siblingWorktrees(projectRoot)]) {
+    const runsDir = path.join(tree, "agents", "runs");
+    if (!fs.existsSync(runsDir)) continue;
+    for (const entry of fs.readdirSync(runsDir, { withFileTypes: true })) {
+      const file = path.join(runsDir, entry.name, "state.json");
+      if (entry.isDirectory() && fs.existsSync(file)) found.add(fs.realpathSync(file));
+    }
+  }
+  return [...found].sort();
+}
+
+function discoveredState(file: string): ImplementState | null {
+  const text = fs.readFileSync(file, "utf8");
+  try {
+    const raw: unknown = JSON.parse(text);
+    assertRecord(raw, "root");
+    // Archived history neither competes for navigation nor grants runtime roles.
+    // Current records always undergo full validation, even when retired.
+    if (typeof raw["schema"] === "string" && raw["schema"].startsWith("sasu.implement.") && raw["schema"] !== IMPLEMENT_SCHEMA &&
+      ["closed", "complete", "retired"].includes(String(raw["status"]))) return null;
+    return parseImplementState(text);
+  } catch (error) {
+    throw new Error(`cannot inspect implement run ${file}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
-/** Current-schema namespace candidates for an explicit --slug selection. */
-function runCandidates(projectRoot: string): string[] {
-  const slugs = new Set<string>();
-  for (const namespace of [path.join("agents", "runs")]) {
-    const dir = path.join(projectRoot, namespace);
-    if (!fs.existsSync(dir)) continue;
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isDirectory() && fs.existsSync(path.join(dir, entry.name, "state.json"))) slugs.add(entry.name);
-    }
-  }
-  return [...slugs].sort();
+/** Live role checks use requested names and checkouts, never cached identities. */
+export function runRoleInputs(projectRoot: string): Array<{ implementorName: string; projectRoot: string }> {
+  return repositoryRunPaths(projectRoot).flatMap((file) => {
+    const state = discoveredState(file);
+    if (state === null) return [];
+    return [...(state.dispatchIntent === null ? [] : [state.dispatchIntent]), ...state.escalations]
+      .map((intent) => ({ implementorName: intent.name, projectRoot: requireWorkRoot(state) }));
+  });
 }
 
 /**
@@ -98,7 +100,7 @@ function runCandidates(projectRoot: string): string[] {
  * tree, the repository's other worktrees are searched: exactly one match
  * resolves, more than one is an ambiguity a person must name, and none
  * leaves the local "not found". state.json stays the only authority - this
- * is navigation to it, and every mutation still checks ownership.
+ * is navigation to it; runtime relationships belong to Hide.
  */
 function recordPathForSlug(projectRoot: string, slug: string): string {
   const local = statePathFor(projectRoot, slug);
@@ -123,19 +125,12 @@ export function resolveStatePath(projectRoot: string, options: { slug?: string; 
     return normalizeProjectPath(projectRoot, options.state).absolute;
   }
   if (options.slug !== undefined) return recordPathForSlug(projectRoot, options.slug);
-  const pointerPath = activePointerReadPath(projectRoot, currentSessionId());
-  if (!fs.existsSync(pointerPath)) {
-    const candidates = runCandidates(projectRoot);
-    const menu = candidates.length === 0 ? "" : ` (existing runs: ${candidates.join(", ")})`;
-    throw new Error(`no active implement run for this session; pass --slug <topic>${menu} or start one with \`sasu implement start --prd <path>\``);
-  }
-  const parsed = JSON.parse(fs.readFileSync(pointerPath, "utf8")) as Partial<ImplementActivePointer>;
-  if (parsed.schema !== IMPLEMENT_ACTIVE_SCHEMA || typeof parsed.statePath !== "string") {
-    throw new Error(`unsupported active pointer schema in ${ACTIVE_POINTER}; start a new run with \`sasu implement start --prd <path>\``);
-  }
-  // A redirect bookmark (inside a run's worktree) names its record tree.
-  const recordRoot = typeof parsed.projectRoot === "string" && parsed.projectRoot !== "" ? parsed.projectRoot : projectRoot;
-  return normalizeProjectPath(recordRoot, parsed.statePath).absolute;
+  // A bookmark tied to a native session broke after compaction and handoff.
+  // Bare navigation now works only when the repository has one active run.
+  const candidates = repositoryRunPaths(projectRoot).filter((file) => discoveredState(file)?.status === "active");
+  if (candidates.length === 1) return candidates[0]!;
+  if (candidates.length > 1) throw new Error(`multiple active implement runs; pass --slug <topic> or --state <path>: ${candidates.join(", ")}`);
+  throw new Error("no active implement run; pass --slug <topic> or start one with `sasu implement start --prd <path>`");
 }
 
 /**
@@ -224,7 +219,7 @@ export function parseImplementState(text: string): ImplementState {
   if (parsed["schema"] !== IMPLEMENT_SCHEMA) {
     throw new Error(`unsupported implement state schema ${String(parsed["schema"] ?? "missing")}; only ${IMPLEMENT_SCHEMA} is accepted. Finish the old run with the CLI built from ${retiredImplementSupportCommit(parsed["schema"])} using \`sasu implement status --state <old-state>\` and its supported delivery commands, or start a separate run with \`sasu implement start --prd <path> --slug <new-slug>\`; no automatic migration is available`);
   }
-  for (const field of ["rows", "activeCheck", "qaBriefs", "trails", "designComments", "tasks", "checks", "findings", "riskFindings", "budgetGrants", "completion"]) {
+  for (const field of ["rows", "activeCheck", "qaBriefs", "trails", "designComments", "tasks", "checks", "findings", "riskFindings", "budgetGrants", "completion", "ownerSessionId", "adoptions", "dispatches", "supervision", "pendingDispatch"]) {
     if (field in parsed) throw new Error(`retired implement state field: ${field}; start a new run under the stateless verification contract`);
   }
   const candidate = parsed as unknown as ImplementState;
@@ -283,85 +278,28 @@ export function parseImplementState(text: string): ImplementState {
     assertIsoTimestamp(artifact.observedAt, "artifacts[].observedAt");
   }
   ledger(candidate.events, "events");
-  for (const event of candidate.events) enumValue(event.kind, ["amendment", "escalate", "artifact", "verify", "dispatch", "handover", "plan", "block", "report"], "events[].kind");
-  if (candidate.supervision !== undefined && candidate.supervision !== null) {
-    const supervision = candidate.supervision as unknown as Record<string, unknown>;
-    assertRecord(supervision, "supervision");
-    for (const field of ["runInstanceId", "canonicalRepository", "prdPath"] as const) assertString(supervision[field], `supervision.${field}`);
-    assertIsoTimestamp(supervision["dispatchedAt"], "supervision.dispatchedAt");
-    assertNullableString(supervision["dispatchHead"], "supervision.dispatchHead");
-    for (const field of ["coordinationOwner", "hcoord", "patrolIntervalMs", "recoveryOwner"]) if (field in supervision) throw new Error(`malformed implement state: retired supervision field ${field}`);
-    if (supervision["hide"] !== undefined) {
-      const hide = supervision["hide"];
-      assertRecord(hide, "supervision.hide");
-      for (const field of ["observer", "implementor", "watchId"] as const) assertString(hide[field], `supervision.hide.${field}`);
-      assertIsoTimestamp(hide["registeredAt"], "supervision.hide.registeredAt");
+  for (const event of candidate.events) enumValue(event.kind, ["amendment", "escalate", "artifact", "verify", "dispatch"], "events[].kind");
+  const spawnIntent = (value: unknown, label: string): void => {
+    assertRecord(value, label);
+    for (const field of ["intent", "name", "kind", "effort", "promptPath"] as const) assertString(value[field], `${label}.${field}`);
+    assertNullableString(value["model"], `${label}.model`);
+    assertIsoTimestamp(value["at"], `${label}.at`);
+    assertSha256(value["promptSha256"], `${label}.promptSha256`);
+    for (const field of ["sessionId", "terminalId", "paneId", "observer", "implementor", "hide", "registration", "watchId"]) {
+      if (field in value) throw new Error(`retired runtime identity field: ${label}.${field}`);
     }
-    const identity = (value: unknown, label: string): void => {
-      assertRecord(value, label);
-      for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(value[field], `${label}.${field}`);
-      assertIsoTimestamp(value["recordedAt"], `${label}.recordedAt`);
-    };
-    identity(supervision["observer"], "supervision.observer");
-    assertRecord(supervision["implementor"], "supervision.implementor");
-    const implementor = supervision["implementor"] as Record<string, unknown>;
-    for (const field of ["paneId", "agent", "sessionId", "terminalId", "hostScope"] as const) assertString(implementor[field], `supervision.implementor.${field}`);
-    assertIsoTimestamp(implementor["recordedAt"], "supervision.implementor.recordedAt");
-    for (const handover of array(supervision["handovers"], "supervision.handovers")) {
-      assertRecord(handover, "supervision.handovers[]");
-      assertIsoTimestamp(handover["at"], "supervision.handovers[].at");
-      assertString(handover["approval"], "supervision.handovers[].approval");
-      identity(handover["from"], "supervision.handovers[].from");
-      identity(handover["to"], "supervision.handovers[].to");
-    }
-  }
-  if (candidate.pendingDispatch !== undefined && candidate.pendingDispatch !== null) {
-    const pending = candidate.pendingDispatch as unknown as Record<string, unknown>;
-    assertRecord(pending, "pendingDispatch");
-    for (const field of ["runInstanceId", "plannedAgent", "canonicalRepository", "prdPath"] as const) assertString(pending[field], `pendingDispatch.${field}`);
-    enumValue(pending["phase"], ["planned", "prepared", "started"], "pendingDispatch.phase");
-    assertIsoTimestamp(pending["dispatchedAt"], "pendingDispatch.dispatchedAt");
-    assertNullableString(pending["dispatchHead"], "pendingDispatch.dispatchHead");
-    for (const field of ["coordinationOwner", "hcoordReplacedImplementor", "patrolIntervalMs", "recoveryOwner"]) if (field in pending) throw new Error(`malformed implement state: retired pending dispatch field ${field}`);
-    const observer = pending["observer"] as Record<string, unknown>;
-    assertRecord(observer, "pendingDispatch.observer");
-    for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(observer[field], `pendingDispatch.observer.${field}`);
-    assertIsoTimestamp(observer["recordedAt"], "pendingDispatch.observer.recordedAt");
-    if (pending["handovers"] !== undefined) {
-      for (const handover of array(pending["handovers"], "pendingDispatch.handovers")) {
-        assertRecord(handover, "pendingDispatch.handovers[]");
-        assertIsoTimestamp(handover["at"], "pendingDispatch.handovers[].at");
-        assertString(handover["approval"], "pendingDispatch.handovers[].approval");
-        for (const side of ["from", "to"] as const) {
-          const identity = handover[side];
-          assertRecord(identity, `pendingDispatch.handovers[].${side}`);
-          for (const field of ["runtime", "sessionId", "terminalId", "paneId", "hostScope"] as const) assertString(identity[field], `pendingDispatch.handovers[].${side}.${field}`);
-          assertIsoTimestamp(identity["recordedAt"], `pendingDispatch.handovers[].${side}.recordedAt`);
-        }
-      }
-    }
-    if (pending["prepared"] !== null) {
-      const prepared = pending["prepared"];
-      assertRecord(prepared, "pendingDispatch.prepared");
-      for (const field of ["paneId", "workspaceId", "tabId", "cwd", "kind", "hostScope", "parentPaneId"] as const) assertString(prepared[field], `pendingDispatch.prepared.${field}`);
-      enumValue(prepared["placement"], ["workspace", "tab"], "pendingDispatch.prepared.placement");
-      assertIsoTimestamp(prepared["preparedAt"], "pendingDispatch.prepared.preparedAt");
-    } else if (pending["phase"] !== "planned") throw new Error("malformed implement state: prepared or started pendingDispatch has no prepared pane");
-    if (pending["phase"] === "started") {
-      const implementor = pending["implementor"] as Record<string, unknown>;
-      assertRecord(implementor, "pendingDispatch.implementor");
-      for (const field of ["paneId", "agent", "sessionId", "terminalId", "hostScope"] as const) assertString(implementor[field], `pendingDispatch.implementor.${field}`);
-      assertIsoTimestamp(implementor["recordedAt"], "pendingDispatch.implementor.recordedAt");
-    } else if (pending["implementor"] !== null) throw new Error("malformed implement state: unstarted pendingDispatch has an implementor identity");
-  }
-  if (candidate.dispatches !== undefined) {
-    for (const entry of array(candidate.dispatches, "dispatches")) {
-      assertRecord(entry, "dispatches[]");
-      positiveInteger(entry["id"], "dispatches[].id");
-      assertIsoTimestamp(entry["at"], "dispatches[].at");
-      for (const field of ["agent", "kind", "paneId", "workspaceId", "tabId", "cwd"] as const) assertString(entry[field], `dispatches[].${field}`);
-      assertNullableString(entry["fromSessionId"], "dispatches[].fromSessionId");
-    }
+  };
+  if (candidate.dispatchIntent === undefined) throw new Error("malformed implement state: dispatchIntent must be null or an object");
+  if (candidate.dispatchIntent !== null) spawnIntent(candidate.dispatchIntent, "dispatchIntent");
+  ledger(candidate.escalations, "escalations");
+  if (candidate.escalations.length > ESCALATE_LIMIT_PER_RUN) throw new Error("malformed implement state: advisor intent limit exceeded");
+  const advisorIntents = new Set<string>();
+  for (const entry of candidate.escalations) {
+    spawnIntent(entry, "escalations[]");
+    assertString(entry.reason, "escalations[].reason");
+    assertNullableString(entry.target, "escalations[].target");
+    if (advisorIntents.has(entry.intent)) throw new Error("malformed implement state: duplicate advisor intent");
+    advisorIntents.add(entry.intent);
   }
   ledger(candidate.verbs, "verbs");
   for (const verb of candidate.verbs) enumValue(verb.verb, ISSUED_COMMANDS, "verbs[].verb");
@@ -425,7 +363,13 @@ export function parseImplementState(text: string): ImplementState {
     if (!attemptIds.has(active.attemptId) || candidate.status !== "active") throw new Error("malformed implement state: active verification identity is invalid");
   }
   if (candidate.retirement === undefined) throw new Error("malformed implement state: retirement must be null or an object");
-  if (candidate.retirement !== null) assertRecord(candidate.retirement, "retirement");
+  if (candidate.retirement !== null) {
+    assertRecord(candidate.retirement, "retirement");
+    assertIsoTimestamp(candidate.retirement.retiredAt, "retirement.retiredAt");
+    for (const field of ["retiredBySessionId", "adoptedFromSessionId", "adoptionNote"]) {
+      if (field in candidate.retirement) throw new Error(`retired session ownership field: retirement.${field}`);
+    }
+  }
   if (candidate.verificationReport === undefined) throw new Error("malformed implement state: verificationReport must be null or an object");
   if (candidate.verificationReport !== null) {
     assertRecord(candidate.verificationReport, "verificationReport");
@@ -556,7 +500,6 @@ export function persistState(statePath: string, state: ImplementState, options: 
   // twice (ownership adoption, then the command's own change), and the second
   // write is not a conflict with the first.
   stateBaseline.set(state, { statePath, digest: sha256(text) });
-  writeActivePointer(state.projectRoot, state);
 }
 
 function assertVerificationPublicationCurrent(statePath: string, state: ImplementState, token: string): void {

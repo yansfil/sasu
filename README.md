@@ -43,7 +43,8 @@ Read [PRINCIPLES.md](PRINCIPLES.md) for the project rules and [the approved stat
 | `challenge` | Run a bounded adversarial challenge of an existing conclusion. |
 
 Run artifacts live under the target project's `agents/**` namespace.
-`state.json` stores run ownership, the sealed PRD and suite, evidence registrations, actual verification attempts, and the current report identity.
+`state.json` stores the sealed PRD and suite, evidence registrations, actual verification attempts, launch request intents, and the current report identity.
+Live agent identities, parent relationships, watches and letters belong to Hide.
 `verification-report.json` and `verification-report.md` are derived snapshots of the current input.
 There is no completion receipt or semantic reviewer state machine.
 
@@ -71,9 +72,9 @@ npm --prefix cli run build
 node cli/dist/cli.js --help
 ```
 
-The `hide` CLI supplies agent registration, lineage, a durable mailbox and inactivity watches.
-Sasu calls the Hide installation on PATH and needs its daemon and the current Herdr pane identity.
-See [Sasu on Hide](docs/hide.md) for dispatch, block, report and approved Observer handover.
+The Observer runs `hide agent spawn --parent here`, `hide inbox`, `hide request send` and `hide request reply` directly.
+Sasu prints dispatch and advisor instructions, and reads live parent relationships for role checks.
+See [Sasu on Hide](docs/hide.md) for startup, communication and retry behavior.
 The skill installer installs no coordination daemon, LaunchAgent or Stop hook.
 
 The implementation path uses these main commands:
@@ -81,6 +82,8 @@ The implementation path uses these main commands:
 ```text
 sasu implement intake
 sasu implement start --prd <approved-prd>
+sasu implement dispatch --state <state> --name <name> --kind <runtime>
+sasu implement escalate --state <state> --intent <key> --reason <problem>
 sasu implement artifact --kind <kind> --path <path> --description <description>
 sasu implement status
 sasu implement verify

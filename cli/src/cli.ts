@@ -30,8 +30,8 @@ import { runPrdCommand } from "./prd/commands";
 import { runPrinciplesCommand } from "./principles/commands";
 import { runRulesCommand, runSetupCommand } from "./support/commands";
 import { ensureSetup } from "./support/ensure-setup";
-import { currentHerdrRole, HERDR_ROLE_ENV_KEY } from "./runs/session";
-import { runSupervisorCommand } from "./supervisor/commands";
+import { assertNotImplementor } from "./implement/hide";
+import { runRoleInputs } from "./implement/store";
 
 const USAGE = `sasu - harness CLI: document gates, implementation verification, doctor
 
@@ -48,28 +48,20 @@ Usage:
   sasu implement start    --prd <path> [--allow-unapproved-prd "<verbatim approval>"] [--dirty-attribution <pre-existing|run-owned|JSON-path-map>] [--json]
   sasu implement amend    --reason "<why>" --approval "<verbatim human approval>" [--exclude-suite "<S1,...>"] [--json]
     (archives and re-seals the edited PRD, refreshes metadata, and invalidates the current verification report.)
-  sasu implement dispatch --name <unique-agent-name> --prd <path> [--kind <agent>] [--model <model>] [--effort <level>] [--env KEY=VALUE ...] [--json]
-    (starts exactly one marked implementor in its own pane with the handoff packet on stdin, records this pane as the run's Observer,
-     and registers the child and inactivity watch with Hide from this actual Observer pane;
-     recursive dispatch is refused. Use --resume-handoff for every durable partial phase,
-     with --recover-absent-child only for a positively absent recorded started child; that recovery sends no input.)
-  sasu implement escalate --reason "<what the implementor is stuck on>" [--target <finding-or-issue-ref>] [--agent <herdr-agent>] [--json]
-    (bounded read-only diagnosis and context recovery; unavailable while a verify execution lease is live.)
+  sasu implement dispatch --name <unique-agent-name> [--prd <path>] [--slug <topic> | --state <path>] [--kind <agent>] [--model <model>] [--effort <level>] [--json]
+    (prepares complete Hide spawn instructions with a fixed native prompt; send the handoff packet on stdin.
+     The Observer runs the printed command directly. The same intent reuses the same child, including retries.)
+  sasu implement escalate --intent <stable-request-key> --reason "<blockage>" [--target <ref>] [--name <advisor-name>] [--kind <agent>] [--model <model>] [--effort <level>] [--json]
+    (reserves one of three distinct advisor intents and prints its Hide spawn instructions; replies arrive as Hide letters.)
   sasu implement artifact (--kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<observation>" | --manifest <json-file>) [--source "<collector and method>"] [--collected-at <ISO-time>] [--target "<observed target>"] [--environment "<environment>"] [--refs "<B1,B2,...>"] [--json]
-  sasu implement plan     --path <plan-file> [--json]
-    (records the plan and sends one Hide request; continue while the Observer confirms by reply.)
-  sasu implement block    --kind <implementation|product|authority|runtime> --question "<text>" --recommendation "<text>" --reversible <yes|no> --scope-impact "<text>" [--external-effect "<text>"] [--json]
-    (records the block and asks the Observer through Hide; end the turn, the answer arrives as a Hide reply.)
-  sasu implement report   [--summary "<text>"] [--json]
-    (sends the current verdict as a Hide report; pending delivery keeps the watch active until inbox confirmation.)
-  sasu implement status   [--slug <topic> | --state <path>] [--digest] [--json]
-    (--digest prints deterministic facts since dispatch for the run's recorded Observer session; other sessions are refused.)
+  sasu implement status   [--slug <topic> | --state <path>] [--json]
+    (reports current contract, deterministic verdict and evidence. Runtime status and letters use hide agent list / hide inbox.)
   sasu implement verify   [--slug <topic> | --state <path>] [--json]
     (executes the sealed required suite, validates current source and evidence, and writes a fresh verification-report.json and verification-report.md.
      Native Fidelity, Code, and optional Security subagents run visibly through the workflow skill and never change this deterministic result.)
-  sasu implement retire   [--slug <topic> | --state <path>] [--adopt [note]] [--json]
-    (state-changing commands record an optional --issuer <implementor|observer|human> label, default implementor, for the audit trail; nothing is gated on it.
-     Mutating another session's run requires --adopt, which records the takeover; all domain mutations are refused during a live verify lease.)
+  sasu implement retire   [--slug <topic> | --state <path>] [--json]
+    (ends the run record. End child agents and watches directly through Hide.
+     Mutations record an optional --issuer <implementor|observer|human> audit label and refuse a live verify lease.)
   sasu prd readiness       --prd <path> [--json]
   sasu prd ready           --prd <path> [--json]   (flips status to ready; refused while readiness has blocking gaps)
   sasu prd approve         --prd <path> --evidence "<verbatim user approval>" [--json]   (records human approval; requires status ready)
@@ -82,8 +74,6 @@ Usage:
   sasu interview checkpoint --slug <topic> --normalized <pending|"Q1,Q2"> [--register-changes "<text>"] [--reopened "<text>"] [--gap "<text>"] [--json]
   sasu interview coherence  --slug <topic> [--min-decisions <n>] [--json]
   sasu interview status     --slug <topic> [--json]
-  sasu supervisor status [--json] (registered runs and current Hide watch facts)
-  sasu supervisor handover --slug <topic> --approval "<verbatim user approval>" [--json] (from the new native Observer, assign Hide watch before recording Sasu authority)
   sasu doctor [--json]
 
 Interview commands own the qa-log's mechanical bookkeeping (transcript source
@@ -408,26 +398,7 @@ async function main(): Promise<void> {
     exit(report.ok ? 0 : 1);
   }
 
-  // Registry status can run outside a project; handover resolves an explicit
-  // project: no setup provisioning, no project root beyond what --slug or
-  // --state resolve from the current directory.
-  if (command === "supervisor") {
-    const supervisorResult = await runSupervisorCommand(projectRoot, args);
-    const quiet = subcommand === "tick" && args.flags.get("quiet") === true;
-    if (quiet && supervisorResult.ok) exit(supervisorResult.exitCode);
-    if (quiet && !supervisorResult.ok) {
-      process.stderr.write(`[${supervisorResult.action}] FAIL - ${supervisorResult.message}\n`);
-      exit(supervisorResult.exitCode);
-    }
-    if (asJson) {
-      process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ...supervisorResult }, null, 2)}\n`);
-    } else {
-      process.stdout.write(`[${supervisorResult.action}] ${supervisorResult.ok ? "ok" : "FAIL"} - ${supervisorResult.message}\n`);
-      if (supervisorResult.summary !== undefined) process.stdout.write(`${supervisorResult.summary.join("\n")}\n`);
-      else if (supervisorResult.detail !== undefined && !supervisorResult.ok) process.stdout.write(`${JSON.stringify(supervisorResult.detail, null, 2)}\n`);
-    }
-    exit(supervisorResult.exitCode);
-  }
+  if (command === "supervisor") fail("sasu supervisor is retired; use hide agent list, hide inbox and Hide watch commands directly");
 
   if (command === "principles") {
     const principlesResult = runPrinciplesCommand(projectRoot, subcommand, args.flags);
@@ -450,19 +421,14 @@ async function main(): Promise<void> {
   }
 
   const implementorBlockedGates = new Set(["gap-audit", "spec", "delegate", "reopen", "answer", "override"]);
-  if (command === "gate" && subcommand !== undefined && implementorBlockedGates.has(subcommand) && currentHerdrRole() === "implementor") {
-    const message = `Implementor role cannot run specification-stage gate '${subcommand}'. This command belongs to the Spec Owner or Observer. Run it from an unmarked main session; no state was written.`;
-    if (asJson) {
-      process.stdout.write(`${JSON.stringify({
-        contractVersion: contractVersion(),
-        ok: false,
-        action: `gate:${subcommand}`,
-        error: { code: "implementor-spec-command-refused", message, roleMarker: `${HERDR_ROLE_ENV_KEY}=implementor` },
-      }, null, 2)}\n`);
-    } else {
-      process.stderr.write(`sasu: ${message}\n`);
+  if (command === "gate" && subcommand !== undefined && implementorBlockedGates.has(subcommand)) {
+    try { assertNotImplementor(runRoleInputs(projectRoot)); }
+    catch (error) {
+      const message = `Specification-stage gate '${subcommand}' refused: ${error instanceof Error ? error.message : String(error)}. Run it from the Spec Owner or Observer; no state was written.`;
+      if (asJson) process.stdout.write(`${JSON.stringify({ contractVersion: contractVersion(), ok: false, action: `gate:${subcommand}`, error: { code: "implementor-spec-command-refused", message } }, null, 2)}\n`);
+      else process.stderr.write(`sasu: ${message}\n`);
+      exit(1);
     }
-    exit(1);
   }
 
   // Every skill funnels through this CLI, so one guard here auto-provisions

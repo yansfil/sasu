@@ -58,28 +58,23 @@ async function main() {
   const payload = JSON.parse(readStdin());
   if (payload?.hook_event_name !== "PostToolUse" || !TOOLS.has(payload.tool_name)
     || typeof payload.cwd !== "string" || typeof payload.session_id !== "string") return;
-  const [{ parseImplementState, requireWorkRoot }, { activePointerReadPath }, { currentSessionId, currentHerdrRole }, { IMPLEMENT_ACTIVE_SCHEMA }] = await Promise.all([
-    import("../cli/dist/implement/store.js"), import("../cli/dist/runs/paths.js"),
-    import("../cli/dist/runs/session.js"), import("../cli/dist/implement/types.js"),
+  const [{ parseImplementState, requireWorkRoot, resolveStatePath }, { currentSessionId }] = await Promise.all([
+    import("../cli/dist/implement/store.js"), import("../cli/dist/runs/session.js"),
   ]);
   const session = currentSessionId({ CODEX_SESSION_ID: payload.session_id });
   const environmentSession = currentSessionId();
   if (!session || (environmentSession && session !== environmentSession)) return;
-  if ((process.env.HERDR_PANE_ID || process.env.HERDR_ENV === "1") && currentHerdrRole() !== "implementor") return;
   const root = projectRoot(payload.cwd);
-  const pointer = JSON.parse(read(activePointerReadPath(root, session), 64 * 1024));
-  if (pointer.schema !== IMPLEMENT_ACTIVE_SCHEMA || typeof pointer.statePath !== "string") return;
-  const recordRoot = fs.realpathSync(pointer.projectRoot ?? root);
-  const statePath = path.resolve(recordRoot, pointer.statePath);
-  if (!statePath.startsWith(path.join(recordRoot, "agents", "runs") + path.sep)) return;
+  const statePath = resolveStatePath(root);
   const stateBytes = read(statePath);
   const state = parseImplementState(stateBytes.toString());
-  if (state.status !== "active" || state.ownerSessionId !== session || state.activeVerification) return;
+  if (state.status !== "active" || state.activeVerification) return;
+  const recordRoot = fs.realpathSync(state.projectRoot);
+  if (!statePath.startsWith(path.join(recordRoot, "agents", "runs") + path.sep)) return;
   const workRoot = fs.realpathSync(requireWorkRoot(state));
-  // `implement start` already isolates a second active run from an occupied
-  // tree. Reuse that invariant and current owner/worktree identity; rescanning
-  // lifetime run history here would make advice slower as a project matures.
-  if (workRoot !== root || fs.realpathSync(state.projectRoot) !== recordRoot) return;
+  // Advice follows a unique active contract in this checkout. Native session
+  // changes only reset throttling; they never transfer or establish ownership.
+  if (workRoot !== root) return;
   const runDir = path.dirname(statePath);
   if (fs.realpathSync(runDir) !== runDir || path.resolve(recordRoot, state.runDir) !== runDir) return;
 
@@ -180,7 +175,7 @@ async function main() {
     if (content.length < 10 && lines < 500) { save(); return; }
     if (cache.notified?.length >= 4_096 || cache.notified?.includes(digest)
       || (cache.notifiedAt && now - cache.notifiedAt < NOTICE_INTERVAL)) { save(); return; }
-    // Recheck authority after Git reads: a lease, adoption, or close that began
+    // Recheck state after Git reads: a lease, amendment, or close that began
     // during the check must not receive an implementation reminder.
     if (!read(statePath).equals(stateBytes)) return;
     cache.notified = [...(cache.notified ?? []), digest];
@@ -188,7 +183,7 @@ async function main() {
     save();
     process.stdout.write(`${JSON.stringify({ hookSpecificOutput: {
       hookEventName: "PostToolUse",
-      additionalContext: `This active implementation run has ${content.length} attributable uncommitted files and ${lines} added/deleted lines. Consider a coherent local commit of your own finished changes. If you are still integrating, continue working. This is a reminder only: do not commit automatically, include foreign or pre-existing changes, push, or claim completion. Keep the required verification and receipt workflow.`,
+      additionalContext: `This active implementation run has ${content.length} attributable uncommitted files and ${lines} added/deleted lines. Consider a coherent local commit of your own finished changes. If you are still integrating, continue working. This is a reminder only: do not commit automatically, include foreign or pre-existing changes, push, or claim completion. Keep the required verification and delivery workflow.`,
     } })}\n`);
   } finally { fs.rmdirSync(lock); }
 }

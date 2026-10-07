@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { stateFixture, SHA } from "../cli/test/helpers/implement-state.mjs";
-import { captureSourceSnapshot, writeActivePointer } from "../cli/dist/implement/store.js";
+import { captureSourceSnapshot } from "../cli/dist/implement/store.js";
 import { SESSION_ID_ENV_KEYS } from "../cli/dist/runs/session.js";
 
 const HOOK = path.resolve(import.meta.dirname, "../scripts/commit_reminder.mjs");
@@ -32,13 +32,13 @@ function fixture(t, { files = 10, initialLines = 1, isolated = false, unborn = f
   if (isolated) git(record, ["worktree", "add", "-qb", "fixture", root]);
   const initialSource = captureSourceSnapshot(root);
   const state = stateFixture(record, {
-    ownerSessionId: "implementor", initialSource,
+    initialSource,
     baselineAttribution: { disposition: "clean", paths: [], baselineDigest: initialSource.digest, head: initialSource.head },
     worktree: isolated ? { path: root, branch: "fixture" } : null,
   });
   const statePath = path.join(record, state.runDir, "state.json");
   const save = () => { fs.mkdirSync(path.dirname(statePath), { recursive: true }); fs.writeFileSync(statePath, JSON.stringify(state)); };
-  save(); writeActivePointer(record, state, "implementor");
+  save();
   return { root, record, state, statePath, save, cache: path.join(path.dirname(statePath), "commit-reminder.json") };
 }
 function put(f, name, text) {
@@ -55,7 +55,7 @@ function invoke(f, { at = START, payload = {}, env = {}, raw } = {}) {
   const indexPath = path.resolve(f.root, index);
   const indexBefore = fs.existsSync(indexPath) ? fs.readFileSync(indexPath) : null;
   const sourceBefore = captureSourceSnapshot(f.root);
-  // Time is the only substituted boundary. The hook, Git, pointers, run state,
+  // Time is the only substituted boundary. The hook, Git, discovery, run state,
   // worktree and files are real, including stdout delivery through stdin JSON.
   const result = spawnSync(process.execPath, ["--import", `data:text/javascript,Date.now%20%3D%20()%20%3D%3E%20${at}`, HOOK], {
     cwd: f.root, env: environment, encoding: "utf8", timeout: 10_000,
@@ -156,12 +156,12 @@ test("unknown or conflicting baseline ownership stays quiet", (t) => {
   }
 });
 
-test("closed, unowned, foreign-session, observer, leased and unsupported runs stay quiet", (t) => {
+test("closed, foreign-session, leased and unsupported runs stay quiet", (t) => {
   const f = fixture(t); changed(f, 10);
   const original = structuredClone(f.state);
   for (const override of [
     { status: "complete" }, { status: "complete-pending-human" }, { status: "retired" }, { status: "blocked" },
-    { ownerSessionId: null }, { ownerSessionId: "someone-else" }, { schema: "sasu.implement.state.v9" },
+    { schema: "sasu.implement.state.v9" },
     { activeVerification: { token: "held", attemptId: "V1", pid: process.pid, hostname: os.hostname(), startedAt: new Date().toISOString(), inputFingerprint: SHA, prdSha256: SHA, executionPids: [], pendingSpawns: 0 } },
   ]) {
     Object.assign(f.state, original, override); f.save();
@@ -169,23 +169,21 @@ test("closed, unowned, foreign-session, observer, leased and unsupported runs st
     for (const key of Object.keys(override)) if (!(key in original)) delete f.state[key];
   }
   Object.assign(f.state, original); f.save();
-  assert.equal(invoke(f, { payload: { session_id: "observer" } }), null);
   assert.equal(invoke(f, { env: { CODEX_THREAD_ID: "observer" } }), null);
-  assert.equal(invoke(f, { env: { HERDR_ENV: "1" } }), null);
-  assert.match(invoke(f, { env: { HERDR_ENV: "1", SASU_HERDR_ROLE: "implementor" } }), /10 attributable/);
+  assert.match(invoke(f, { payload: { session_id: "after-handoff" } }), /10 attributable/);
 });
 
-test("more than 100 closed or malformed historical records do not suppress a current-run reminder", (t) => {
+test("more than 100 retired historical records do not suppress a current-run reminder", (t) => {
   const f = fixture(t); changed(f, 10);
   for (let n = 0; n < 110; n++) {
     const oldPath = path.join(f.record, `agents/runs/closed-${n}/state.json`);
     fs.mkdirSync(path.dirname(oldPath), { recursive: true });
-    fs.writeFileSync(oldPath, n % 2 ? "malformed legacy history" : JSON.stringify({ schema: "retired", status: "complete", history: "x".repeat(200_000) }));
+    fs.writeFileSync(oldPath, JSON.stringify({ schema: "sasu.implement.state.v12.hide", status: "retired", history: "x".repeat(200_000) }));
   }
   assert.match(invoke(f), /10 attributable/);
 });
 
-test("isolated worktree redirects resolve its own state and exclude record-tree changes", (t) => {
+test("Git worktree discovery resolves its own state and excludes record-tree changes", (t) => {
   const f = fixture(t, { isolated: true }); changed(f, 10);
   assert.equal(invoke(f, { payload: { cwd: f.record } }), null);
   fs.mkdirSync(path.join(f.root, "nested"));
@@ -218,7 +216,7 @@ test("malformed, irrelevant and no-run payloads stay quiet and create no cache",
   const f = fixture(t); changed(f, 10);
   for (const raw of ["", "not json", "null", "{}", "[]"]) assert.equal(invoke(f, { raw }), null);
   for (const payload of [{ hook_event_name: "PreToolUse" }, { tool_name: "Read" }, { session_id: "" }, { cwd: "/unavailable-root" }]) assert.equal(invoke(f, { payload }), null);
-  fs.unlinkSync(path.join(f.root, "agents/runs/.active/implementor.json"));
+  f.state.status = "retired"; f.save();
   assert.equal(invoke(f), null);
   assert.equal(fs.existsSync(f.cache), false);
 });
