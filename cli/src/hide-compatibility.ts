@@ -36,7 +36,7 @@ export const REQUIRED_HIDE_CONTRACT = {
   format: 1,
   commands: [
     { ...command("agent show here", {}, ["agent"]), refusals: [
-      "pane_capability_required", "caller_identity_conflict", "participant_unavailable",
+      "agent_pane_required", "caller_identity_conflict", "participant_unavailable",
       "participant_ended", "participant_session_changed", "ambiguous_participant",
     ] },
     command("agent list", {}, ["agent_list"]),

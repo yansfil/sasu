@@ -18,13 +18,5 @@
       "build": "npm --prefix cli run build"
     },
     "commandTimeoutMs": 900000
-  },
-  "worktree": {
-    "enabled": true,
-    "link": [],
-    "copy": [],
-    "setup": [
-      "npm --prefix cli install"
-    ]
   }
 }
