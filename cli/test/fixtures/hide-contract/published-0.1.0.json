@@ -1,0 +1,341 @@
+{
+  "answers": {
+    "agent": {
+      "type": "object",
+      "required": [
+        "connection",
+        "hostScope",
+        "id",
+        "instance",
+        "machine",
+        "name",
+        "pane",
+        "registered",
+        "runtime",
+        "session"
+      ],
+      "properties": {
+        "hostScope": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "machine": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "pane": {
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "registered": {
+          "type": "boolean"
+        },
+        "runtime": {
+          "description": "`running` or `ended`.",
+          "type": "string"
+        }
+      }
+    },
+    "agent_list": {
+      "type": "object",
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/AgentView"
+          },
+          "type": "array"
+        }
+      },
+      "definitions": {
+        "AgentView": {
+          "type": "object",
+          "required": [
+            "connection",
+            "hostScope",
+            "id",
+            "instance",
+            "machine",
+            "name",
+            "pane",
+            "registered",
+            "runtime",
+            "session"
+          ],
+          "properties": {
+            "hostScope": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "machine": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pane": {
+              "type": "string"
+            },
+            "parent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "project": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "registered": {
+              "type": "boolean"
+            },
+            "runtime": {
+              "description": "`running` or `ended`.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "inbox": {
+      "type": "array"
+    },
+    "letter": {
+      "type": "object"
+    }
+  },
+  "commands": [
+    {
+      "answers": [
+        "agent_list"
+      ],
+      "arguments": [],
+      "command": "agent list",
+      "options": [
+        {
+          "name": "--json",
+          "required": false,
+          "requires": [],
+          "value": null
+        }
+      ],
+      "repeats_at_most": null,
+      "rest": null
+    },
+    {
+      "answers": [
+        "agent"
+      ],
+      "arguments": [],
+      "command": "agent spawn",
+      "options": [
+        {
+          "name": "--parent",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--name",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--intent",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--kind",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--repo",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--branch",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--path",
+          "required": false,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--no-watch",
+          "required": false,
+          "requires": [],
+          "value": null
+        },
+        {
+          "name": "--json",
+          "required": false,
+          "requires": [],
+          "value": null
+        }
+      ],
+      "repeats_at_most": null,
+      "rest": "the agent's own arguments"
+    },
+    {
+      "answers": [
+        "letter"
+      ],
+      "arguments": [
+        {
+          "name": "target",
+          "value": {
+            "type": "key"
+          }
+        }
+      ],
+      "command": "request send",
+      "options": [
+        {
+          "name": "--intent",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "key"
+          }
+        },
+        {
+          "name": "--body",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "body"
+          }
+        },
+        {
+          "name": "--kind",
+          "required": false,
+          "requires": [],
+          "value": {
+            "type": "one_of",
+            "values": [
+              "request",
+              "block",
+              "report"
+            ]
+          }
+        }
+      ],
+      "repeats_at_most": null,
+      "rest": null
+    },
+    {
+      "answers": [
+        "letter"
+      ],
+      "arguments": [
+        {
+          "name": "id",
+          "value": {
+            "type": "key"
+          }
+        }
+      ],
+      "command": "request reply",
+      "options": [
+        {
+          "name": "--intent",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "key"
+          }
+        },
+        {
+          "name": "--body",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "body"
+          }
+        }
+      ],
+      "repeats_at_most": null,
+      "rest": null
+    },
+    {
+      "answers": [
+        "inbox"
+      ],
+      "arguments": [],
+      "command": "inbox",
+      "options": [],
+      "repeats_at_most": null,
+      "rest": null
+    }
+  ],
+  "digest": "sha256:a5cdbdeee5b72d64827fa4f98c2b7f6b867a6d514850240d0e74f4656b711a05",
+  "envelopes": {
+    "agent": {
+      "answer": "value",
+      "code": "error.code",
+      "ok": "ok"
+    },
+    "inbox": {
+      "answer": "result",
+      "code": "reason",
+      "ok": "ok"
+    },
+    "request": {
+      "answer": "result",
+      "code": "reason",
+      "ok": "ok"
+    },
+    "watch": {
+      "answer": "result",
+      "code": "reason",
+      "ok": "ok"
+    }
+  },
+  "format": 1
+}

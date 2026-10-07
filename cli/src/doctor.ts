@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { LANE_EFFORT, laneEffortFor, loadConfig, type JudgeTarget, type SasuConfig } from "./config";
 import { resolveMechanicalCommands } from "./mechanical";
-import { contractVersion } from "./version";
+import { buildIdentity, buildIdentityLine, contractVersion, type BuildIdentity } from "./version";
+import { inspectHideCompatibility, type HideCompatibility } from "./hide-compatibility";
 import { RUNTIME_IGNORE_ROOTS, ignoreState } from "./support/ensure-setup";
 import { loadState } from "./implement/store";
 import { IMPLEMENT_SCHEMA, retiredImplementSupportCommit } from "./implement/types";
@@ -20,11 +21,14 @@ export interface DoctorSection {
   section: "judge" | "verify" | "namespace" | "runs" | "skills" | "contract";
   ok: boolean;
   lines: string[];
+  build?: BuildIdentity;
+  hide?: HideCompatibility;
 }
 
 export interface DoctorOptions {
   home?: string;
   harnessRoot?: string;
+  hideBinary?: string;
 }
 
 function binaryVersion(binary: string): string | null {
@@ -227,10 +231,23 @@ export function runDoctor(projectRoot: string, options: DoctorOptions = {}): { o
   const harnessRoot = options.harnessRoot ?? path.resolve(__dirname, "../..");
   sections.push(skillFreshnessSection(home, harnessRoot));
 
+  const build = buildIdentity();
+  const hide = inspectHideCompatibility({ binary: options.hideBinary });
   sections.push({
     section: "contract",
-    ok: true,
-    lines: [`sasu contract version: ${contractVersion()}`],
+    ok: build.status === "available" && hide.compatible,
+    build,
+    hide,
+    lines: [
+      `sasu contract version: ${contractVersion()}`,
+      buildIdentityLine(build),
+      ...(hide.installed ? [`Hide version: ${hide.installed.version}; build commit: ${hide.installed.commit}; contract: ${hide.installed.contract}`] : ["Hide version and build commit: unavailable"]),
+      `required Hide contract format: ${hide.required.format}; commands: ${hide.required.commands.map((entry) => entry.command).join(", ")}`,
+      `caller contract: ${hide.required.caller.contract} (${hide.required.caller.command})`,
+      `Hide compatibility: ${hide.code}`,
+      ...hide.issues,
+      ...(!hide.compatible ? ["Install a Hide build that supports the declared command and answer contract, then rerun sasu doctor."] : []),
+    ],
   });
 
   return { ok: sections.every((s) => s.ok || s.section === "verify"), sections };

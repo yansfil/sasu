@@ -583,7 +583,7 @@ test("gate reopen --json and gate answer --json say what they did beside the NOT
 
 test("json contract: doctor, status, and override all emit contractVersion-tagged JSON", () => {
   const dir = makeProject();
-  const doctor = runCli(dir, ["doctor", "--json"], {});
+  const doctor = runCli(dir, ["doctor", "--json"], { env: installFakeHide(dir).env });
   const doctorParsed = JSON.parse(doctor.stdout);
   assert.match(doctorParsed.contractVersion, /^\d+\.\d+\.\d+$/);
   assert.ok(Array.isArray(doctorParsed.sections));

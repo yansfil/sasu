@@ -16,7 +16,7 @@ function gitInit(dir) {
 }
 
 function namespaceSection(dir) {
-  const section = runDoctor(dir).sections.find((s) => s.section === "namespace");
+  const section = runDoctor(dir, { hideBinary: path.join(dir, "missing-hide") }).sections.find((s) => s.section === "namespace");
   assert.ok(section, "doctor must report a namespace section");
   return section;
 }
@@ -29,7 +29,7 @@ test("doctor namespace: a git checkout without the ignore rule fails with the on
   assert.match(section.lines[0], /NOT gitignored/);
   assert.match(section.lines[0], /agents\/runs\//);
   assert.match(section.lines[1], /agents\/quick\/ is NOT gitignored/);
-  assert.equal(runDoctor(dir).ok, false, "an unignored runs namespace must fail doctor overall");
+  assert.equal(runDoctor(dir, { hideBinary: path.join(dir, "missing-hide") }).ok, false, "an unignored runs namespace must fail doctor overall");
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

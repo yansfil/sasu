@@ -24,7 +24,8 @@ import {
   type InterviewResult,
 } from "./interview/commands";
 import { runInterviewCoherence, type CoherenceResult } from "./interview/coherence";
-import { contractVersion } from "./version";
+import { buildIdentity, buildIdentityLine, contractVersion } from "./version";
+import { REQUIRED_HIDE_CONTRACT } from "./hide-compatibility";
 import { runImplementCommand, type ImplementArgs } from "./implement/commands";
 import { runPrdCommand } from "./prd/commands";
 import { runPrinciplesCommand } from "./principles/commands";
@@ -37,6 +38,7 @@ const USAGE = `sasu - harness CLI: document gates, implementation verification, 
 
 Usage:
   sasu --contract-version
+  sasu version [--json] (also --version; frozen build provenance and required Hide contract)
   sasu gate gap-audit --slug <topic> --qa-log <path> [--grant-budget "<verbatim user approval>"] [--assume-human-findings "<verbatim delegated invocation>"] [--json]
   sasu gate spec      --slug <topic> --prd <path> --qa-log <path> [--grant-budget "<verbatim user approval>"] [--assume-human-findings "<verbatim delegated invocation>"] [--json]
   sasu gate status    --slug <topic> [--json]
@@ -374,16 +376,25 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const [command, subcommand] = args.positional;
   const asJson = args.flags.get("json") === true;
-  const projectRoot = findProjectRoot();
 
   if (args.flags.get("contract-version") === true || command === "contract-version") {
     process.stdout.write(`${contractVersion()}\n`);
     exit(0);
   }
+  if (command === "version" || args.flags.get("version") === true) {
+    const build = buildIdentity();
+    if (asJson) process.stdout.write(`${JSON.stringify({ version: contractVersion(), build, hide: { required: REQUIRED_HIDE_CONTRACT } }, null, 2)}\n`);
+    else {
+      process.stdout.write(`sasu ${contractVersion()}\n${buildIdentityLine(build)}\n`);
+      process.stdout.write(`requires Hide contract format ${REQUIRED_HIDE_CONTRACT.format}: ${REQUIRED_HIDE_CONTRACT.commands.map((entry) => entry.command).join(", ")}\nCaller contract: ${REQUIRED_HIDE_CONTRACT.caller.contract} (${REQUIRED_HIDE_CONTRACT.caller.command})\nRun sasu doctor to check installed Hide compatibility.\n`);
+    }
+    exit(build.status === "available" ? 0 : 1);
+  }
   if (command === undefined || args.flags.get("help") === true || command === "help") {
     process.stdout.write(`${USAGE}\n`);
     exit(command === undefined ? 2 : 0);
   }
+  const projectRoot = findProjectRoot();
 
   if (command === "doctor") {
     const report = runDoctor(projectRoot);
