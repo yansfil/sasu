@@ -113,6 +113,16 @@ test("another parent cannot dispatch into an existing run child", (t) => {
   const { env } = fixture(t, [observer, { ...child, parent: "another-observer" }]);
   assert.throws(() => assertObserverForRun(role, env), refusal("observer_required"));
 });
+test("same-name children on other devices or host scopes cannot block local lineage", (t) => {
+  for (const project of [projectRoot, "/remote/path/that/is/not/local"]) {
+    const foreign = { ...child, id: "foreign", machine: "mini", hostScope: "mini", parent: "remote-observer", project };
+    const otherHost = { ...foreign, id: "other-host", machine: "local", hostScope: "/other/herdr.sock" };
+    const { env } = fixture(t, [observer, child, foreign, otherHost]);
+    assert.doesNotThrow(() => assertObserverForRun(role, env));
+  }
+  const { env } = fixture(t, [observer, child, { ...child, id: "duplicate" }]);
+  assert.throws(() => assertObserverForRun(role, env), refusal("parent_identity_required"));
+});
 test("pane identity is scoped by host and ambiguous live registrations fail closed", (t) => {
   const { env, state } = fixture(t, [{ ...observer, hostScope: "/other-machine/herdr.sock" }]);
   assert.throws(() => assertObserverForRun(role, env), refusal("caller_identity_required"));
@@ -176,7 +186,7 @@ test("executing the printed shell command preserves literal inputs and retries t
 });
 test("fixed handoff guidance preserves the complete packet outside native launch arguments", () => {
   const handoff = "AUTHORITY: implement the approved behavior\n" + "complete original context\n".repeat(1000);
-  const prompt = buildImplementorPrompt({ slug: "fixture", prdPath: "/fixture/approved.md", handoff });
+  const prompt = buildImplementorPrompt({ slug: "fixture", prdPath: "/fixture/approved.md", statePath: "/fixture/agents/runs/fixture/state.json", handoff });
   assert.ok(prompt.includes(handoff.trim()));
   assert.match(prompt, /Run: fixture/);
   assert.match(prompt, /Approved PRD: \/fixture\/approved\.md/);
@@ -184,7 +194,7 @@ test("fixed handoff guidance preserves the complete packet outside native launch
   assert.match(prompt, /hide request send --kind block/);
   assert.match(prompt, /hide request send --kind report/);
   assert.match(prompt, /sasu implement verify on the final committed head/);
-  assert.throws(() => buildImplementorPrompt({ slug: "fixture", prdPath: "/fixture/approved.md", handoff: "  " }), DispatchRejected);
+  assert.throws(() => buildImplementorPrompt({ slug: "fixture", prdPath: "/fixture/approved.md", statePath: "/fixture/state.json", handoff: "  " }), DispatchRejected);
 });
 test("invalid launch input is refused before producing a command", () => {
   for (const change of [{ name: "" }, { intent: "bad\nintent" }, { promptPath: "relative.md" }, { kind: "unsupported" }, { effort: "" }]) {

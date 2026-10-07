@@ -217,7 +217,7 @@ export function parseImplementState(text: string): ImplementState {
   catch (error) { throw new Error(`malformed implement state JSON: ${error instanceof Error ? error.message : String(error)}`); }
   assertRecord(parsed, "root");
   if (parsed["schema"] !== IMPLEMENT_SCHEMA) {
-    throw new Error(`unsupported implement state schema ${String(parsed["schema"] ?? "missing")}; only ${IMPLEMENT_SCHEMA} is accepted. Finish the old run with the CLI built from ${retiredImplementSupportCommit(parsed["schema"])} using \`sasu implement status --state <old-state>\` and its supported delivery commands, or start a separate run with \`sasu implement start --prd <path> --slug <new-slug>\`; no automatic migration is available`);
+    throw new Error(`unsupported implement state schema ${String(parsed["schema"] ?? "missing")}; only ${IMPLEMENT_SCHEMA} is accepted. Finish the old run with the CLI built from ${retiredImplementSupportCommit(parsed["schema"])} using \`sasu implement status --state <old-state>\` and its supported delivery commands, or start a separate run with \`sasu implement start --prd agents/prd/<new-slug>/prd.md\`; no automatic migration is available`);
   }
   for (const field of ["rows", "activeCheck", "qaBriefs", "trails", "designComments", "tasks", "checks", "findings", "riskFindings", "budgetGrants", "completion", "ownerSessionId", "adoptions", "dispatches", "supervision", "pendingDispatch"]) {
     if (field in parsed) throw new Error(`retired implement state field: ${field}; start a new run under the stateless verification contract`);
@@ -285,6 +285,8 @@ export function parseImplementState(text: string): ImplementState {
     assertNullableString(value["model"], `${label}.model`);
     assertIsoTimestamp(value["at"], `${label}.at`);
     assertSha256(value["promptSha256"], `${label}.promptSha256`);
+    assertRecord(value["checkout"], `${label}.checkout`);
+    for (const field of ["repo", "branch", "path"] as const) assertString(value["checkout"][field], `${label}.checkout.${field}`);
     for (const field of ["sessionId", "terminalId", "paneId", "observer", "implementor", "hide", "registration", "watchId"]) {
       if (field in value) throw new Error(`retired runtime identity field: ${label}.${field}`);
     }

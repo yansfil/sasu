@@ -127,7 +127,11 @@ export function assertObserverForRun(input: { implementorName?: string; projectR
   const caller = currentParticipant(participants, env);
   if (input.implementorName === undefined) return;
   rejectRunChild(caller, [input.implementorName], input.projectRoot);
-  const children = participants.filter((participant) => live(participant) && participant.name === input.implementorName && sameProject(participant, input.projectRoot));
+  // Names and filesystem paths only identify a child within the caller's
+  // attested device and host. Never resolve another device's path locally.
+  const children = participants.filter((participant) => live(participant)
+    && participant.machine === caller.machine && participant.hostScope === caller.hostScope
+    && participant.name === input.implementorName && sameProject(participant, input.projectRoot));
   if (children.length > 1) throw new HideCallFailed("the run child is ambiguous in Hide; inspect registrations before retrying", "parent_identity_required");
   if (children.length === 1 && children[0]!.parent !== caller.id) throw new HideCallFailed("Hide names another parent for this run child; retry from its Observer pane", "observer_required");
 }

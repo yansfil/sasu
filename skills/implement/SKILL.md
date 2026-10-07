@@ -64,7 +64,7 @@ sasu implement start --prd <approved-prd-path>
 Under Hide the Observer seals the run with `start`, asks `dispatch` for the handoff command, then runs the returned `hide agent spawn --parent here` command directly.
 The Implementor reads the sealed run using the explicit state path in its handoff.
 Retry the same spawn intent after an interrupted response; Hide owns child reuse and startup recovery.
-Outside Herdr the session that will implement runs `start` and works in the returned worktree when one is created.
+Outside a managed runtime, the implementing session runs `start` in the selected checkout and continues there.
 Read the complete approved PRD and its decisions before editing.
 Write the execution plan from `references/execution-planning.md` before the first source change.
 Implement every required behavior and perform actual browser, native, API, database, CLI, or document observation appropriate to the product.

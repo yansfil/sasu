@@ -23,11 +23,13 @@ export function assertHandoff(handoff: string): string {
   return text;
 }
 
-export function buildImplementorPrompt(input: { slug: string; prdPath: string; handoff: string }): string {
+export function buildImplementorPrompt(input: { slug: string; prdPath: string; statePath: string; handoff: string }): string {
   return [
     "You are the Implementor for an approved Sasu run.",
     `Run: ${input.slug}`,
     `Approved PRD: ${input.prdPath}`,
+    `Run state: ${input.statePath}`,
+    `Select this record explicitly: sasu implement status --state ${shellQuote(input.statePath)}; use the same --state argument for artifact, amend and verify.`,
     "Read the approved PRD and repository instructions before editing. Implement the complete approved contract and preserve peers' work.",
     "The Observer owns dispatch and escalation. Do not spawn an Implementor or advisor, invoke gates, or change the approved contract without recorded human approval.",
     "Write a concise execution plan answering what must change, how the result will be observed, what can go wrong, and what is outside scope. Send it directly to your Hide parent with hide request send before the first source edit.",

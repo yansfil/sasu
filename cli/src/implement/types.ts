@@ -193,6 +193,8 @@ export interface SpawnIntent {
   effort: string;
   promptPath: string;
   promptSha256: string;
+  /** Complete requested checkout inputs, fixed for retries of this intent. */
+  checkout: { repo: string; branch: string; path: string };
 }
 
 export interface EscalationRecord extends SpawnIntent {

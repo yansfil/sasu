@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import test from "node:test";
 import { runtimeFixture } from "../helpers/implement-hide-fixture.mjs";
-import { STATE_PATH } from "../helpers/implement-fixture.mjs";
+import { STATE_PATH, git } from "../helpers/implement-fixture.mjs";
 import { attemptFixture } from "../helpers/implement-state.mjs";
 
 const ok = (result) => { assert.equal(result.status, 0, result.text); return result.json.detail; };
@@ -62,6 +62,18 @@ test("same advisor intent refuses conflicting inputs instead of spending or chan
   }
   assert.deepEqual(f.state().escalations, original);
   assert.equal(ok(escalate(f, "advice")).command, first.command);
+});
+
+test("advisor replay retains its original launch tuple after a branch rename", (t) => {
+  const f = runtimeFixture(t);
+  const first = ok(escalate(f, "advice", ["--reason", "blocked"]));
+  const child = f.execute(first);
+  assert.equal(child.status, 0, child.stderr);
+  git(f.root, ["branch", "-m", "work/renamed"]);
+  const retry = ok(escalate(f, "advice"));
+  assert.deepEqual(retry.argv, first.argv);
+  assert.equal(f.execute(retry).json.value.id, child.json.value.id);
+  assert.equal(f.state().escalations.length, 1);
 });
 
 test("missing intent or reason and unavailable Hide consume no advisor slot", (t) => {

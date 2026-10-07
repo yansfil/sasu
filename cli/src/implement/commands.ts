@@ -358,24 +358,25 @@ function assertLaunchFlags(args: ImplementArgs, reserved: SpawnIntent): void {
 }
 
 function launchInstruction(state: ImplementState, reserved: SpawnIntent): ReturnType<typeof buildSpawnInstruction> {
-  const prompt = normalizeProjectPath(state.projectRoot, reserved.promptPath);
+  const prompt = normalizeProjectPath(reserved.checkout.path, reserved.promptPath);
   if (!fs.existsSync(prompt.absolute) || sha256(fs.readFileSync(prompt.absolute)) !== reserved.promptSha256) {
     throw new DispatchRejected(`reserved prompt is missing or changed: ${reserved.promptPath}; restore its original bytes before retrying intent ${reserved.intent}`);
   }
-  return buildSpawnInstruction({ ...spawnCheckout(state), intent: reserved.intent, name: reserved.name, kind: reserved.kind,
+  return buildSpawnInstruction({ ...reserved.checkout, intent: reserved.intent, name: reserved.name, kind: reserved.kind,
     ...(reserved.model === null ? {} : { model: reserved.model }), effort: reserved.effort, promptPath: prompt.absolute });
 }
 
 function reserveLaunch(state: ImplementState, args: ImplementArgs, intent: string, name: string, prompt: string, fallbackKind = "claude"): SpawnIntent {
   const promptSha256 = sha256(prompt);
   const promptPath = `${state.runDir}/dispatch/${promptSha256}.md`;
-  const instruction = buildSpawnInstruction({ ...spawnCheckout(state), intent, name, kind: flag(args, "kind") ?? fallbackKind,
+  const checkout = spawnCheckout(state);
+  const instruction = buildSpawnInstruction({ ...checkout, intent, name, kind: flag(args, "kind") ?? fallbackKind,
     ...(flag(args, "model") === undefined ? {} : { model: flag(args, "model")! }), ...(flag(args, "effort") === undefined ? {} : { effort: flag(args, "effort")! }), promptPath: path.join(state.projectRoot, promptPath) });
   // Content-addressed prompts prevent two concurrent reservations from
   // overwriting the winning writer's handoff before the state CAS refuses one.
   writeTextAtomic(path.join(state.projectRoot, promptPath), prompt);
   return { intent, at: nowIso(), name, kind: instruction.kind, model: flag(args, "model")?.trim() || null,
-    effort: instruction.effort, promptPath, promptSha256 };
+    effort: instruction.effort, promptPath, promptSha256, checkout };
 }
 
 function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
@@ -390,12 +391,12 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   const reused = reserved !== null;
   if (reserved !== null) {
     assertLaunchFlags(args, reserved);
-    if (handoff !== "" && sha256(buildImplementorPrompt({ slug: state.topicSlug, prdPath: path.join(state.projectRoot, state.prdPath), handoff })) !== reserved.promptSha256) {
+    if (handoff !== "" && sha256(buildImplementorPrompt({ slug: state.topicSlug, prdPath: path.join(state.projectRoot, state.prdPath), statePath, handoff })) !== reserved.promptSha256) {
       throw new DispatchRejected(`handoff conflicts with reserved intent ${reserved.intent}; retry without stdin or with the original packet`);
     }
   } else {
     const name = requiredFlag(args, "name").trim();
-    const prompt = buildImplementorPrompt({ slug: state.topicSlug, prdPath: path.join(state.projectRoot, state.prdPath), handoff: assertHandoff(handoff) });
+    const prompt = buildImplementorPrompt({ slug: state.topicSlug, prdPath: path.join(state.projectRoot, state.prdPath), statePath, handoff: assertHandoff(handoff) });
     reserved = reserveLaunch(state, args, `sasu-implement-${runIntentKey(state)}`, name, prompt);
     state.dispatchIntent = reserved;
     recordEvent(state, { kind: "dispatch", actor: resolveIssuer(flag(args, "issuer")), subject: name, summary: `Hide spawn instructions reserved for ${name}`, at: reserved.at });

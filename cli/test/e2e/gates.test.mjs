@@ -89,7 +89,7 @@ test("a live Hide child cannot run specification gates before setup writes", (t)
   const dir = makeProject({ git: true });
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const hide = installFakeHide(dir);
-  const state = stateFixture(dir, { dispatchIntent: { intent: "implement", at: AT, name: "impl", kind: "claude", model: null, effort: "high", promptPath: "agents/runs/fixture/handoff.md", promptSha256: SHA } });
+  const state = stateFixture(dir, { dispatchIntent: { intent: "implement", at: AT, name: "impl", kind: "claude", model: null, effort: "high", promptPath: "agents/runs/fixture/handoff.md", promptSha256: SHA, checkout: { repo: dir, path: dir, branch: "fixture" } } });
   const record = path.join(dir, state.runDir, "state.json");
   fs.mkdirSync(path.dirname(record), { recursive: true });
   fs.writeFileSync(record, JSON.stringify(state));

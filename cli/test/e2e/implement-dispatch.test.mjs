@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import test from "node:test";
 import { HANDOFF, runtimeFixture } from "../helpers/implement-hide-fixture.mjs";
-import { PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
+import { PRD_PATH, STATE_PATH, git } from "../helpers/implement-fixture.mjs";
 import { attemptFixture } from "../helpers/implement-state.mjs";
 
 const ok = (result) => { assert.equal(result.status, 0, result.text); return result.json.detail; };
@@ -76,6 +76,18 @@ test("conflicting launch flags and handoff cannot rewrite a reserved dispatch", 
   assert.deepEqual(f.state().dispatchIntent, reserved);
   assert.equal(fs.readFileSync(detail.promptPath, "utf8"), bytes);
   assert.equal(Object.keys(f.runtime().spawns).length, 0);
+});
+
+test("dispatch replay retains its original launch tuple after a branch rename", (t) => {
+  const f = runtimeFixture(t);
+  const first = ok(f.dispatch());
+  const child = f.execute(first);
+  assert.equal(child.status, 0, child.stderr);
+  git(f.root, ["branch", "-m", "work/renamed"]);
+  const retry = ok(f.dispatch([], { input: "" }));
+  assert.deepEqual(retry.argv, first.argv);
+  assert.equal(f.execute(retry).json.value.id, child.json.value.id);
+  assert.equal(Object.keys(f.runtime().spawns).length, 1);
 });
 
 test("changed or missing prompt bytes refuse a retry until the original bytes return", (t) => {
