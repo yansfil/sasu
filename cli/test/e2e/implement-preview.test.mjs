@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { CLI, git, isolatedEnv, makeProject, ok, readState, run, runAsync, runText, start, STATE_PATH } from "../helpers/implement-fixture.mjs";
 
-// Contract: letter-735 permits a transient execution lease, never a preview
+// Contract: suite preview permits a transient execution lease, never a preview
 // attempt, result, evidence registration, report, or refusal history write.
 function project(t, { suiteSource, commands = { test: "node suite.cjs" }, timeout = 2000 } = {}) {
   const root = makeProject({ suiteSource });
@@ -24,6 +24,18 @@ async function waitFor(predicate, message) {
     await new Promise((done) => setTimeout(done, 20));
   }
   assert.fail(message);
+}
+
+async function waitForRegisteredExecution(root, mode) {
+  const ready = path.join(root, "agents/ready");
+  // Under full-suite load the child can signal readiness before its owner
+  // persists PID registration. Take immutable-state snapshots only afterward.
+  await waitFor(() => {
+    if (!fs.existsSync(ready)) return false;
+    const active = readState(root).activeVerification;
+    return active?.pendingSpawns === 0
+      && active.executionPids.includes(Number(fs.readFileSync(ready, "utf8")));
+  }, `${mode} child never became ready with its PID registered`);
 }
 
 test("preview executes every sealed suite after a failure, returns full output, and restores exact state bytes", (t) => {
@@ -144,47 +156,53 @@ test("preview holds the shared lease, refuses overlap without writes, and preser
   start(root);
   const before = readState(root);
   const running = runAsync(root, ["implement", "verify", "--preview"]);
-  t.after(() => { if (running.child.exitCode === null) running.child.kill("SIGKILL"); });
-  await waitFor(() => fs.existsSync(path.join(root, "agents/ready")), "preview child never became ready");
-  const active = readState(root).activeVerification;
-  assert.equal(active.mode, "preview");
-  assert.equal(active.attemptId, undefined);
-  assert.ok(active.executionPids.includes(Number(fs.readFileSync(path.join(root, "agents/ready"), "utf8"))));
-  assert.deepEqual(readState(root).verificationAttempts, before.verificationAttempts);
-  const held = stateText(root);
-  const overlap = preview(root);
-  assert.equal(overlap.status, 2);
-  assert.match(overlap.json.message, /verification still active: preview/);
-  assert.equal(stateText(root), held);
-  const status = ok(run(root, ["implement", "status"]));
-  assert.equal(status.detail.activeVerification.mode, "preview");
-  assert.equal(stateText(root), held);
-  const refused = run(root, ["implement", "retire", "--reason", "must wait for preview"]);
-  assert.notEqual(refused.status, 0);
-  const refusalState = readState(root);
-  assert.equal(refusalState.verbs.length, before.verbs.length + 1);
-  assert.equal(refusalState.verbs.at(-1).verb, "retire");
-  assert.equal(refusalState.verbs.at(-1).outcome, "rejected");
-  fs.writeFileSync(path.join(root, "agents/release"), "release\n");
-  const result = await running.done;
+  let refusalState, result;
+  try {
+    await waitForRegisteredExecution(root, "preview");
+    const active = readState(root).activeVerification;
+    assert.equal(active.mode, "preview");
+    assert.equal(active.attemptId, undefined);
+    assert.ok(active.executionPids.includes(Number(fs.readFileSync(path.join(root, "agents/ready"), "utf8"))));
+    assert.deepEqual(readState(root).verificationAttempts, before.verificationAttempts);
+    const held = stateText(root);
+    const overlap = preview(root);
+    assert.equal(overlap.status, 2);
+    assert.match(overlap.json.message, /verification still active: preview/);
+    assert.equal(stateText(root), held);
+    const status = ok(run(root, ["implement", "status"]));
+    assert.equal(status.detail.activeVerification.mode, "preview");
+    assert.equal(stateText(root), held);
+    const refused = run(root, ["implement", "retire", "--reason", "must wait for preview"]);
+    assert.notEqual(refused.status, 0);
+    refusalState = readState(root);
+    assert.equal(refusalState.verbs.length, before.verbs.length + 1);
+    assert.equal(refusalState.verbs.at(-1).verb, "retire");
+    assert.equal(refusalState.verbs.at(-1).outcome, "rejected");
+  } finally {
+    fs.writeFileSync(path.join(root, "agents/release"), "release\n");
+    result = await running.done;
+  }
   assert.equal(result.status, 0, result.stdout + result.stderr);
   delete refusalState.activeVerification;
   assert.deepEqual(readState(root), refusalState, "cleanup must retain the other command's refusal and timestamp");
 });
 
 test("preview refuses a live real verification without touching its attempt or lease", async (t) => {
-  const root = project(t, { suiteSource: "const fs=require('node:fs'); fs.writeFileSync('agents/ready','ready'); const timer=setInterval(()=>{if(fs.existsSync('agents/release'))clearInterval(timer);},20);\n", timeout: 10000 });
+  const root = project(t, { suiteSource: "const fs=require('node:fs'); fs.writeFileSync('agents/ready',String(process.pid)); const timer=setInterval(()=>{if(fs.existsSync('agents/release'))clearInterval(timer);},20);\n", timeout: 10000 });
   start(root);
   const running = runAsync(root, ["implement", "verify"]);
-  t.after(() => { if (running.child.exitCode === null) running.child.kill("SIGKILL"); });
-  await waitFor(() => fs.existsSync(path.join(root, "agents/ready")), "verify child never became ready");
-  const before = stateText(root);
-  const result = preview(root);
-  assert.equal(result.status, 2);
-  assert.match(result.json.message, /verification lease exists/);
-  assert.equal(stateText(root), before);
-  fs.writeFileSync(path.join(root, "agents/release"), "release\n");
-  const finished = await running.done;
+  let finished;
+  try {
+    await waitForRegisteredExecution(root, "verify");
+    const before = stateText(root);
+    const result = preview(root);
+    assert.equal(result.status, 2);
+    assert.match(result.json.message, /verification lease exists/);
+    assert.equal(stateText(root), before);
+  } finally {
+    fs.writeFileSync(path.join(root, "agents/release"), "release\n");
+    finished = await running.done;
+  }
   assert.equal(finished.status, 0, finished.stdout + finished.stderr);
 });
 
@@ -220,7 +238,7 @@ for (const mode of ["preview", "verify"]) {
     const running = runAsync(root, ["implement", "verify", ...(mode === "preview" ? ["--preview"] : [])]);
     let during, duringShip, held, finished;
     try {
-      await waitFor(() => fs.existsSync(path.join(root, "agents/ready")), `${mode} child never became ready`);
+      await waitForRegisteredExecution(root, mode);
       held = stateText(root);
       during = ok(run(root, ["implement", "status"]));
       assert.equal(during.detail.activeVerification.pid, running.child.pid);
