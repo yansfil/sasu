@@ -19,8 +19,9 @@ The digest connects the two installed-binary responses; the structural compariso
 
 The consumed caller command is `hide agent show here`, with no positional arguments and the normal `agent` response envelope.
 Its published contract guarantees the participant fields consumed by Sasu, including nullable `parent` and `project`, and the `running`/`ended` runtime enum.
-The required refusal codes cover missing pane credentials, conflicting caller identity, unavailable or ended participants, changed sessions and ambiguous participants.
+The required refusal codes cover a caller outside an agent pane, conflicting caller identity, unavailable or ended participants, changed sessions and ambiguous participants.
 Removing or renaming a required code fails compatibility.
+Hide commit `3245fec3` renamed `pane_capability_required` to `agent_pane_required` when it began refusing checkout-bound callers for delivery and agent commands, so Sasu requires the new code and builds that predate it report `HIDE_CONTRACT_UNSUPPORTED`.
 The published refusal list is not exhaustive, and Sasu rejects every failed response, so additional refusal codes remain compatible.
 
 The regression fixtures retain the older public export at commit `72c2113f29b74d60897e62c33031f32a977c6118`, which fails compatibility, and the published caller export, which passes the structural comparison.

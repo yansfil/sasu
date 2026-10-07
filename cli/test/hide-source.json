@@ -1,5 +1,5 @@
 {
   "repo": "modakbul-gongbang/hide",
-  "ref": "3ee278fad115c5f59e5935c5d6610470c8b60709",
-  "note": "Merged public caller endpoint and CLI contract, including required nullable participant fields and runtime enum guarantees. Native tests require a private build of this commit with its adjacent daemon, hooks, host helper and pinned Herdr resources."
+  "ref": "9f1448778424cc75d17c606b9dc2f19875d1239a",
+  "note": "Hide main with the caller endpoint and CLI contract, where a caller outside an agent pane is refused agent_pane_required. Native tests require a private build of this commit with its adjacent daemon, hooks, host helper and pinned Herdr resources."
 }
