@@ -29,7 +29,7 @@ test("advisor reservation prints a native spawn and letter reply instructions wi
   assert.match(prompt, /Sealed PRD:/);
   assert.match(prompt, /Blockage: the required command keeps failing/);
   assert.match(prompt, /hide request send <parent-id> .* --kind report/);
-  assert.ok(f.hide.argv().every((argv) => ["agent list", "workspace info"].includes(argv.join(" "))));
+  assert.ok(f.hide.argv().every((argv) => ["agent list", "agent show here"].includes(argv.join(" "))));
   assert.deepEqual(Object.keys(f.runtime().participants), ["observer"]);
   const after = f.state();
   for (const key of ["requirements", "suite", "artifacts", "verificationAttempts", "verificationReport", "dispatchIntent"]) assert.deepEqual(after[key], before[key], key);

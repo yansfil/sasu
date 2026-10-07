@@ -36,7 +36,7 @@ const command = (name: string, options: CommandRequirement["options"] = {}, answ
  */
 export const REQUIRED_HIDE_CONTRACT = {
   format: 1,
-  caller: { command: "workspace info", contract: "unpublished" },
+  caller: { command: "agent show here", contract: "unpublished" },
   commands: [
     command("agent list", {}, ["agent_list"]),
     command("agent spawn", { "--parent": text, "--name": text, "--intent": text, "--kind": text, "--repo": text, "--branch": text, "--path": text }, ["agent"], undefined, true),

@@ -22,7 +22,7 @@ function fixture(t, items = [observer, child]) {
 }
 function response(t, answer) {
   const hide = fixture(t);
-  fs.writeFileSync(path.join(hide.bin, "hide"), `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(JSON.stringify(answer))});\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(hide.bin, "hide"), `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(hide.log)}, JSON.stringify(process.argv.slice(2))+'\\n'); process.stdout.write(${JSON.stringify(JSON.stringify(answer))});\n`, { mode: 0o755 });
   return hide;
 }
 const refusal = (code) => (error) => error instanceof HideCallFailed && error.code === code;
@@ -41,13 +41,21 @@ test("a lead-parented Observer retains run authority across native session chang
   const { env, argv } = fixture(t, [{ ...observer, session: "new-session", instance: "new-terminal" }, child]);
   assert.doesNotThrow(() => assertObserverForRun(role, env));
   assert.doesNotThrow(() => assertNotImplementor(gate, { ...env, SASU_HERDR_ROLE: "implementor" }));
-  assert.deepEqual(argv(), [["agent", "list"], ["workspace", "info"], ["agent", "list"], ["workspace", "info"]]);
+  assert.deepEqual(argv(), [["agent", "show", "here"], ["agent", "list"], ["agent", "show", "here"]]);
 });
-test("a renderer outage cannot turn a local-looking registration into caller authority", (t) => {
+test("caller roles work without a renderer and never query workspace info", (t) => {
   const { env } = fixture(t);
   const headless = { ...env, HIDE_FAKE_RENDERER_DOWN: "1" };
-  assert.throws(() => assertObserverForRun(role, headless), refusal("renderer_unavailable"));
-  assert.throws(() => assertNotImplementor(gate, { ...headless, HERDR_PANE_ID: child.pane }), refusal("renderer_unavailable"));
+  assert.doesNotThrow(() => assertObserverForRun(role, headless));
+  assert.throws(() => assertNotImplementor(gate, { ...headless, HERDR_PANE_ID: child.pane }), refusal("observer_required"));
+});
+test("role checks consume the caller answer independently of display environment", (t) => {
+  const { env } = fixture(t);
+  assert.throws(() => assertNotImplementor(gate, { ...env, HIDE_FAKE_CALLER_ID: child.id }), refusal("observer_required"));
+  assert.doesNotThrow(() => assertObserverForRun(role, { ...env, HIDE_FAKE_CALLER_ID: observer.id, HERDR_PANE_ID: "old-pane", HERDR_SOCKET_PATH: undefined }));
+  for (const code of ["participant_unavailable", "participant_ended", "ambiguous_participant"]) {
+    assert.throws(() => assertObserverForRun(role, { ...env, HIDE_FAKE_CALLER_ERROR: code }), refusal(code));
+  }
 });
 test("run children and advisors cannot invoke Observer commands regardless of old role markers", (t) => {
   const advisor = { ...child, id: "advisor", name: "fixture-advisor", pane: "w1:p3" };
@@ -87,7 +95,7 @@ test("cross-device pane and socket collisions require attestation and cannot sel
   const { env } = fixture(t, [{ ...observer, pane: child.pane }, remoteChild]);
   const remoteEnv = { ...env, HERDR_PANE_ID: child.pane, HIDE_FAKE_DEVICE: device };
   assert.throws(() => assertNotImplementor(gate, remoteEnv), refusal("observer_required"));
-  assert.throws(() => assertNotImplementor(gate, { ...remoteEnv, HIDE_FAKE_RENDERER_DOWN: "1" }), refusal("renderer_unavailable"));
+  assert.throws(() => assertNotImplementor(gate, { ...remoteEnv, HIDE_FAKE_RENDERER_DOWN: "1" }), refusal("observer_required"));
   assert.doesNotThrow(() => assertNotImplementor(gate, { ...remoteEnv, HIDE_FAKE_DEVICE: "local" }));
 });
 test("an absent or inactive remote registration cannot borrow a colliding local row or inherited session", (t) => {
@@ -99,14 +107,14 @@ test("an absent or inactive remote registration cannot borrow a colliding local 
   for (const inactive of [[], [{ ...remote, registered: false }], [{ ...remote, runtime: "ended" }]]) {
     const items = [local, ...inactive];
     fs.writeFileSync(state, JSON.stringify({ participants: Object.fromEntries(items.map((p) => [p.id, p])) }));
-    assert.throws(() => assertNotImplementor(gate, remoteEnv), refusal("caller_identity_required"));
-    assert.throws(() => assertObserverForRun(role, { ...remoteEnv, HIDE_FAKE_RENDERER_DOWN: "1" }), refusal("renderer_unavailable"));
+    assert.throws(() => assertNotImplementor(gate, remoteEnv), refusal("native_identity_required"));
+    assert.throws(() => assertObserverForRun(role, { ...remoteEnv, HIDE_FAKE_RENDERER_DOWN: "1" }), refusal("native_identity_required"));
   }
 });
-test("a connected-device role needs public device attestation even with only one registration", (t) => {
+test("a connected-device caller response works without a local socket or renderer", (t) => {
   const device = "mini";
   const { env } = fixture(t, [{ ...observer, machine: device, hostScope: device }]);
-  assert.throws(() => assertObserverForRun({ projectRoot }, { ...env, HIDE_FAKE_DEVICE: device, HIDE_FAKE_RENDERER_DOWN: "1" }), refusal("renderer_unavailable"));
+  assert.doesNotThrow(() => assertObserverForRun({ projectRoot }, { ...env, HIDE_FAKE_DEVICE: device, HIDE_FAKE_RENDERER_DOWN: "1" }));
   assert.doesNotThrow(() => assertObserverForRun({ projectRoot }, { ...env, HIDE_FAKE_DEVICE: device, HERDR_SOCKET_PATH: undefined }));
 });
 test("another parent cannot dispatch into an existing run child", (t) => {
@@ -125,24 +133,31 @@ test("same-name children on other devices or host scopes cannot block local line
 });
 test("pane identity is scoped by host and ambiguous live registrations fail closed", (t) => {
   const { env, state } = fixture(t, [{ ...observer, hostScope: "/other-machine/herdr.sock" }]);
-  assert.throws(() => assertObserverForRun(role, env), refusal("caller_identity_required"));
+  assert.throws(() => assertObserverForRun(role, env), refusal("native_identity_required"));
   fs.writeFileSync(state, JSON.stringify({ participants: { one: observer, two: { ...observer, id: "other-registration" } } }));
-  assert.throws(() => assertNotImplementor(gate, env), refusal("caller_identity_required"));
+  assert.throws(() => assertNotImplementor(gate, env), refusal("native_identity_required"));
 });
 test("missing, ended and unregistered managed callers cannot grant authority", (t) => {
   const { env, state } = fixture(t);
   for (const items of [[], [{ ...observer, registered: false }], [{ ...observer, runtime: "ended" }]]) {
     fs.writeFileSync(state, JSON.stringify({ participants: Object.fromEntries(items.map((p) => [p.id, p])) }));
-    assert.throws(() => assertNotImplementor(gate, env), refusal("caller_identity_required"));
+    assert.throws(() => assertNotImplementor(gate, env), refusal("native_identity_required"));
   }
-  assert.throws(() => assertObserverForRun(role, { ...env, HERDR_SOCKET_PATH: undefined }), refusal("caller_identity_required"));
+  assert.throws(() => assertObserverForRun(role, { ...env, HERDR_SOCKET_PATH: undefined }), refusal("native_identity_required"));
 });
 test("unmanaged gates remain deterministic while dispatch requires managed authority", (t) => {
   const { env, argv } = fixture(t);
   const unmanaged = { ...env, HERDR_ENV: undefined, HERDR_PANE_ID: undefined };
   assert.doesNotThrow(() => assertNotImplementor(gate, unmanaged));
   assert.equal(argv().length, 0);
-  assert.throws(() => assertObserverForRun(role, unmanaged), refusal("caller_identity_required"));
+  assert.throws(() => assertObserverForRun(role, unmanaged), refusal("native_identity_required"));
+});
+test("an inactive positive caller answer is refused before consulting other participants", (t) => {
+  for (const value of [{ ...observer, runtime: "ended" }, { ...observer, registered: false }]) {
+    const { env, argv } = response(t, { ok: true, value });
+    assert.throws(() => assertObserverForRun(role, env), refusal("caller_identity_required"));
+    assert.deepEqual(argv(), [["agent", "show", "here"]]);
+  }
 });
 test("malformed positive public responses never grant authority", (t) => {
   const hide = response(t, { ok: true, value: { items: [{ id: "observer", name: "observer" }] } });

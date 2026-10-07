@@ -12,7 +12,7 @@ import { scratchDir } from "../scratch.mjs";
 const published = JSON.parse(fs.readFileSync(new URL("../fixtures/hide-contract/published-0.1.0.json", import.meta.url), "utf8"));
 const version = { version: "0.1.0", commit: "72c2113f29b74d60897e62c33031f32a977c6118", contract: published.digest };
 const baselineIssues = [
-  "caller contract unpublished: workspace info",
+  "caller contract unpublished: agent show here",
   "missing or unsupported answer schema: agent",
   "missing or unsupported answer schema: agent_list",
 ];

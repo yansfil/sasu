@@ -26,7 +26,7 @@ export function runHide(argv: string[], env: NodeJS.ProcessEnv = process.env, ti
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const textField = (value: unknown): value is string => typeof value === "string" && value.length > 0;
 
-function call(argv: string[], envelope: "agent" | "workspace", env: NodeJS.ProcessEnv): unknown {
+function call(argv: string[], env: NodeJS.ProcessEnv): unknown {
   const run = runHide(argv, env);
   let wire: unknown;
   try { wire = JSON.parse(run.stdout); } catch { /* Refuse an unsupported public response below. */ }
@@ -35,10 +35,8 @@ function call(argv: string[], envelope: "agent" | "workspace", env: NodeJS.Proce
     const code = textField(wire.reason) ? wire.reason : record(wire.error) && textField(wire.error.code) ? wire.error.code : "command_failed";
     throw new HideCallFailed(`hide ${argv.slice(0, 2).join(" ")} refused (${code}); check Hide and retry from the current agent pane`, code);
   }
-  if (envelope === "workspace" && wire.type !== "workspace_result") throw new HideCallFailed("hide returned an unsupported workspace response; check the installed Hide CLI and retry", "invalid_response");
-  const key = envelope === "agent" ? "value" : "result";
-  if (!(key in wire)) throw new HideCallFailed(`hide returned no ${key}; check the installed Hide CLI and retry`, "invalid_response");
-  return wire[key];
+  if (!("value" in wire)) throw new HideCallFailed("hide returned no value; check the installed Hide CLI and retry", "invalid_response");
+  return wire.value;
 }
 
 /** Only the public fields needed to decide run roles cross this boundary. */
@@ -65,7 +63,7 @@ function participantView(value: unknown): ParticipantView {
 }
 
 export function listParticipants(env: NodeJS.ProcessEnv = process.env): ParticipantView[] {
-  const value = call(["agent", "list"], "agent", env);
+  const value = call(["agent", "list"], env);
   if (!record(value) || !Array.isArray(value.items)) throw new HideCallFailed("hide returned an unusable agent list; check the installed Hide CLI and retry", "invalid_response");
   return value.items.map(participantView);
 }
@@ -78,31 +76,12 @@ function sameProject(participant: ParticipantView, projectRoot: string): boolean
   catch { throw new HideCallFailed("the run child's checkout identity cannot be resolved; restore its checkout before retrying", "project_identity_required"); }
 }
 
-function currentParticipant(participants: ParticipantView[], env: NodeJS.ProcessEnv): ParticipantView {
-  const pane = env["HERDR_PANE_ID"]?.trim();
-  const socket = env["HERDR_SOCKET_PATH"]?.trim();
-  const missingCaller = () => new HideCallFailed("the current Hide registration is missing or ambiguous; inspect Hide registrations before retrying", "caller_identity_required");
-  if (!pane) throw missingCaller();
-  const candidates = participants.filter((participant) => live(participant) && participant.pane === pane);
-  // Agent list is global, not scoped to the authenticated caller. An absent
-  // remote registration can leave an unrelated local record with the same
-  // pane/socket text. Require Hide's attested device even for one local match.
-  const value = call(["workspace", "info"], "workspace", env);
-  if (!record(value) || !record(value.context)) {
-    throw new HideCallFailed("hide returned an unusable caller context; retry from the actual managed agent pane", "invalid_response");
-  }
-  const context = value.context;
-  if (!["device_id", "workspace_id", "checkout_id", "checkout_path"].every((key) => textField(context[key]))) {
-    throw new HideCallFailed("hide returned an unusable caller context; retry from the actual managed agent pane", "invalid_response");
-  }
-  const device = context.device_id as string;
-  // Hide names connected-device host scopes with its attested device id,
-  // whereas local scopes use the native socket path (Hide delivery context).
-  const scope = device === "local" ? socket : device;
-  if (!scope) throw missingCaller();
-  const found = candidates.filter((participant) => participant.machine === device && participant.hostScope === scope);
-  if (found.length !== 1) throw missingCaller();
-  return found[0]!;
+function currentParticipant(env: NodeJS.ProcessEnv): ParticipantView {
+  // The public caller endpoint owns identity resolution and works without a
+  // renderer. Sasu consumes its answer, never selects a caller from the list.
+  const caller = participantView(call(["agent", "show", "here"], env));
+  if (!live(caller)) throw new HideCallFailed("the current Hide registration is not live; inspect Hide registrations before retrying", "caller_identity_required");
+  return caller;
 }
 
 function rejectRunChild(caller: ParticipantView, names: string[], projectRoot: string): void {
@@ -114,8 +93,7 @@ function rejectRunChild(caller: ParticipantView, names: string[], projectRoot: s
 /** Standalone gates work without Hide; a managed caller must have live context. */
 export function assertNotImplementor(runs: Array<{ implementorName?: string; projectRoot: string }>, env: NodeJS.ProcessEnv = process.env): void {
   if (env["HERDR_ENV"] !== "1" && !env["HERDR_PANE_ID"]?.trim()) return;
-  const participants = listParticipants(env);
-  const caller = currentParticipant(participants, env);
+  const caller = currentParticipant(env);
   for (const run of runs) {
     if (run.implementorName !== undefined) rejectRunChild(caller, [run.implementorName], run.projectRoot);
   }
@@ -123,10 +101,10 @@ export function assertNotImplementor(runs: Array<{ implementorName?: string; pro
 
 /** A lead may parent the Observer. Only this run's child relationship matters. */
 export function assertObserverForRun(input: { implementorName?: string; projectRoot: string }, env: NodeJS.ProcessEnv = process.env): void {
-  const participants = listParticipants(env);
-  const caller = currentParticipant(participants, env);
+  const caller = currentParticipant(env);
   if (input.implementorName === undefined) return;
   rejectRunChild(caller, [input.implementorName], input.projectRoot);
+  const participants = listParticipants(env);
   // Names and filesystem paths only identify a child within the caller's
   // attested device and host. Never resolve another device's path locally.
   const children = participants.filter((participant) => live(participant)

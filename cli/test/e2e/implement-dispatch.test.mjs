@@ -31,7 +31,7 @@ test("dispatch prints a complete native command without starting or registering 
   assert.match(prompt, /hide request send --kind report/);
   assert.doesNotMatch(prompt, /sasu implement (plan|block|report)/);
   assert.deepEqual(Object.keys(f.runtime().participants), ["observer"]);
-  assert.ok(f.hide.argv().every((argv) => ["agent list", "workspace info"].includes(argv.join(" "))));
+  assert.ok(f.hide.argv().every((argv) => ["agent list", "agent show here"].includes(argv.join(" "))));
   assertNoRuntimeCopies(f.state());
 });
 

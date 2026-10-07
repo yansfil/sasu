@@ -24,15 +24,20 @@ const caller = () => {
   if (found.length !== 1) refuse("native_identity_required");
   return found[0];
 };
-if (argv[0] === "workspace" && argv[1] === "info" && argv.length === 2) {
-  if (process.env.HIDE_FAKE_RENDERER_DOWN === "1") refuse("renderer_unavailable");
-  const context = state.context ?? { device_id: process.env.HIDE_FAKE_DEVICE ?? "local", workspace_id: "fixture", checkout_id: "fixture", checkout_path: process.cwd() };
-  process.stdout.write(JSON.stringify({ type: "workspace_result", ok: true, result: { context, capabilities: [] } }) + "\n");
-  process.exit(0);
-}
 if (argv[0] !== "agent") refuse("invalid_argument");
 if (argv[1] === "list" && argv.length === 2) reply({ items: participants() });
 if (argv[1] === "show" && argv.length === 3) {
+  if (argv[2] === "here") {
+    if (process.env.HIDE_FAKE_CALLER_ERROR) refuse(process.env.HIDE_FAKE_CALLER_ERROR);
+    // An explicit provider answer lets client tests vary display environment
+    // independently. This double does not prove native caller attestation.
+    if (process.env.HIDE_FAKE_CALLER_ID) {
+      const current = state.participants?.[process.env.HIDE_FAKE_CALLER_ID];
+      if (!current) refuse("participant_unavailable");
+      reply(current);
+    }
+    reply(caller());
+  }
   const found = participants().find((p) => p.id === argv[2]);
   if (!found) refuse("agent_unavailable");
   reply(found);
