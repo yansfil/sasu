@@ -240,6 +240,171 @@ process.stderr.write("HTTP 404: Not Found"); process.exit(1);
   return { bin, store };
 }
 
+function ciFixture(t, responses, { ci = {}, merge = false } = {}) {
+  const current = fixture();
+  t.after(() => fs.rmSync(current.root, { recursive: true, force: true }));
+  const store = path.join(current.root, "agents", "fake-gh");
+  const callsPath = path.join(store, "calls.jsonl");
+  write(path.join(store, "responses.json"), JSON.stringify(responses));
+  write(path.join(current.root, "agents", "config.json"), JSON.stringify({ delivery: { ci } }));
+  const pr = {
+    number: 21, url: "https://github.com/example/product/pull/21", state: "OPEN",
+    isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
+    headRefName: "prd/fixture", headRefOid: current.report.headSha, baseRefName: "main",
+  };
+  write(path.join(current.root, "agents", "test-bin", "gh"), `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const store = ${JSON.stringify(store)};
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(args) + "\\n");
+if (args[0] === "pr" && args[1] === "checks") {
+  const responses = JSON.parse(fs.readFileSync(path.join(store, "responses.json"), "utf8"));
+  const countPath = path.join(store, "count");
+  const count = fs.existsSync(countPath) ? Number(fs.readFileSync(countPath, "utf8")) : 0;
+  const response = responses[Math.min(count, responses.length - 1)];
+  fs.writeFileSync(countPath, String(count + 1));
+  process.stdout.write(response.stdout || "");
+  process.stderr.write(response.stderr || "");
+  process.exit(response.status);
+}
+if (args[0] === "pr" && args[1] === "view") {
+  const pr = ${JSON.stringify(pr)};
+  if (fs.existsSync(path.join(store, "merged"))) {
+    pr.state = "MERGED";
+    pr.mergeCommit = { oid: pr.headRefOid };
+  }
+  process.stdout.write(JSON.stringify(pr));
+  process.exit(0);
+}
+if (args[0] === "pr" && args[1] === "merge") {
+  fs.writeFileSync(path.join(store, "merged"), "yes");
+  process.exit(0);
+}
+process.stderr.write("Unexpected fake gh command");
+process.exit(99);
+`, 0o755);
+  if (merge) {
+    const remote = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-ship-ci-remote-"));
+    t.after(() => fs.rmSync(remote, { recursive: true, force: true }));
+    run("git", ["init", "--bare", "-q", "--initial-branch=main"], { cwd: remote });
+    run("git", ["checkout", "-q", "-b", "prd/fixture", current.report.headSha], { cwd: current.root });
+    run("git", ["update-ref", "refs/heads/main", current.state.initialSource.head], { cwd: current.root });
+    run("git", ["remote", "add", "origin", remote], { cwd: current.root });
+    run("git", ["push", "-q", "origin", "main"], { cwd: current.root });
+    current.state.delivery = { mode: "pr", branch: "prd/fixture", baseBranch: "main" };
+    write(current.statePath, JSON.stringify(current.state));
+  }
+  return {
+    ...current,
+    calls: () => fs.readFileSync(callsPath, "utf8").trim().split("\n").map(line => JSON.parse(line)),
+  };
+}
+
+const noChecks = { status: 1, stderr: "no checks reported on the 'prd/fixture' branch\n" };
+const pendingChecks = { status: 8, stdout: JSON.stringify([{ name: "test", bucket: "pending", state: "IN_PROGRESS" }]) };
+const passedChecks = { status: 0, stdout: JSON.stringify([{ name: "test", bucket: "pass", state: "SUCCESS" }]) };
+const failedChecks = { status: 1, stdout: JSON.stringify([{ name: "test", bucket: "fail", state: "FAILURE" }]) };
+
+function watchCi(current, extra = []) {
+  return run(process.execPath, [shipScript, "watch-ci", "--state", current.statePath, "--pr", "21", ...extra], {
+    cwd: current.root, env: current.env, allowFailure: true,
+  });
+}
+
+test("watch-ci waits for checks to appear, then pending checks to pass", t => {
+  const current = ciFixture(t, [noChecks, pendingChecks, passedChecks]);
+  const result = watchCi(current, ["--timeout", "15", "--interval", "5"]);
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.verdict, "pass");
+  assert.equal(output.ok, true);
+  assert.equal(output.timedOut, false);
+  assert.equal(output.noChecks, false);
+  assert.equal(current.calls().length, 3);
+});
+
+for (const [label, response] of [["gh reports no checks", noChecks], ["gh returns an empty list", { status: 0, stdout: "[]" }]]) {
+  test(`watch-ci times out without success when ${label}`, t => {
+    const current = ciFixture(t, [response], { ci: { timeoutSeconds: 0.2 } });
+    const started = performance.now();
+    const result = watchCi(current);
+    assert.equal(result.status, 3, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.ok, false);
+    assert.equal(output.timedOut, true);
+    assert.equal(output.noChecks, true);
+    assert.equal(output.verdict, "no-checks");
+    assert.equal(output.timeoutSeconds, 0.2);
+    assert.match(output.note, /No CI checks.*timeout.*watch-ci/);
+    assert.ok(performance.now() - started >= 200, "absence of checks must wait until the configured deadline");
+  });
+}
+
+for (const [label, response, exitCode, verdict] of [
+  ["pass", passedChecks, 0, "pass"],
+  ["failure", failedChecks, 2, "fail"],
+  ["pending", pendingChecks, 3, "pending"],
+  ["cancelled", { status: 1, stdout: JSON.stringify([{ bucket: "cancel" }]) }, 2, "fail"],
+  ["skipped", { status: 0, stdout: JSON.stringify([{ bucket: "skipping" }]) }, 0, "pass"],
+]) {
+  test(`watch-ci preserves ${label} behavior`, t => {
+    const current = ciFixture(t, [response]);
+    const result = watchCi(current, ["--timeout", "0"]);
+    assert.equal(result.status, exitCode, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.verdict, verdict);
+    assert.equal(output.ok, verdict === "pass");
+    assert.equal(output.timedOut, verdict === "pending");
+  });
+}
+
+for (const response of [
+  { status: 1, stderr: "HTTP 503: service unavailable" },
+  { status: 4, stderr: "Authentication required" },
+  { status: 0, stdout: "not JSON" },
+  { status: 0, stdout: "{}" },
+  { status: 1, stdout: passedChecks.stdout, stderr: "provider failed" },
+  { status: 1, stderr: "HTTP 403: no checks permission" },
+]) {
+  test(`watch-ci reports provider errors rather than waiting or succeeding: ${JSON.stringify(response)}`, t => {
+    const current = ciFixture(t, [response]);
+    const result = watchCi(current, ["--timeout", "1"]);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Could not inspect CI checks/);
+    assert.equal(current.calls().length, 1);
+  });
+}
+
+for (const watch of [true, false]) {
+  test(`merge refuses missing checks even with ci.watch=${watch} and --no-watch`, t => {
+    const current = ciFixture(t, [noChecks], { ci: { watch }, merge: true });
+    const result = run(process.execPath, [shipScript, "merge", "--state", current.statePath, "--pr", "21", "--approval", "merge this fixture", "--no-watch"], {
+      cwd: current.root, env: current.env, allowFailure: true,
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Required CI is 'no-checks'/);
+    assert.ok(current.calls().every(args => args[1] !== "merge"));
+  });
+}
+
+for (const [label, response, canMerge] of [
+  ["pass", passedChecks, true], ["failure", failedChecks, false], ["pending", pendingChecks, false],
+  ["empty list", { status: 0, stdout: "[]" }, false],
+  ["provider error", { status: 1, stderr: "HTTP 503: service unavailable" }, false],
+]) {
+  test(`merge checks ${label} before any merge mutation`, t => {
+    const current = ciFixture(t, [response], { merge: true });
+    const result = run(process.execPath, [shipScript, "merge", "--state", current.statePath, "--pr", "21", "--approval", "merge this fixture"], {
+      cwd: current.root, env: current.env, allowFailure: true,
+    });
+    assert.equal(result.status, canMerge ? 0 : 1, result.stderr);
+    assert.equal(current.calls().some(args => args[1] === "merge"), canMerge);
+    if (canMerge) assert.equal(JSON.parse(result.stdout).ci.verdict, "pass");
+    else assert.match(result.stderr, /Required CI|Could not inspect CI checks/);
+  });
+}
+
 test("screenshots upload once per head into the assets repo and land under Summary", () => {
   const current = fixture();
   run("git", ["remote", "add", "origin", "https://github.com/example/product.git"], { cwd: current.root });

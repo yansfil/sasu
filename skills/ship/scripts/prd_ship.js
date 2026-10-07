@@ -1046,8 +1046,15 @@ function fetchChecks(context, prRef) {
   } catch {
     checks = null;
   }
-  const noChecks = result.status !== 0 && /no checks reported|no checks/i.test(`${result.stderr}${result.stdout}`);
-  return { checks, noChecks, exitCode: result.status, stderr: result.stderr };
+  // gh exits 1 for both missing checks and failures, and 8 for pending checks.
+  // Only its explicit absence response may substitute for a JSON check list.
+  const reportedAbsent = result.status === 1 && /^no checks reported\b/i.test((result.stderr || result.stdout).trim());
+  if (reportedAbsent && checks === null) checks = [];
+  if (!Array.isArray(checks) || ![0, 1, 8].includes(result.status)
+      || (result.status !== 0 && (classifyChecks(checks) === "pass" || (checks.length === 0 && !reportedAbsent)))) {
+    throw new Error(`Could not inspect CI checks for ${prRef} (gh exit ${result.status}). Check GitHub access and retry watch-ci.\n${(result.stderr || result.stdout).trim()}`);
+  }
+  return { checks, noChecks: checks.length === 0, exitCode: result.status, stderr: result.stderr };
 }
 
 function classifyChecks(checks) {
@@ -1066,23 +1073,25 @@ function watchCi(context, options = {}) {
   const deadline = Date.now() + timeoutSeconds * 1000;
   let last = fetchChecks(context, prRef);
   let verdict = last.noChecks ? "no-checks" : classifyChecks(last.checks);
-  while (verdict === "pending" && Date.now() < deadline) {
-    sleepMs(Math.min(intervalSeconds * 1000, Math.max(1000, deadline - Date.now())));
+  // A push can precede check registration. Absence waits under the same
+  // deadline as queued/running checks and never supplies a green verdict.
+  while (["pending", "no-checks"].includes(verdict) && Date.now() < deadline) {
+    sleepMs(Math.min(intervalSeconds * 1000, Math.max(0, deadline - Date.now())));
     last = fetchChecks(context, prRef);
     verdict = last.noChecks ? "no-checks" : classifyChecks(last.checks);
   }
   return {
     pr: prRef,
     verdict,
-    ok: verdict === "pass" || verdict === "no-checks",
-    timedOut: verdict === "pending",
+    ok: verdict === "pass",
+    timedOut: ["pending", "no-checks"].includes(verdict),
     timeoutSeconds,
     intervalSeconds,
     checks: last.checks,
     noChecks: last.noChecks,
     stderr: last.stderr || null,
     note: verdict === "no-checks"
-      ? "No CI checks are reported for this PR; confirm whether the repository is expected to run CI."
+      ? "No CI checks appeared before timeout; confirm the CI workflow is enabled, then rerun watch-ci to keep waiting."
       : verdict === "pending"
         ? "Checks still pending at timeout; rerun watch-ci to keep waiting."
         : null,
@@ -1477,7 +1486,7 @@ function cmdMerge(options) {
 
   const checks = fetchChecks(context, pr.url || prRef);
   const ciVerdict = checks.noChecks ? "no-checks" : classifyChecks(checks.checks);
-  if (!["pass", "no-checks"].includes(ciVerdict)) {
+  if (ciVerdict !== "pass") {
     throw new Error(`Required CI is '${ciVerdict}'. Wait for a pass or return to implement for source fixes before merge.`);
   }
   // The tree is clean by merge time; examine the PR's actual change set.
