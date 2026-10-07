@@ -213,8 +213,8 @@ export function treeFingerprint(_state: ImplementState, workRoot: string): Execu
  * where they were: nothing binds a socket under them and their contents are
  * worth keeping across attempts.
  */
-export function runtimeEnv(state: ImplementState, runtimeTmp: string): NodeJS.ProcessEnv {
-  const runtimeRoot = path.join(state.projectRoot, state.runDir, "suite-runtime");
+export function runtimeEnv(state: ImplementState, runtimeTmp: string, workRoot: string): NodeJS.ProcessEnv {
+  const runtimeRoot = path.join(workRoot, state.runDir, "suite-runtime");
   const runtimeHome = path.join(runtimeRoot, "home");
   const runtimeCache = path.join(runtimeRoot, "cache");
   fs.mkdirSync(runtimeHome, { recursive: true });
@@ -253,7 +253,7 @@ export async function executeUnit(
   onSpawn?: (pid: number) => void,
 ): Promise<{ execution: MechanicalExecution; mutatedTree: boolean; tree: ExecutionTreeFingerprint }> {
   const before = captureSourceSnapshot(workRoot).digest;
-  const execution = await executeMechanicalArgv(workRoot, unit.argv, unit.cwd, timeoutMs, runtimeEnv(state, runtimeTmp), onSpawn);
+  const execution = await executeMechanicalArgv(workRoot, unit.argv, unit.cwd, timeoutMs, runtimeEnv(state, runtimeTmp, workRoot), onSpawn);
   const tree = treeFingerprint(state, workRoot);
   // A command that rewrites the tree it is being judged on has moved the
   // goalposts mid-measurement: its own exit code no longer describes the tree

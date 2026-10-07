@@ -1,3 +1,4 @@
+import { currentGit, type CurrentGit } from "./worktree";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -18,7 +19,7 @@ import { assertNotImplementor, assertObserverForRun } from "./hide";
 import { DispatchRejected, assertDispatchablePrd, assertHandoff, buildImplementorPrompt, buildSpawnInstruction } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
-import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, repositoryHead, requireWorkRoot, sha256, statePathFor, runRoleInputs, writeJsonAtomic, writeTextAtomic, StateConflictError } from "./store";
+import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, repositoryHead, requireWorkRoot, sha256, statePathFor, runRoleInputs, changedPathsFromGit, requireRunContext, recordContext, resolveStatePath, writeTextAtomic, StateConflictError } from "./store";
 import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type MechanicalRunRecord, type RegisteredArtifact, type UnifiedVerificationAttempt, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, type SpawnIntent, type EscalationRecord, ESCALATE_LIMIT_PER_RUN } from "./types";
 
 export interface ImplementArgs {
@@ -208,11 +209,17 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
         gapAudit: null,
         spec: null,
       };
-  const statePath = statePathFor(projectRoot, slug);
-  if (fs.existsSync(statePath)) {
+  const context = recordContext(statePathFor(projectRoot, slug));
+  // A new record, sealed contract and suite must share the selected checkout.
+  if (context.recordRoot !== fs.realpathSync(projectRoot)) {
+    throw new Error("implement start requires its run record in the selected checkout; restore agents/runs there and retry");
+  }
+  const statePath = context.statePath;
+  const existingPath = resolveStatePath(projectRoot, { slug });
+  if (fs.existsSync(existingPath)) {
     let existingSchema = "unknown";
     try {
-      existingSchema = String((JSON.parse(fs.readFileSync(statePath, "utf8")) as { schema?: unknown }).schema ?? "missing");
+      existingSchema = String((JSON.parse(fs.readFileSync(existingPath, "utf8")) as { schema?: unknown }).schema ?? "missing");
     } catch {
       existingSchema = "malformed";
     }
@@ -238,8 +245,6 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     schema: IMPLEMENT_SCHEMA,
     status: "active",
     topicSlug: slug,
-    projectRoot,
-    worktree: null,
     runDir: runDirRel(slug),
     prdPath: prd.relative,
     prd: {
@@ -294,7 +299,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   fs.mkdirSync(path.join(projectRoot, state.runDir, "artifacts", "logs"), { recursive: true });
   writePrdSnapshot(projectRoot, snapshotPath, text);
   // state.json is the commit point. No runtime process or checkout is owned here.
-  writeJsonAtomic(statePath, state);
+  persistState(statePath, state);
   return result("start", true, `implement run started: ${slug}`, publicState(state), [
     `Prepare dispatch with sasu implement dispatch --slug ${slug} --name <unique-agent-name> --prd ${prd.relative} and a handoff packet on stdin; run its printed Hide command from the Observer pane.`,
   ]);
@@ -322,12 +327,14 @@ function readHandoffPacket(): string {
 }
 
 function runIntentKey(state: ImplementState): string {
-  return sha256(JSON.stringify({ root: state.projectRoot, slug: state.topicSlug, createdAt: state.createdAt })).slice(0, 24);
+  return sha256(JSON.stringify({ root: requireWorkRoot(state), slug: state.topicSlug, createdAt: state.createdAt })).slice(0, 24);
 }
 
 /** Checkout creation belongs to Hide; pass the existing branch/path exactly. */
 function spawnCheckout(state: ImplementState): { repo: string; branch: string; path: string } {
   const root = requireWorkRoot(state);
+  const gitIdentity = currentGit(root);
+  if (!gitIdentity.available) throw new DispatchRejected(`dispatch requires a committed Git checkout: ${gitIdentity.reason}`);
   const branch = spawnSync("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], { cwd: root, encoding: "utf8", timeout: 15_000 });
   if (branch.error !== undefined || branch.status !== 0 || branch.stdout.trim() === "") {
     throw new DispatchRejected("dispatch requires an existing checkout on an attached branch; choose the approved run branch before preparing Hide instructions");
@@ -346,7 +353,7 @@ function spawnCheckout(state: ImplementState): { repo: string; branch: string; p
 }
 
 function assertObserver(state: ImplementState, implementorName = state.dispatchIntent?.name): void {
-  assertNotImplementor(runRoleInputs(state.projectRoot));
+  assertNotImplementor(runRoleInputs(requireWorkRoot(state)));
   assertObserverForRun({ ...(implementorName === undefined ? {} : { implementorName }), projectRoot: requireWorkRoot(state) });
 }
 
@@ -371,10 +378,10 @@ function reserveLaunch(state: ImplementState, args: ImplementArgs, intent: strin
   const promptPath = `${state.runDir}/dispatch/${promptSha256}.md`;
   const checkout = spawnCheckout(state);
   const instruction = buildSpawnInstruction({ ...checkout, intent, name, kind: flag(args, "kind") ?? fallbackKind,
-    ...(flag(args, "model") === undefined ? {} : { model: flag(args, "model")! }), ...(flag(args, "effort") === undefined ? {} : { effort: flag(args, "effort")! }), promptPath: path.join(state.projectRoot, promptPath) });
+    ...(flag(args, "model") === undefined ? {} : { model: flag(args, "model")! }), ...(flag(args, "effort") === undefined ? {} : { effort: flag(args, "effort")! }), promptPath: path.join(requireWorkRoot(state), promptPath) });
   // Content-addressed prompts prevent two concurrent reservations from
   // overwriting the winning writer's handoff before the state CAS refuses one.
-  writeTextAtomic(path.join(state.projectRoot, promptPath), prompt);
+  writeTextAtomic(path.join(requireWorkRoot(state), promptPath), prompt);
   return { intent, at: nowIso(), name, kind: instruction.kind, model: flag(args, "model")?.trim() || null,
     effort: instruction.effort, promptPath, promptSha256, checkout };
 }
@@ -383,20 +390,20 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertMutableRun(statePath, state);
   assertObserver(state, state.dispatchIntent?.name ?? flag(args, "name")?.trim());
-  const prd = assertDispatchablePrd(state.projectRoot, flag(args, "prd") ?? state.prdPath);
+  const prd = assertDispatchablePrd(requireWorkRoot(state), flag(args, "prd") ?? state.prdPath);
   if (prd.relative !== state.prdPath) throw new DispatchRejected("dispatch PRD must be the run's sealed PRD");
-  requirePinnedPrd(state.projectRoot, state);
+  requirePinnedPrd(requireWorkRoot(state), state);
   const handoff = readHandoffPacket();
   let reserved = state.dispatchIntent;
   const reused = reserved !== null;
   if (reserved !== null) {
     assertLaunchFlags(args, reserved);
-    if (handoff !== "" && sha256(buildImplementorPrompt({ slug: state.topicSlug, prdPath: path.join(state.projectRoot, state.prdPath), statePath, handoff })) !== reserved.promptSha256) {
+    if (handoff !== "" && sha256(buildImplementorPrompt({ slug: state.topicSlug, prdPath: path.join(requireWorkRoot(state), state.prdPath), statePath, handoff })) !== reserved.promptSha256) {
       throw new DispatchRejected(`handoff conflicts with reserved intent ${reserved.intent}; retry without stdin or with the original packet`);
     }
   } else {
     const name = requiredFlag(args, "name").trim();
-    const prompt = buildImplementorPrompt({ slug: state.topicSlug, prdPath: path.join(state.projectRoot, state.prdPath), statePath, handoff: assertHandoff(handoff) });
+    const prompt = buildImplementorPrompt({ slug: state.topicSlug, prdPath: path.join(requireWorkRoot(state), state.prdPath), statePath, handoff: assertHandoff(handoff) });
     reserved = reserveLaunch(state, args, `sasu-implement-${runIntentKey(state)}`, name, prompt);
     state.dispatchIntent = reserved;
     recordEvent(state, { kind: "dispatch", actor: resolveIssuer(flag(args, "issuer")), subject: name, summary: `Hide spawn instructions reserved for ${name}`, at: reserved.at });
@@ -404,7 +411,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   }
   const instruction = launchInstruction(state, reserved);
   return result("dispatch", true, `Hide spawn instructions ${reused ? "reused" : "prepared"} for ${reserved.name}; run the command from the Observer pane`, {
-    dispatch: reserved, ...instruction, promptPath: path.join(state.projectRoot, reserved.promptPath), reused,
+    dispatch: reserved, ...instruction, promptPath: path.join(requireWorkRoot(state), reserved.promptPath), reused,
   }, [instruction.command, "Retry that exact command with the same --intent if native_identity_unavailable is returned; Hide owns child identity, lineage and the watch."]);
 }
 
@@ -427,12 +434,12 @@ function escalate(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     if (state.escalations.length >= ESCALATE_LIMIT_PER_RUN) throw new VerbRejected("transition", `advisor limit reached (${ESCALATE_LIMIT_PER_RUN} distinct intents); ask a human to resolve the run. Retry an existing --intent without consuming another slot`);
     const reason = requiredFlag(args, "reason").trim();
     const target = flag(args, "target")?.trim() || null;
-    requirePinnedPrd(state.projectRoot, state);
+    requirePinnedPrd(requireWorkRoot(state), state);
     const id = state.escalations.length + 1;
     const prompt = [
       "ROLE: Read-only advisor for the approved implementation run. Diagnose the blockage with source and evidence; do not edit product files or launch more agents.",
       `Run: ${state.topicSlug}`,
-      `Sealed PRD: ${path.join(state.projectRoot, state.prd.snapshotPath)}`,
+      `Sealed PRD: ${path.join(requireWorkRoot(state), state.prd.snapshotPath)}`,
       `Current deterministic state and verification report: ${statePath}`,
       `Target: ${target ?? "whole run"}`,
       `Blockage: ${reason}`,
@@ -450,7 +457,7 @@ function escalate(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   }
   const instruction = launchInstruction(state, record);
   return result("escalate", true, `advisor instructions ${existing === undefined ? "reserved" : "reused"}: ${record.id} of ${ESCALATE_LIMIT_PER_RUN}; run the command and receive advice through Hide letters`, {
-    escalation: record, ...instruction, promptPath: path.join(state.projectRoot, record.promptPath), reused: existing !== undefined,
+    escalation: record, ...instruction, promptPath: path.join(requireWorkRoot(state), record.promptPath), reused: existing !== undefined,
     escalationsRemaining: ESCALATE_LIMIT_PER_RUN - state.escalations.length,
   }, [instruction.command, "The advisor replies through Hide; no diagnosis has run yet."]);
 }
@@ -533,7 +540,7 @@ function harnessOwnedRunPath(state: ImplementState, relative: string): boolean {
  */
 function canonicalRunRelative(state: ImplementState, target: { absolute: string; relative: string }): string {
   try {
-    const realRunDir = fs.realpathSync(path.join(state.projectRoot, state.runDir));
+    const realRunDir = fs.realpathSync(path.join(requireWorkRoot(state), state.runDir));
     const realTarget = fs.realpathSync(target.absolute);
     if (realTarget === realRunDir) return state.runDir;
     if (realTarget.startsWith(`${realRunDir}${path.sep}`)) {
@@ -638,13 +645,13 @@ function specGateIsFresh(projectRoot: string, state: ImplementState): boolean {
 
 
 /** One digest covers every reproducible input to deterministic verification. */
-function inputIdentity(state: ImplementState, sourceDigest: string, intentInput: UnifiedVerificationAttempt["intentInput"]): string {
+function inputIdentity(state: ImplementState, sourceDigest: string, intentInput: UnifiedVerificationAttempt["intentInput"], git: CurrentGit): string {
   const artifacts = state.artifacts.filter((entry) => entry.command === undefined)
     .map(({ path, sha256, description, provenance, observedAt, target, environment, requirementRefs }) => ({ path, sha256, description, provenance, observedAt, target, environment, requirementRefs }))
     .sort((a, b) => a.path.localeCompare(b.path));
-  const sourcePath = state.prd.sourceIntake && state.prd.sourceIntake != "current conversation" ? normalizeProjectPath(state.projectRoot, state.prd.sourceIntake).absolute : null;
+  const sourcePath = state.prd.sourceIntake && state.prd.sourceIntake != "current conversation" ? normalizeProjectPath(requireWorkRoot(state), state.prd.sourceIntake).absolute : null;
   const sourceIntake = sourcePath === null ? null : sha256(fs.readFileSync(sourcePath));
-  return sha256(JSON.stringify({ schema: state.schema, prd: state.prd.sha256, sourceDigest, artifacts, intentInput, sourceIntake, suite: { commands: state.suite.commands, exclusions: state.suite.exclusions }, amendments: state.amendments }));
+  return sha256(JSON.stringify({ schema: state.schema, prd: state.prd.sha256, sourceDigest, git, artifacts, intentInput, sourceIntake, suite: { commands: state.suite.commands, exclusions: state.suite.exclusions }, amendments: state.amendments }));
 }
 
 function attemptSummary(attempt: UnifiedVerificationAttempt): Record<string, unknown> {
@@ -723,6 +730,20 @@ function delivery(state: ImplementState, freshness: string[] = []) {
   return { eligible: reasons.length === 0, reasons };
 }
 
+function publicGit(state: ImplementState): CurrentGit {
+  try { return currentGit(requireWorkRoot(state)); }
+  catch (error) { return { available: false, reason: error instanceof Error ? error.message : String(error) }; }
+}
+
+function deliveryPaths(state: ImplementState, git: CurrentGit, source: ReturnType<typeof captureSourceSnapshot>): string[] {
+  const paths = git.available ? changedPathsFromGit(requireWorkRoot(state), git.baseSha) : changedPathsSince(state.initialSource, source);
+  // Git defines the candidate range, not permission to deliver another
+  // session's work. Keep the accepted exclusion even after those bytes are
+  // committed; ship requires separation or an explicit approved include.
+  const excluded = new Set(state.baselineAttribution.paths.filter((entry) => entry.disposition === "pre-existing").map((entry) => entry.path));
+  return paths.filter((entry) => !excluded.has(entry));
+}
+
 function publicState(state: ImplementState, currentSourceDigest?: string, currentInputFingerprint?: string): Record<string, unknown> {
   const latest = state.verificationAttempts.at(-1) ?? null;
   const stale = latest !== null && ((currentSourceDigest !== undefined && latest.sourceFingerprint !== currentSourceDigest) || (currentInputFingerprint !== undefined && latest.inputFingerprint !== currentInputFingerprint));
@@ -733,8 +754,10 @@ function publicState(state: ImplementState, currentSourceDigest?: string, curren
     prdPath: state.prdPath,
     prdSnapshotPath: state.prd.snapshotPath,
     baselineAttribution: state.baselineAttribution,
-    workingRoot: state.worktree?.path ?? state.projectRoot,
-    worktree: state.worktree ?? null,
+    workingRoot: requireWorkRoot(state),
+    recordRoot: requireWorkRoot(state),
+    statePath: requireRunContext(state).statePath,
+    currentGit: publicGit(state),
     dispatch: state.dispatchIntent,
     reviewProfile: state.prd.reviewProfile,
     escalations: { used: state.escalations.length, limit: ESCALATE_LIMIT_PER_RUN, remaining: ESCALATE_LIMIT_PER_RUN - state.escalations.length },
@@ -751,12 +774,13 @@ function publicState(state: ImplementState, currentSourceDigest?: string, curren
 
 function currentInputs(state: ImplementState) {
   const source = captureSourceSnapshot(requireWorkRoot(state));
-  const held = pinnedPrd(state.projectRoot, state);
+  const held = pinnedPrd(requireWorkRoot(state), state);
   const contract = parseImplementContract(held.text);
-  const context = intentSource(state.projectRoot, contract, specGateIsFresh(state.projectRoot, state));
+  const context = intentSource(requireWorkRoot(state), contract, specGateIsFresh(requireWorkRoot(state), state));
   const intentInput = { routing: context.routing, contentSha256: sha256(context.content) };
-  const fingerprint = inputIdentity(state, source.digest, intentInput);
-  return { source, held, contract, context, intentInput, fingerprint };
+  const git = currentGit(requireWorkRoot(state));
+  const fingerprint = inputIdentity(state, source.digest, intentInput, git);
+  return { source, held, contract, context, intentInput, fingerprint, git };
 }
 
 /** The one move `status` names for the run's current verification verdict. */
@@ -772,7 +796,7 @@ function statusNextStep(state: ImplementState, verdict: string, eligible: boolea
 /** The run's verification verdict against its current inputs, as status reports it. */
 function currentVerification(state: ImplementState): { sourceDigest: string | undefined; problems: string[]; detail: Record<string, unknown>; verdict: string } {
   let sourceDigest: string | undefined, fingerprint: string | undefined;
-  const problems = artifactIntegrityProblems(state.projectRoot, state);
+  const problems = artifactIntegrityProblems(requireWorkRoot(state), state);
   try {
     const inputs = currentInputs(state);
     sourceDigest = inputs.source.digest; fingerprint = inputs.fingerprint;
@@ -806,8 +830,8 @@ function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertMutableRun(statePath, state);
   const issuer = resolveIssuer(flag(args, "issuer"));
-  const text = fs.readFileSync(normalizeProjectPath(state.projectRoot, state.prdPath).absolute, "utf8");
-  const outcome = applyAmendment(state.projectRoot, state, { issuer, text, approval: requiredFlag(args, "approval"), reason: requiredFlag(args, "reason"), excludeSuite: (flag(args, "exclude-suite") ?? "").split(",").map((entry) => entry.trim()).filter(Boolean) }, nowIso());
+  const text = fs.readFileSync(normalizeProjectPath(requireWorkRoot(state), state.prdPath).absolute, "utf8");
+  const outcome = applyAmendment(requireWorkRoot(state), state, { issuer, text, approval: requiredFlag(args, "approval"), reason: requiredFlag(args, "reason"), excludeSuite: (flag(args, "exclude-suite") ?? "").split(",").map((entry) => entry.trim()).filter(Boolean) }, nowIso());
   recordVerb(state, { verb: "amend", issuer, target: null, reason: requiredFlag(args, "reason"), at: nowIso(), outcome: "accepted" });
   recordEvent(state, { kind: "amendment", actor: issuer, subject: null, summary: `amendment ${outcome.record.id} resealed the complete contract`, at: nowIso() });
   persistClose(statePath, state, outcome.derived);
@@ -820,7 +844,7 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   if (args.flags.has("row")) throw new Error("artifact --row is retired; register evidence for the run");
   let inputs: Array<Record<string, unknown>>;
   if (args.flags.has("manifest")) {
-    const raw: unknown = JSON.parse(fs.readFileSync(normalizeProjectPath(state.projectRoot, requiredFlag(args, "manifest")).absolute, "utf8"));
+    const raw: unknown = JSON.parse(fs.readFileSync(normalizeProjectPath(requireWorkRoot(state), requiredFlag(args, "manifest")).absolute, "utf8"));
     if (!Array.isArray(raw) || raw.length === 0 || raw.some((entry) => entry === null || typeof entry !== "object" || Array.isArray(entry))) throw new Error("artifact --manifest must contain a non-empty JSON array of artifact objects");
     inputs = raw;
   } else inputs = [{ kind: requiredFlag(args, "kind"), path: requiredFlag(args, "path"), description: requiredFlag(args, "description"), source: flag(args, "source"), collectedAt: flag(args, "collected-at"), target: flag(args, "target"), environment: flag(args, "environment"), requirementRefs: flag(args, "refs")?.split(",").map((entry) => entry.trim()) }];
@@ -834,8 +858,8 @@ function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandRes
     if ("rowId" in input || "row" in input) throw new Error("per-requirement artifact fields are retired");
     const kind = (input.kind as string).toLowerCase();
     if (!ARTIFACT_KINDS.has(kind) || kind === "command-log") throw new Error("artifact kind must be screenshot, image, browser, api, db, log, or file");
-    const target = normalizeProjectPath(state.projectRoot, input.path as string);
-    assertEvidencePathInsideProject(state.projectRoot, target);
+    const target = normalizeProjectPath(requireWorkRoot(state), input.path as string);
+    assertEvidencePathInsideProject(requireWorkRoot(state), target);
     if (harnessOwnedRunPath(state, canonicalRunRelative(state, target))) throw new Error(`artifact path is harness-owned: ${target.relative}; register actual runtime output`);
     const inspected = inspectArtifactFile(target.absolute, kind);
     const previous = state.artifacts.find((entry) => entry.path === target.relative);
@@ -860,17 +884,23 @@ function verificationReportData(state: ImplementState, attempt: UnifiedVerificat
   const jsonPath = `${state.runDir}/verification-report.json`;
   const markdownPath = `${state.runDir}/verification-report.md`;
   const generatedAt = nowIso();
-  const status: "PASS" | "FAIL" | "ERROR" = attempt.verdict === "PASS" ? "PASS" : attempt.verdict === "FAIL" ? "FAIL" : "ERROR";
-  const current = captureSourceSnapshot(requireWorkRoot(state));
+  let status: "PASS" | "FAIL" | "ERROR" = attempt.verdict === "PASS" ? "PASS" : attempt.verdict === "FAIL" ? "FAIL" : "ERROR";
+  let currentInput: ReturnType<typeof currentInputs> | undefined;
+  try { currentInput = currentInputs(state); } catch { /* The failed attempt retains its explicit input error. */ }
+  const current = currentInput?.source ?? captureSourceSnapshot(requireWorkRoot(state));
+  const git = currentInput?.git ?? publicGit(state);
   const sourceChanged = current.digest !== attempt.sourceFingerprint;
-  if (status === "PASS" && sourceChanged) {
-    throw new Error("source changed before the verification report could be published");
+  const inputsChanged = sourceChanged || currentInput?.fingerprint !== attempt.inputFingerprint;
+  if (status === "PASS" && inputsChanged) {
+    attempt.verdict = "ERROR";
+    attempt.error = { stage: "publication", code: "verification-input-error", message: "verification inputs changed before the report could be published" };
+    status = "ERROR";
   }
   const reportFields = {
     schema: "sasu.verification-report.v1" as const,
     inputFingerprint: attempt.inputFingerprint,
     prdSha256: attempt.prdSha256,
-    baseSha: state.initialSource.head,
+    baseSha: git.available ? git.baseSha : null,
     headSha: current.head,
     sourceFingerprint: attempt.sourceFingerprint,
     generatedAt,
@@ -901,9 +931,11 @@ function verificationReportData(state: ImplementState, attempt: UnifiedVerificat
   }));
   const data = {
     ...reportFields,
-    ownedFiles: changedPathsSince(state.initialSource, current),
+    currentGit: git,
+    ownedFiles: deliveryPaths(state, git, current),
     observedSourceFingerprint: current.digest,
     sourceChangedAfterVerification: sourceChanged,
+    inputsChangedAfterVerification: inputsChanged,
     requiredCommands,
     evidence,
     error: attempt.error,
@@ -948,7 +980,7 @@ function verificationReportData(state: ImplementState, attempt: UnifiedVerificat
 async function verify(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
   let { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertMutableRun(statePath, state);
-  const config = loadConfig(state.projectRoot);
+  const config = loadConfig(requireWorkRoot(state));
   const issuer = resolveIssuer(flag(args, "issuer"));
   if (args.flags.has("grant-budget")) throw new Error("--grant-budget is retired; deterministic verification has no reviewer or correction budget");
 
@@ -992,12 +1024,12 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   try {
     if (preflightError) throw preflightError;
     if (!inputs) throw new Error("current verification inputs are unavailable");
-    requirePinnedPrd(state.projectRoot, state);
+    requirePinnedPrd(requireWorkRoot(state), state);
     const lint = prelintPrd(inputs.held.text);
     update((_fresh, held) => { held.prelint = { ok: lint.ok, findings: lint.findings }; });
     if (!lint.ok) throw new Error(`PRD prelint failed: ${JSON.stringify(lint.findings)}`);
-    if (changedPathsSince(state.initialSource, source).length === 0) throw new VerifyInvariantError("empty-run-owned-change-set", "run-owned change set is empty; start before implementation or attribute existing implementation as run-owned");
-    const problems = artifactIntegrityProblems(state.projectRoot, state);
+    if (deliveryPaths(state, inputs.git, source).length === 0) throw new VerifyInvariantError("empty-run-owned-change-set", "implementation change set against the current delivery base is empty");
+    const problems = artifactIntegrityProblems(requireWorkRoot(state), state);
     if (problems.length > 0) throw new Error(`evidence integrity failed: ${problems.join("; ")}`);
 
     phase = "mechanical";
@@ -1015,11 +1047,11 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
         mutatedTree: completed.mutatedTree,
         status: completed.outcome === "green" ? "PASS" : "FAIL",
       };
-      const logPath = writeMechanicalLog(state.projectRoot, state, base, completed.stdout, completed.stderr, completed.tmpdir);
+      const logPath = writeMechanicalLog(requireWorkRoot(state), state, base, completed.stdout, completed.stderr, completed.tmpdir);
       update((fresh, held) => {
         const run = { ...base, logPath };
         held.mechanical.push(run);
-        upsertCommandArtifacts(fresh, run, fresh.projectRoot, completed.tree.product);
+        upsertCommandArtifacts(fresh, run, requireWorkRoot(fresh), completed.tree.product);
         attributeToSuite(fresh, completed, attempt.id, logPath);
       });
       progress(`${base.status}: ${base.command} (${(base.durationMs / 1000).toFixed(1)}s)`);
@@ -1032,12 +1064,12 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
     } else {
       phase = "evidence";
       update((_fresh, held) => { held.phase = phase; });
-      const integrity = artifactIntegrityProblems(state.projectRoot, state);
+      const integrity = artifactIntegrityProblems(requireWorkRoot(state), state);
       if (integrity.length > 0) throw new Error(integrity.join("; "));
       update((_fresh, held) => { held.verdict = "PASS"; held.error = null; });
     }
     const after = currentInputs(state);
-    if (after.held.drift !== null || after.fingerprint !== attempt.inputFingerprint || artifactIntegrityProblems(state.projectRoot, state).length > 0) throw new Error("verification inputs changed while verification was running");
+    if (after.held.drift !== null || after.fingerprint !== attempt.inputFingerprint || artifactIntegrityProblems(requireWorkRoot(state), state).length > 0) throw new Error("verification inputs changed while verification was running");
   } catch (error) {
     update((_fresh, held) => {
       if (held.verdict !== "FAIL") {
@@ -1056,15 +1088,15 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
       held.verdict = "ERROR";
       held.error = { stage: phase, code: "verification-unfinished", message: "verification ended without a result" };
     }
+    report = verificationReportData(fresh, held);
     recordVerb(fresh, { verb: "verify", issuer, target: null, reason: held.verdict, at: nowIso(), outcome: "accepted" });
     recordEvent(fresh, { kind: "verify", actor: issuer, subject: null, summary: `verify ${held.verdict} (${held.id})`, at: nowIso() });
   }, (fresh) => {
-    const held = fresh.verificationAttempts.find((entry) => entry.id === attempt.id)!;
-    report = verificationReportData(fresh, held);
+    if (report === undefined) throw new Error("verification report was not built before publication");
     fresh.verificationReport = report.identity;
     return [
-      { file: path.join(fresh.projectRoot, report.identity.jsonPath), text: report.json },
-      { file: path.join(fresh.projectRoot, report.identity.markdownPath), text: report.markdown },
+      { file: path.join(requireWorkRoot(fresh), report.identity.jsonPath), text: report.json },
+      { file: path.join(requireWorkRoot(fresh), report.identity.markdownPath), text: report.markdown },
     ];
   });
   if (report === undefined) throw new Error("verification report was not generated");

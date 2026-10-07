@@ -83,8 +83,8 @@ function discoveredState(file: string): ImplementState | null {
 /** Live role checks use requested names and checkouts, never cached identities. */
 export function runRoleInputs(projectRoot: string): Array<{ implementorName: string; projectRoot: string }> {
   return repositoryRunPaths(projectRoot).flatMap((file) => {
-    const state = discoveredState(file);
-    if (state === null) return [];
+    if (discoveredState(file) === null) return [];
+    const { state } = loadState(projectRoot, { state: file });
     return [...(state.dispatchIntent === null ? [] : [state.dispatchIntent]), ...state.escalations]
       .map((intent) => ({ implementorName: intent.name, projectRoot: requireWorkRoot(state) }));
   });
@@ -104,11 +104,10 @@ export function runRoleInputs(projectRoot: string): Array<{ implementorName: str
  */
 function recordPathForSlug(projectRoot: string, slug: string): string {
   const local = statePathFor(projectRoot, slug);
-  if (fs.existsSync(local)) return local;
-  const found = siblingWorktrees(projectRoot).map((tree) => statePathFor(tree, slug)).filter((candidate) => fs.existsSync(candidate));
+  const found = [projectRoot, ...siblingWorktrees(projectRoot)].map((tree) => statePathFor(tree, slug)).filter((candidate) => fs.existsSync(candidate));
   if (found.length === 1) return found[0]!;
   if (found.length > 1) {
-    throw new Error(`implement run ${slug} is recorded in more than one worktree of this repository (${found.join(", ")}); run the command from the tree that owns it`);
+    throw new Error(`implement run ${slug} is recorded in more than one worktree of this repository (${found.join(", ")}); pass --state <exact-record-path>`);
   }
   return local;
 }
@@ -133,22 +132,35 @@ export function resolveStatePath(projectRoot: string, options: { slug?: string; 
   throw new Error("no active implement run; pass --slug <topic> or start one with `sasu implement start --prd <path>`");
 }
 
-/**
- * The tree whose bytes are judged: the run's worktree when isolated, else
- * the record tree. Fails loudly when the worktree is gone - a silently
- * substituted record tree would judge the wrong bytes and stale every proof.
- */
-export function requireWorkRoot(state: ImplementState): string {
-  const worktree = state.worktree ?? null;
-  if (worktree === null) return state.projectRoot;
-  if (!fs.existsSync(worktree.path)) {
-    throw new Error(
-      `worktree missing: ${worktree.path}. Recreate it with \`git worktree add ${worktree.path} ${worktree.branch}\` ` +
-        "(uncommitted work in the removed worktree is lost) and continue, or close the run honestly",
-    );
+export interface RunContext { recordRoot: string; workRoot: string; statePath: string }
+const runContexts = new WeakMap<ImplementState, RunContext>();
+
+/** Record location is the sole checkout authority, including after a move. */
+export function recordContext(statePath: string): RunContext {
+  // Resolve the existing ancestor so a new record can be checked before any
+  // directory, seal or state is written. A dangling symlink still fails.
+  const absolute = path.resolve(statePath);
+  let ancestor = absolute;
+  while (fs.lstatSync(ancestor, { throwIfNoEntry: false }) === undefined) ancestor = path.dirname(ancestor);
+  const exact = path.join(fs.realpathSync(ancestor), path.relative(ancestor, absolute));
+  const runDir = path.dirname(exact);
+  const recordRoot = path.dirname(path.dirname(path.dirname(runDir)));
+  if (path.basename(exact) !== "state.json" || path.basename(path.dirname(runDir)) !== "runs" || path.basename(path.dirname(path.dirname(runDir))) !== "agents") {
+    throw new Error(`state must be an exact agents/runs/<slug>/state.json record: ${statePath}`);
   }
-  return worktree.path;
+  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: recordRoot, encoding: "utf8" });
+  if (top.status === 0 && fs.realpathSync(top.stdout.trim()) !== recordRoot) throw new Error("run record must live at the Git checkout root under agents/runs");
+  return { recordRoot, workRoot: recordRoot, statePath: exact };
 }
+
+export function requireRunContext(state: ImplementState): RunContext {
+  const context = runContexts.get(state);
+  if (context === undefined) throw new Error("implement state has no validated record context; load it with loadState");
+  if (!fs.existsSync(context.statePath)) throw new Error(`run record is missing: ${context.statePath}`);
+  return context;
+}
+
+export function requireWorkRoot(state: ImplementState): string { return requireRunContext(state).workRoot; }
 
 function assertString(value: unknown, label: string): asserts value is string {
   if (typeof value !== "string" || value.trim() === "") throw new Error(`malformed implement state: ${label} must be a non-empty string`);
@@ -219,19 +231,14 @@ export function parseImplementState(text: string): ImplementState {
   if (parsed["schema"] !== IMPLEMENT_SCHEMA) {
     throw new Error(`unsupported implement state schema ${String(parsed["schema"] ?? "missing")}; only ${IMPLEMENT_SCHEMA} is accepted. Finish the old run with the CLI built from ${retiredImplementSupportCommit(parsed["schema"])} using \`sasu implement status --state <old-state>\` and its supported delivery commands, or start a separate run with \`sasu implement start --prd agents/prd/<new-slug>/prd.md\`; no automatic migration is available`);
   }
-  for (const field of ["rows", "activeCheck", "qaBriefs", "trails", "designComments", "tasks", "checks", "findings", "riskFindings", "budgetGrants", "completion", "ownerSessionId", "adoptions", "dispatches", "supervision", "pendingDispatch"]) {
+  for (const field of ["rows", "activeCheck", "qaBriefs", "trails", "designComments", "tasks", "checks", "findings", "riskFindings", "budgetGrants", "completion", "ownerSessionId", "adoptions", "dispatches", "supervision", "pendingDispatch", "projectRoot", "worktree"]) {
     if (field in parsed) throw new Error(`retired implement state field: ${field}; start a new run under the stateless verification contract`);
   }
   const candidate = parsed as unknown as ImplementState;
   enumValue(candidate.status, ["active", "retired"], "status");
-  for (const field of ["topicSlug", "projectRoot", "runDir", "prdPath"] as const) assertString(candidate[field], field);
+  for (const field of ["topicSlug", "runDir", "prdPath"] as const) assertString(candidate[field], field);
   assertIsoTimestamp(candidate.createdAt, "createdAt");
   assertIsoTimestamp(candidate.updatedAt, "updatedAt");
-  if (candidate.worktree !== null && candidate.worktree !== undefined) {
-    assertRecord(candidate.worktree, "worktree");
-    assertString(candidate.worktree["path"], "worktree.path");
-    assertString(candidate.worktree["branch"], "worktree.branch");
-  }
   assertRecord(candidate.prd, "prd");
   assertSha256(candidate.prd.sha256, "prd.sha256");
   assertString(candidate.prd.snapshotPath, "prd.snapshotPath");
@@ -418,13 +425,18 @@ function stateFileDigest(statePath: string): string | null {
   return sha256(fs.readFileSync(statePath));
 }
 
-export function loadState(projectRoot: string, options: { slug?: string; state?: string } = {}): { statePath: string; state: ImplementState } {
+export function loadState(projectRoot: string, options: { slug?: string; state?: string } = {}): { statePath: string; state: ImplementState; context: RunContext } {
   const statePath = resolveStatePath(projectRoot, options);
   if (!fs.existsSync(statePath)) throw new Error(`implement state not found: ${path.relative(projectRoot, statePath)}`);
-  const text = fs.readFileSync(statePath, "utf8");
+  const context = recordContext(statePath);
+  const callerRoot = fs.realpathSync(projectRoot);
+  if (![callerRoot, ...siblingWorktrees(callerRoot)].includes(context.recordRoot)) throw new Error("--state must belong to this checkout or a sibling worktree of the same repository");
+  const text = fs.readFileSync(context.statePath, "utf8");
   const state = parseImplementState(text);
-  stateBaseline.set(state, { statePath, digest: sha256(text) });
-  return { statePath, state };
+  if (state.runDir !== `agents/runs/${state.topicSlug}` || path.resolve(context.recordRoot, state.runDir) !== path.dirname(context.statePath) || state.topicSlug !== path.basename(path.dirname(context.statePath))) throw new Error("run record path disagrees with its runDir/topicSlug");
+  stateBaseline.set(state, { statePath: context.statePath, digest: sha256(text) });
+  runContexts.set(state, context);
+  return { statePath: context.statePath, state, context };
 }
 
 export class StateConflictError extends Error {}
@@ -447,6 +459,8 @@ function assertVerificationHistory(held: ImplementState, next: ImplementState): 
 }
 
 export function persistState(statePath: string, state: ImplementState, options: StateWriteOptions = {}): void {
+  const context = recordContext(statePath);
+  statePath = context.statePath;
   const baseline = stateBaseline.get(state);
   const onDisk = stateFileDigest(statePath);
   if (baseline !== undefined && baseline.statePath === statePath) {
@@ -501,10 +515,12 @@ export function persistState(statePath: string, state: ImplementState, options: 
   // The bytes just written are the new baseline: several commands persist
   // twice (ownership adoption, then the command's own change), and the second
   // write is not a conflict with the first.
-  stateBaseline.set(state, { statePath, digest: sha256(text) });
+  stateBaseline.set(state, { statePath: fs.realpathSync(statePath), digest: sha256(text) });
+  runContexts.set(state, context);
 }
 
 function assertVerificationPublicationCurrent(statePath: string, state: ImplementState, token: string): void {
+  statePath = fs.realpathSync(statePath);
   const baseline = stateBaseline.get(state);
   const onDisk = stateFileDigest(statePath);
   if (baseline === undefined || baseline.statePath !== statePath || onDisk !== baseline.digest) {
@@ -647,8 +663,8 @@ export function captureSourceSnapshot(projectRoot: string): SourceSnapshot {
     state: "present",
     sha256: sha256(fs.readFileSync(path.join(projectRoot, relative))),
   }));
-  // A commit of unchanged bytes must not stale proof. HEAD remains useful
-  // provenance, while the freshness digest names the judged content only.
+  // Content digest stays useful for observation provenance; verification
+  // separately pins the complete current Git identity, including exact HEAD.
   return { head, entries, digest: sha256(JSON.stringify({ entries })) };
 }
 
@@ -798,4 +814,15 @@ export function artifactIntegrityProblems(projectRoot: string, state: ImplementS
     if (actual !== artifact.sha256) problems.push(`${target}: artifact hash changed: ${artifact.path}`);
   }
   return problems;
+}
+
+/** Git owns range semantics, including upstream merges, renames and modes. */
+export function changedPathsFromGit(root: string, base: string): string[] {
+  const paths = new Set<string>();
+  for (const args of [["diff", "--name-only", "--no-renames", "-z", base, "--"], ["ls-files", "--others", "--exclude-standard", "-z"]]) {
+    const listed = spawnSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 60_000 });
+    if (listed.error !== undefined || listed.status !== 0) throw new Error(`cannot inspect current delivery range: ${listed.stderr || listed.error?.message}`);
+    for (const relative of listed.stdout.split("\0")) if (relative !== "" && !snapshotExcluded(relative)) paths.add(relative);
+  }
+  return [...paths].sort();
 }

@@ -34,9 +34,8 @@ function fixture(t, { files = 10, initialLines = 1, isolated = false, unborn = f
   const state = stateFixture(record, {
     initialSource,
     baselineAttribution: { disposition: "clean", paths: [], baselineDigest: initialSource.digest, head: initialSource.head },
-    worktree: isolated ? { path: root, branch: "fixture" } : null,
   });
-  const statePath = path.join(record, state.runDir, "state.json");
+  const statePath = path.join(root, state.runDir, "state.json");
   const save = () => { fs.mkdirSync(path.dirname(statePath), { recursive: true }); fs.writeFileSync(statePath, JSON.stringify(state)); };
   save();
   return { root, record, state, statePath, save, cache: path.join(path.dirname(statePath), "commit-reminder.json") };

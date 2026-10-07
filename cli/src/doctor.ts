@@ -62,11 +62,7 @@ export function runIntegritySection(projectRoot: string): DoctorSection {
         if (state.status === "active") {
           retire.push(`retire candidate: ${entry.name} command=sasu implement retire --slug ${entry.name}`);
         }
-        if (state.status === "retired" && state.worktree !== null && state.worktree !== undefined && fs.existsSync(state.worktree.path)) {
-          orphans.push(
-            `orphan worktree: ${entry.name} status=${state.status} path=${state.worktree.path} branch=${state.worktree.branch}`,
-          );
-        }
+
       } catch (error) {
         if (raw?.["status"] === "active" && raw["schema"] !== IMPLEMENT_SCHEMA) {
           incompatibleActive.push(

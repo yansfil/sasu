@@ -22,7 +22,7 @@ test("native Hide owns lineage, retry convergence, watches and direct letters fo
   success(await fixture.sasu(observer, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"]));
   const prepared = success(await fixture.sasu(observer, ["implement", "dispatch", "--name", "impl"], { input: PACKET })).detail;
   const state = () => JSON.parse(fs.readFileSync(path.join(fixture.root, STATE_PATH), "utf8"));
-  assert.equal(state().schema, "sasu.implement.state.v13.contract-only");
+  assert.equal(state().schema, "sasu.implement.state.v14.current-git");
   for (const key of ["ownerSessionId", "supervision", "pendingDispatch", "dispatches"]) assert.equal(key in state(), false);
   assert.equal(success(await fixture.hide(observer, ["agent", "list"])).value.items.some((item) => item.name === "impl"), false, "preparation never starts a process");
   const child = success(await fixture.hide(observer, prepared.argv)).value;

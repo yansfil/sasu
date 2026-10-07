@@ -75,6 +75,7 @@ export interface SasuConfig {
    */
   principles: string[];
   configPath: string | null;
+  delivery: { baseBranch: string };
 }
 
 // Model strength and review risk are separate from evidence access. Routine
@@ -293,8 +294,13 @@ export function loadConfig(projectRoot: string): SasuConfig {
   };
   const principlesRaw = raw["principles"];
   const principles = stringList(principlesRaw, "principles").map((entry) => expandHomePath(entry));
+  const delivery = raw["delivery"];
+  if (delivery !== undefined && (delivery === null || typeof delivery !== "object" || Array.isArray(delivery))) throw new Error("delivery must be an object");
+  const baseBranch = (delivery as Record<string, unknown> | undefined)?.["baseBranch"] ?? "main";
+  if (typeof baseBranch !== "string" || baseBranch.trim() === "") throw new Error("delivery.baseBranch must be a non-empty string");
   return {
     judge,
+    delivery: { baseBranch },
     verify: { commands: { ...(verifyRaw.commands ?? {}) }, commandTimeoutMs },
     principles,
     configPath: found,

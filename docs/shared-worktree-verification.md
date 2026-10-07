@@ -8,3 +8,15 @@
 테스트는 cli/dist를 읽으므로, --noEmit 통과만으로 최신 코드가 검증되었다고 판단하지 않는다.
 테스트 전에는 npm --prefix cli run build로 산출물을 갱신한다.
 전체 검증 도중 소스가 바뀌면 그 결과를 변경 후 코드의 통과 증거로 사용하지 않는다.
+
+## Current Git context
+
+A run record at `<checkout>/agents/runs/<slug>/state.json` selects that checkout for source, suite execution, evidence, and delivery.
+`loadState` derives this context from the validated record location; v14 records do not persist `projectRoot` or `worktree`.
+A sibling invocation only finds the record, and duplicate slugs require an explicit `--state` path.
+The current attached branch and configured delivery base determine the range through Git merge-base, so rebase and upstream merges do not retain obsolete start-time ancestry or upstream-only paths.
+Verification pins HEAD, branch, base ref, base tip, source, sealed contract, suite, and evidence in its input identity.
+Any change requires a new verification attempt, including a new HEAD with identical source bytes.
+When origin is configured, `origin/<delivery.baseBranch>` must exist; without origin the local configured base must exist.
+The default base branch is `main`, and missing or ambiguous Git inputs fail explicitly.
+Non-Git and unborn projects can run deterministic checks with unavailable Git provenance, but native dispatch and delivery require an attached committed checkout.

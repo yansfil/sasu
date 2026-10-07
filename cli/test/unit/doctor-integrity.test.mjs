@@ -9,7 +9,7 @@ import { stateFixture } from "../helpers/implement-state.mjs";
 
 const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "..");
 
-test("doctor reports active retire candidates and ended runs whose worktrees remain", () => {
+test("doctor reports current retire candidates without claiming checkout ownership", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-doctor-runs-"));
   const worktree = path.join(root, "leftover-worktree");
   fs.mkdirSync(worktree);
@@ -25,19 +25,19 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
       ...state,
     })));
   };
-  writeState("active-run", { status: "active", worktree: null });
-  writeState("ended-run", { status: "retired", worktree: { path: worktree, branch: "sasu/ended-run" } });
-  writeState("unknown-status", { status: "paused", worktree: null });
+  writeState("active-run", { status: "active" });
+  writeState("ended-run", { status: "retired", retirement: { retiredAt: "2026-10-07T00:00:00.000Z" } });
+  writeState("unknown-status", { status: "paused" });
   writeState("missing-snapshot", { prd: { ...stateFixture(root).prd, snapshotPath: undefined } });
-  writeState("retired-schema-active", { schema: "sasu.implement.state.v8", status: "active", worktree: null });
-  writeState("previous-coordination-active", { schema: "sasu.implement.state.v11.stateless-verification", status: "active", worktree: null });
-  writeState("future-active", { schema: "sasu.implement.state.v99", status: "active", worktree: null });
-  writeState("experimental-active", { schema: "sasu.implement.state.v9.parallel-review", status: "active", worktree: null });
+  writeState("retired-schema-active", { schema: "sasu.implement.state.v8", status: "active" });
+  writeState("previous-coordination-active", { schema: "sasu.implement.state.v11.stateless-verification", status: "active" });
+  writeState("future-active", { schema: "sasu.implement.state.v99", status: "active" });
+  writeState("experimental-active", { schema: "sasu.implement.state.v9.parallel-review", status: "active" });
 
   const section = runIntegritySection(root);
   assert.equal(section.ok, false);
   assert.ok(section.lines.includes("retire candidate: active-run command=sasu implement retire --slug active-run"), section.lines.join("\n"));
-  assert.ok(section.lines.includes(`orphan worktree: ended-run status=retired path=${worktree} branch=sasu/ended-run`));
+  assert.ok(!section.lines.some((line) => line.startsWith("orphan worktree:")));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: unknown-status") && line.includes("status must be one of active")));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: missing-snapshot") && line.includes("prd.snapshotPath")));
   for (const [slug, schema, support] of [
@@ -47,7 +47,7 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
     ["experimental-active", "v9.parallel-review", "2b1f638dd587261be7e7b0e600db16657421971d"],
   ]) {
     assert.ok(section.lines.includes(
-      `incompatible active run: ${slug} status=active schema=sasu.implement.state.${schema} installed-schema=sasu.implement.state.v13.contract-only; last supported commit: ${support}; use that matching CLI to inspect or retire the old run, or start a new slug`,
+      `incompatible active run: ${slug} status=active schema=sasu.implement.state.${schema} installed-schema=sasu.implement.state.v14.current-git; last supported commit: ${support}; use that matching CLI to inspect or retire the old run, or start a new slug`,
     ));
     assert.ok(!section.lines.some((line) => line.startsWith(`retire candidate: ${slug} `)));
   }
