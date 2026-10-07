@@ -152,10 +152,12 @@ A missing executable, unavailable daemon or changed native identity returns a fa
 Hide knows native participants and their parent, watch and request relations; which participants belong to a run stays in Sasu's `state.json`.
 The `supervision.hide` record holds the Observer and Implementor participant IDs, watch ID and registration time.
 
-Dispatch preflights the Observer with `hide agent register --check`.
+Dispatch first looks up the Observer pane's live Hide registration with `hide agent list`, matched on pane, native session and host scope.
+An Observer a lead started with `hide agent spawn --parent` is already registered under that lead, and Hide refuses to register it again without that parent; Sasu uses that registration as the Observer, so the lead's lineage and watch stay intact.
+Only a pane with no live registration is preflighted with `hide agent register --check` and later registered without a parent.
 The caller's actual pane and native session must match the registration and be eligible for delivery.
 An unnamed Observer is given a registration name derived from its session; its pane is not renamed.
-After the Implementor starts, dispatch records its exact identity first, then registers the Observer, the implementor as its child, and an inactivity watch.
+After the Implementor starts, dispatch records its exact identity first, then registers the Observer when it is unregistered, the implementor as its child, and an inactivity watch.
 A refusal after start leaves the pane and partial dispatch visible; fix the reported cause and run `sasu implement dispatch --resume-handoff` with the original packet on stdin.
 The same dispatch resumes its recorded creation steps and hands off once rather than spawning another pane.
 

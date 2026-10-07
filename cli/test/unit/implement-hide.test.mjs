@@ -16,14 +16,14 @@ test("missing Hide refuses before an executable fallback", (t) => {
   assert.throws(() => runHide(["agent", "list"], { PATH: root }), (error) => error instanceof HideCallFailed && error.code === "not_installed" && error.message === HIDE_MISSING);
 });
 test("a registration check must positively name the exact Observer pane", (t) => {
-  const argv = binary(t, `const a=process.argv.slice(2);process.stdout.write(JSON.stringify({ok:true,value:{registered:false,name:a[a.indexOf("--name")+1],pane:a[a.indexOf("--pane")+1]}}));`);
+  const argv = binary(t, `const a=process.argv.slice(2);process.stdout.write(JSON.stringify({ok:true,value:a[1]==="list"?{items:[]}:{registered:false,name:a[a.indexOf("--name")+1],pane:a[a.indexOf("--pane")+1]}}));`);
   const observer = { name: "observer", identity: { paneId: "w1:p1", runtime: "claude", sessionId: "session", terminalId: "terminal", hostScope: "socket", recordedAt: "2026-10-03T00:00:00.000Z" } };
   checkObserver(observer);
-  assert.deepEqual(argv()[0].slice(0, 3), ["agent", "register", "--check"]);
-  assert.equal(argv()[0].includes("--machine"), false, "Hide names the caller's machine; Sasu never asserts one");
+  assert.deepEqual(argv()[1].slice(0, 3), ["agent", "register", "--check"]);
+  assert.equal(argv()[1].includes("--machine"), false, "Hide names the caller's machine; Sasu never asserts one");
 });
 test("a malformed successful check cannot grant caller authority", (t) => {
-  binary(t, `process.stdout.write(JSON.stringify({ok:true,value:{registered:false,name:"observer",pane:"w1:p2"}}));`);
+  binary(t, `process.stdout.write(JSON.stringify({ok:true,value:process.argv[3]==="list"?{items:[]}:{registered:false,name:"observer",pane:"w1:p2"}}));`);
   assert.throws(() => checkObserver({ name: "observer", identity: { paneId: "w1:p1", runtime: "claude", sessionId: "session", terminalId: "terminal", hostScope: "socket", recordedAt: "2026-10-03T00:00:00.000Z" } }), /unusable registration check/);
 });
 test("Pending report remains unconfirmed and uses the public envelope and argv", (t) => {

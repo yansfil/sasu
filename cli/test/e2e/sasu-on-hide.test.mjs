@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { PRD_PATH, STATE_PATH } from "../helpers/implement-fixture.mjs";
 import { nativeHideFixture } from "../helpers/native-hide.mjs";
@@ -102,4 +103,23 @@ test("pinned native Hide: dispatch, plan confirmation, block reply, approved han
   assert.match(reportAfterConfirm.message, /was delivered/);
   success(await fixture.hide(implementor, ["agent", "end", ids.implementor]));
   fs.writeFileSync(path.join(fixture.runRoot, "acceptance.json"), JSON.stringify({ schema: "sasu.native-hide.acceptance.v1", dispatch: true, planDedupe: true, ackDoesNotClose: true, planAckIsUnconfirmed: true, blockReply: true, handoverGeneration: 1, originalAncestryRetained: true, refusedRetirementPreservesState: true, pendingReportKeepsWatch: true, reportAckIsUnconfirmed: true, interruptedAckIntakeReplaysSameId: true, confirmedReportEndsWatch: true, confirmedAckReportIsDelivered: true, targetMayEndItself: true }) + "\n");
+});
+
+// A lead's `hide agent spawn --parent` registers the Observer under the lead;
+// dispatch re-registering it without that parent was refused (sasu#19).
+test("pinned native Hide: an Observer a lead spawned dispatches under the lead's registration and watch", async (t) => {
+  const fixture = await nativeHideFixture(t), lead = await fixture.startObserver("lead");
+  const branch = spawnSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: fixture.root, encoding: "utf8" }).stdout.trim();
+  const spawned = success(await fixture.hide(lead, ["agent", "spawn", "--parent", "here", "--name", "observer-spawned", "--intent", "sasu-19", "--kind", "claude", "--repo", fixture.root, "--branch", branch])).value;
+  assert.ok(spawned.parent, "spawn registers the lead as parent"); assert.ok(spawned.watch, "spawn starts the lead's watch");
+  const observer = spawned.pane;
+  success(await fixture.sasu(observer, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"]));
+  success(await fixture.sasu(observer, ["implement", "dispatch", "--name", "impl", "--prd", PRD_PATH], { input: PACKET }));
+  const ids = JSON.parse(fs.readFileSync(path.join(fixture.root, STATE_PATH), "utf8")).supervision.hide;
+  assert.equal(ids.observer, spawned.id);
+  const kept = success(await fixture.hide(lead, ["agent", "show", spawned.id])).value;
+  assert.equal(kept.registered, true); assert.equal(kept.parent, spawned.parent);
+  assert.equal(kept.watch.id, spawned.watch.id); assert.equal(kept.watch.parent.pane_id, lead);
+  const implementor = success(await fixture.hide(observer, ["agent", "show", ids.implementor])).value;
+  assert.equal(implementor.parent, spawned.id); assert.equal(implementor.watch.id, ids.watchId); assert.equal(implementor.watch.parent.pane_id, observer);
 });

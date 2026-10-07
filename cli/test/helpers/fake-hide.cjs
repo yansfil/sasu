@@ -39,8 +39,10 @@ if (topic === "agent" && action === "register") {
     if (!parent || parent.pane !== process.env.HERDR_PANE_ID || parent.session !== nativeSession(parent.pane)) refuse("parent_identity_conflict");
   } else if (flags.pane !== process.env.HERDR_PANE_ID) refuse("caller_identity_conflict");
   const same = Object.values(state.participants).find((p) => p.registered && p.machine === device && p.hostScope === flags["host-scope"] && p.pane === flags.pane && p.session === flags.session);
+  // Hide's Register: a live identity converges only on its own parent and name, check included.
+  if (same && (same.parent !== (flags.parent ?? null) || same.name !== flags.name)) refuse("registration_conflict");
   if (flags.check) reply(same ?? { registered: false, name: flags.name, pane: flags.pane });
-  if (same) { same.instance = flags.instance; same.name = flags.name; save(); reply(same); }
+  if (same) reply(same);
   const participant = { id: `a_${++state.seq}`, name: flags.name, machine: device, hostScope: flags["host-scope"], pane: flags.pane, session: flags.session, instance: flags.instance, parent: flags.parent ?? null, project: flags.project ?? null, runtime: "running", connection: "connected", registered: true, watch: null };
   state.participants[participant.id] = participant; save(); reply(participant);
 }
