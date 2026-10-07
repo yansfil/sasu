@@ -386,7 +386,7 @@ async function main(): Promise<void> {
     if (asJson) process.stdout.write(`${JSON.stringify({ version: contractVersion(), build, hide: { required: REQUIRED_HIDE_CONTRACT } }, null, 2)}\n`);
     else {
       process.stdout.write(`sasu ${contractVersion()}\n${buildIdentityLine(build)}\n`);
-      process.stdout.write(`requires Hide contract format ${REQUIRED_HIDE_CONTRACT.format}: ${REQUIRED_HIDE_CONTRACT.commands.map((entry) => entry.command).join(", ")}\nCaller contract: ${REQUIRED_HIDE_CONTRACT.caller.contract} (${REQUIRED_HIDE_CONTRACT.caller.command})\nRun sasu doctor to check installed Hide compatibility.\n`);
+      process.stdout.write(`requires Hide contract format ${REQUIRED_HIDE_CONTRACT.format}: ${REQUIRED_HIDE_CONTRACT.commands.map((entry) => entry.command).join(", ")}\nRun sasu doctor to check installed Hide compatibility.\n`);
     }
     exit(build.status === "available" ? 0 : 1);
   }

@@ -1,0 +1,381 @@
+{
+  "answers": {
+    "agent": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "machine",
+        "hostScope",
+        "session",
+        "instance",
+        "pane",
+        "parent",
+        "project",
+        "runtime",
+        "connection",
+        "registered",
+        "watch"
+      ],
+      "properties": {
+        "hostScope": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "machine": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "pane": {
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "registered": {
+          "type": "boolean"
+        },
+        "runtime": {
+          "$ref": "#/definitions/Runtime"
+        }
+      },
+      "definitions": {
+        "Runtime": {
+          "enum": [
+            "running",
+            "ended"
+          ],
+          "type": "string"
+        }
+      }
+    },
+    "agent_list": {
+      "type": "object",
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/AgentView"
+          },
+          "type": "array"
+        }
+      },
+      "definitions": {
+        "AgentView": {
+          "type": "object",
+          "required": [
+            "id",
+            "name",
+            "machine",
+            "hostScope",
+            "session",
+            "instance",
+            "pane",
+            "parent",
+            "project",
+            "runtime",
+            "connection",
+            "registered",
+            "watch"
+          ],
+          "properties": {
+            "hostScope": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "machine": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pane": {
+              "type": "string"
+            },
+            "parent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "project": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "registered": {
+              "type": "boolean"
+            },
+            "runtime": {
+              "$ref": "#/definitions/Runtime"
+            }
+          }
+        },
+        "Runtime": {
+          "enum": [
+            "running",
+            "ended"
+          ],
+          "type": "string"
+        }
+      }
+    },
+    "letter": {
+      "type": "object"
+    },
+    "inbox": {
+      "type": "array"
+    }
+  },
+  "commands": [
+    {
+      "answers": [
+        "agent_list"
+      ],
+      "arguments": [],
+      "command": "agent list",
+      "options": [
+        {
+          "name": "--json",
+          "required": false,
+          "requires": [],
+          "value": null
+        }
+      ],
+      "repeats_at_most": null,
+      "rest": null
+    },
+    {
+      "answers": [
+        "agent"
+      ],
+      "arguments": [],
+      "command": "agent show here",
+      "options": [
+        {
+          "name": "--json",
+          "required": false,
+          "requires": [],
+          "value": null
+        }
+      ],
+      "refusals": [
+        "pane_capability_required",
+        "caller_identity_conflict",
+        "participant_unavailable",
+        "participant_ended",
+        "participant_session_changed",
+        "ambiguous_participant"
+      ],
+      "repeats_at_most": null,
+      "rest": null
+    },
+    {
+      "answers": [
+        "agent"
+      ],
+      "arguments": [],
+      "command": "agent spawn",
+      "options": [
+        {
+          "name": "--parent",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--name",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--intent",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--kind",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--repo",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--branch",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--path",
+          "required": false,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--no-watch",
+          "required": false,
+          "requires": [],
+          "value": null
+        },
+        {
+          "name": "--json",
+          "required": false,
+          "requires": [],
+          "value": null
+        }
+      ],
+      "repeats_at_most": null,
+      "rest": "the agent's own arguments"
+    },
+    {
+      "answers": [
+        "letter"
+      ],
+      "arguments": [
+        {
+          "name": "target",
+          "value": {
+            "type": "key"
+          }
+        }
+      ],
+      "command": "request send",
+      "options": [
+        {
+          "name": "--intent",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "key"
+          }
+        },
+        {
+          "name": "--body",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "body"
+          }
+        },
+        {
+          "name": "--kind",
+          "required": false,
+          "requires": [],
+          "value": {
+            "type": "one_of",
+            "values": [
+              "request",
+              "block",
+              "report"
+            ]
+          }
+        }
+      ],
+      "repeats_at_most": null,
+      "rest": null
+    },
+    {
+      "answers": [
+        "letter"
+      ],
+      "arguments": [
+        {
+          "name": "id",
+          "value": {
+            "type": "key"
+          }
+        }
+      ],
+      "command": "request reply",
+      "options": [
+        {
+          "name": "--intent",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "key"
+          }
+        },
+        {
+          "name": "--body",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "body"
+          }
+        }
+      ],
+      "repeats_at_most": null,
+      "rest": null
+    },
+    {
+      "answers": [
+        "inbox"
+      ],
+      "arguments": [],
+      "command": "inbox",
+      "options": [],
+      "repeats_at_most": null,
+      "rest": null
+    }
+  ],
+  "digest": "sha256:fc44824071732f5194c6497aa81e8df46a0aeea384ab824edde65f8cb3ccc36f",
+  "envelopes": {
+    "agent": {
+      "answer": "value",
+      "code": "error.code",
+      "ok": "ok"
+    },
+    "inbox": {
+      "answer": "result",
+      "code": "reason",
+      "ok": "ok"
+    },
+    "request": {
+      "answer": "result",
+      "code": "reason",
+      "ok": "ok"
+    }
+  },
+  "format": 1
+}

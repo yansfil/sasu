@@ -1,0 +1,10 @@
+{
+  "repository": "modakbul-gongbang/hide",
+  "sourceCommit": "3ee278fad115c5f59e5935c5d6610470c8b60709",
+  "sourcePath": "contracts/hide-cli.json",
+  "sourceFileSha256": "a1ea7d51195e98df812c738a09187d76b2894144e15ccc356bbe427010dfdd84",
+  "contractDigest": "sha256:fc44824071732f5194c6497aa81e8df46a0aeea384ab824edde65f8cb3ccc36f",
+  "projection": "published-caller.json",
+  "projectionSha256": "cfdd79b4f418cb644083c2032c0324adf73d7e97344d3b32d0956a282b8ee1e5",
+  "projectionNotes": "Consumed commands, envelopes and answer fields are copied from the public export; unrelated surface is omitted and the original contract digest is retained."
+}

@@ -12,12 +12,17 @@ Missing executables, invalid responses, mismatched contract digests, unsupported
 External stderr and credential values are not copied into the report.
 
 The required surface lives in `cli/src/hide-compatibility.ts` beside its structural comparison.
-Compatibility checks consumed arguments, options, native argument forwarding, response envelopes and guaranteed answer fields.
-Compatible additional commands, optional options and answer fields are accepted.
+Compatibility checks consumed arguments, options, native argument forwarding, response envelopes, guaranteed answer fields and declared command-specific refusals.
+Compatible additional commands, optional options, answer fields and refusal codes are accepted.
 A minimum version number or a match against one whole-contract digest does not establish compatibility.
 The digest connects the two installed-binary responses; the structural comparison determines compatibility.
 
-The public Hide export at commit `72c2113f29b74d60897e62c33031f32a977c6118` does not yet advertise the caller command currently consumed by Sasu, guarantee the presence of the nullable participant fields, or constrain runtime values to the enum its parser accepts.
-The diagnostic therefore reports unsupported compatibility for that export.
-The caller contract must be published and adopted in the requirement declaration and runtime client before compatibility can pass.
-This diagnostic does not replace or bypass runtime authority checks.
+The consumed caller command is `hide agent show here`, with no positional arguments and the normal `agent` response envelope.
+Its published contract guarantees the participant fields consumed by Sasu, including nullable `parent` and `project`, and the `running`/`ended` runtime enum.
+The required refusal codes cover missing pane credentials, conflicting caller identity, unavailable or ended participants, changed sessions and ambiguous participants.
+Removing or renaming a required code fails compatibility.
+The published refusal list is not exhaustive, and Sasu rejects every failed response, so additional refusal codes remain compatible.
+
+The regression fixtures retain the older public export at commit `72c2113f29b74d60897e62c33031f32a977c6118`, which fails compatibility, and the published caller export, which passes the structural comparison.
+`cli/test/fixtures/hide-contract/published-caller.provenance.json` records the new fixture's source commit, public file hash, contract digest and projection hash.
+Native runtime acceptance still requires running the actual merged candidate; a passing comparison of the exported contract alone does not establish it.

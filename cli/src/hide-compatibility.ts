@@ -8,6 +8,7 @@ interface CommandRequirement {
   options: Readonly<Record<string, InputValue>>;
   rest: boolean;
   answers: readonly string[];
+  refusals?: readonly string[];
 }
 interface AnswerRequirement {
   types: readonly string[];
@@ -30,14 +31,14 @@ const command = (name: string, options: CommandRequirement["options"] = {}, answ
   command: name, arguments: argument ? [{ name: argument, value: key }] : [], options, rest, answers,
 });
 
-/** Only the consumed public surface. Additive upstream commands are compatible.
- * The unpublished caller contract remains an explicit incompatibility until adopted.
- * Do not substitute participant display identity for that missing contract.
- */
+/** Only the consumed public surface. Additive upstream commands are compatible. */
 export const REQUIRED_HIDE_CONTRACT = {
   format: 1,
-  caller: { command: "agent show here", contract: "unpublished" },
   commands: [
+    { ...command("agent show here", {}, ["agent"]), refusals: [
+      "pane_capability_required", "caller_identity_conflict", "participant_unavailable",
+      "participant_ended", "participant_session_changed", "ambiguous_participant",
+    ] },
     command("agent list", {}, ["agent_list"]),
     command("agent spawn", { "--parent": text, "--name": text, "--intent": text, "--kind": text, "--repo": text, "--branch": text, "--path": text }, ["agent"], undefined, true),
     command("request send", { "--intent": key, "--body": { type: "body" }, "--kind": { type: "one_of", values: ["request", "block", "report"] } }, ["letter"], "target"),
@@ -121,7 +122,7 @@ export function compareHideContract(versionValue: unknown, contractValue: unknow
     return result("HIDE_CONTRACT_INVALID", installed, ["Hide contract is missing, malformed or disagrees with its version digest; retry after installing one consistent build"]);
   }
   if (contract.format !== REQUIRED_HIDE_CONTRACT.format) return result("HIDE_CONTRACT_UNSUPPORTED", installed, ["unsupported Hide contract format; install a compatible build"]);
-  const issues: string[] = [`caller contract unpublished: ${REQUIRED_HIDE_CONTRACT.caller.command}`];
+  const issues: string[] = [];
   for (const expected of REQUIRED_HIDE_CONTRACT.commands) {
     const matches = contract.commands.filter((entry) => object(entry)?.command === expected.command);
     const actual = matches.length === 1 ? object(matches[0]) : null;
@@ -143,6 +144,12 @@ export function compareHideContract(versionValue: unknown, contractValue: unknow
     const actualAnswers = actual.answers;
     if (!argsOk || !optsOk || actual.repeats_at_most !== null || (expected.rest ? typeof actual.rest !== "string" : actual.rest !== null) || !strings(actualAnswers) || !expected.answers.every((name) => actualAnswers.includes(name)) || actualAnswers.some((name) => !expected.answers.includes(name))) {
       issues.push(`unsupported command signature: ${expected.command}`);
+    }
+    // The export declares command-specific refusals, not an exhaustive list.
+    // The client rejects every failure; additional refusal codes stay safe.
+    const refusals = actual.refusals;
+    if (expected.refusals && (!strings(refusals) || !expected.refusals.every((code) => refusals.includes(code)))) {
+      issues.push(`missing or unsupported refusals: ${expected.command}`);
     }
   }
   const envelopes = object(contract.envelopes)!;

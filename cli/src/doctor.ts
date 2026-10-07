@@ -243,7 +243,6 @@ export function runDoctor(projectRoot: string, options: DoctorOptions = {}): { o
       buildIdentityLine(build),
       ...(hide.installed ? [`Hide version: ${hide.installed.version}; build commit: ${hide.installed.commit}; contract: ${hide.installed.contract}`] : ["Hide version and build commit: unavailable"]),
       `required Hide contract format: ${hide.required.format}; commands: ${hide.required.commands.map((entry) => entry.command).join(", ")}`,
-      `caller contract: ${hide.required.caller.contract} (${hide.required.caller.command})`,
       `Hide compatibility: ${hide.code}`,
       ...hide.issues,
       ...(!hide.compatible ? ["Install a Hide build that supports the declared command and answer contract, then rerun sasu doctor."] : []),
