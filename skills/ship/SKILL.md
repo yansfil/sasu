@@ -92,7 +92,8 @@ Running it again for the same clean recorded head is idempotent.
 
 `ship` validates freshness, pushes the already committed verified head, creates or updates the PR, and watches CI unless `--no-watch` is supplied.
 Exit code 2 means CI failed.
-Exit code 3 means CI is still pending at the timeout.
+Exit code 3 means checks are still pending or have not appeared at the timeout.
+The `no-checks` verdict never authorizes merge; confirm the workflow is enabled, then rerun `watch-ci`.
 
 `merge` is separately authorized.
 Pass the user's merge instruction verbatim through `--approval`.
