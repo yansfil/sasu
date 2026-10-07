@@ -209,9 +209,8 @@ export type PrdJudgeRecord =
   | { required: true; skippedReason: null; gapAudit: string; spec: string }
   | { required: false; skippedReason: string; gapAudit: null; spec: null };
 
-export interface ActiveVerification {
+interface VerificationLease {
   token: string;
-  attemptId: string;
   pid: number;
   hostname: string;
   startedAt: string;
@@ -221,6 +220,10 @@ export interface ActiveVerification {
   /** Persisted before a spawn; an unregistered orphan cannot be assumed dead. */
   pendingSpawns: number;
 }
+export type ActiveVerification = VerificationLease & (
+  | { mode?: "verify"; attemptId: string }
+  | { mode: "preview"; attemptId?: never }
+);
 export interface ImplementState {
   schema: typeof IMPLEMENT_SCHEMA;
   status: "active" | "retired";

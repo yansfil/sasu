@@ -85,7 +85,9 @@ sasu implement start --prd <approved-prd>
 sasu implement dispatch --state <state> --name <name> --kind <runtime>
 sasu implement escalate --state <state> --intent <key> --reason <problem>
 sasu implement artifact --kind <kind> --path <path> --description <description>
+sasu implement artifact --recover <missing-command-log-path> --reason <reason>
 sasu implement status
+sasu implement verify --preview
 sasu implement verify
 sasu implement amend --approval <evidence> --reason <reason>
 sasu implement retire
@@ -94,6 +96,11 @@ sasu implement retire
 `verify` performs PRD prelint, runs the sealed required suites, checks source and evidence identity, and replaces the current verification report.
 It does not start models, impose reviewer turn limits, parse reviewer output, or decide whether a pull request may merge.
 Any source or material evidence change makes the report stale until verification runs again.
+`start` and `amend` require `source_intake` to name an existing file inside the project, including its real symlink target.
+`verify --preview` runs the same sealed suites and environment, prints every result, and uses the existing execution lease without recording an attempt, evidence or report.
+Preview cannot supply delivery evidence.
+If a generated command log is missing, `artifact --recover` invalidates only its registration and the current report, preserves execution history, and requires a fresh `verify`.
+Changed files and missing external observations must be restored or recollected explicitly.
 
 Its normal response gives the calling agent the next action directly:
 

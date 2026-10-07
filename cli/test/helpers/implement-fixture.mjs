@@ -8,7 +8,9 @@ export const CLI = path.resolve(import.meta.dirname, "../../dist/cli.js");
 export const PRD_PATH = "agents/prd/fixture/prd.md";
 export const STATE_PATH = "agents/runs/fixture/state.json";
 
-export function prd({ profile = "standard", sourceIntake = "current conversation", count = 2, extraRows = [], risks = "None.", decisions } = {}) {
+export const INTAKE_PATH = "agents/intake/fixture/source.md";
+
+export function prd({ profile = "standard", sourceIntake = INTAKE_PATH, count = 2, extraRows = [], risks = "None.", decisions } = {}) {
   const rows = Array.from({ length: count }, (_, index) => `| B${index + 1} | Requirement ${index + 1}: the public command preserves value ${index + 1}. | D-01 |`);
   return `---
 topic: "implement fixture"
@@ -55,6 +57,8 @@ export function makeProject(options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sasu-whole-review-"));
   fs.mkdirSync(path.dirname(path.join(root, PRD_PATH)), { recursive: true });
   fs.writeFileSync(path.join(root, PRD_PATH), prd(options));
+  fs.mkdirSync(path.dirname(path.join(root, INTAKE_PATH)), { recursive: true });
+  fs.writeFileSync(path.join(root, INTAKE_PATH), "User request: preserve every value in the approved request.\n");
   fs.writeFileSync(path.join(root, ".gitignore"), "agents/\n");
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node suite.cjs" } }));
   fs.writeFileSync(path.join(root, "suite.cjs"), options.suiteSource ?? `const fs = require('node:fs'); fs.mkdirSync('agents', { recursive: true }); fs.appendFileSync('agents/suite-count.log', 'ran\\n'); console.log('REAL-SUITE-OUTPUT'); process.exit(${options.testExit ?? 0});\n`);

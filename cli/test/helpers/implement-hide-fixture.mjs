@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { CLI, PRD_PATH, git, isolatedEnv, makeProject, readState, start } from "./implement-fixture.mjs";
+import { CLI, INTAKE_PATH, PRD_PATH, git, isolatedEnv, makeProject, readState, start } from "./implement-fixture.mjs";
 import { installFakeHide } from "./hide-binary.mjs";
 
 export const HANDOFF = "ROLE: Implementor\nGOAL: preserve the approved values\nAUTHORITY: implement only this PRD";
@@ -17,6 +17,8 @@ export function runtimeFixture(t, { linked = false } = {}) {
     git(mainRoot, ["worktree", "add", "-b", "work/linked", root]);
     fs.mkdirSync(path.dirname(path.join(root, PRD_PATH)), { recursive: true });
     fs.copyFileSync(path.join(mainRoot, PRD_PATH), path.join(root, PRD_PATH));
+    fs.mkdirSync(path.dirname(path.join(root, INTAKE_PATH)), { recursive: true });
+    fs.copyFileSync(path.join(mainRoot, INTAKE_PATH), path.join(root, INTAKE_PATH));
   }
   const hide = installFakeHide(outside);
   const observer = { id: "observer", name: "observer", machine: "local", hostScope: path.join(outside, "herdr.sock"), pane: "fixture:p0", parent: "lead", project: root, runtime: "running", registered: true };

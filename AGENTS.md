@@ -104,6 +104,7 @@ Mutating commands record an optional `--issuer` label (`implementor`, `observer`
 Structural facts do the guarding: live Hide parent relationships for specification and advisor roles, and the verification lease.
 Sasu records no session, terminal, registration or watch identity.
 Run-owned launch intent and arguments make repeated instructions deterministic; Hide owns spawn idempotency.
+`start` and `amend` validate the canonical intake file before sealing any contract changes.
 `amend` requires the recorded human approval text and invalidates the current verification report.
 `retire` ends a run before delivery.
 `finalize`, `confirm`, and implementation `risk` are retired and fail explicitly.
@@ -112,11 +113,15 @@ One verification lease covers the full deterministic run from suite execution th
 Other state mutations are refused while the lease exists.
 Dead-owner recovery verifies child process cleanup before taking the lease.
 Read-only status and event waiting remain available.
+`verify --preview` uses that same lease in preview mode and the same executor, environment, timeout and sealed suite.
+It leaves no durable attempt, result, evidence or report and never authorizes delivery.
 
 ### Evidence And Delivery
 
 Registered evidence preserves path, hash, observation time, source identity, collector, method, target, and environment when available.
 Changed or missing evidence invalidates delivery until verification runs again.
+`artifact --recover <path> --reason <reason>` invalidates a missing generated command-log registration and the current report while preserving historical attempts and log identity in the existing replacement history.
+It cannot clear changed files or unrelated missing evidence.
 Ship validates the current deterministic PASS report, exact committed Git head, delivery path boundary, base freshness, CI, mergeability, and explicit merge approval.
 The pull request carries review notes and reviewer-visible evidence.
 GitHub Actions and human review are the final delivery authority.

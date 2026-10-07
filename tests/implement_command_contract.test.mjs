@@ -19,7 +19,9 @@ function documentedCommands() {
 
 test("the skill documents every active implementation command exposed by help", () => {
   const help = helpText();
-  const fromHelp = [...help.matchAll(/^  sasu implement ([a-z-]+)/gm)].map((match) => match[1]);
+  // A command may advertise several forms, such as artifact registration
+  // and missing-log recovery, without becoming a second command.
+  const fromHelp = [...new Set([...help.matchAll(/^  sasu implement ([a-z-]+)/gm)].map((match) => match[1]))];
   assert.deepEqual(documentedCommands().sort(), fromHelp.sort());
 });
 

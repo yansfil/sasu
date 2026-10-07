@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { CLI, PRD_PATH, STATE_PATH, git, isolatedEnv, makeProject, readState } from "../helpers/implement-fixture.mjs";
+import { CLI, INTAKE_PATH, PRD_PATH, STATE_PATH, git, isolatedEnv, makeProject, readState } from "../helpers/implement-fixture.mjs";
 
 const ship = path.resolve(import.meta.dirname, "../../../skills/ship/scripts/prd_ship.js");
 const ok = (result) => { assert.equal(result.status, 0, result.text); return result.json; };
@@ -225,6 +225,8 @@ test("start accepts an intentionally selected sibling checkout through its canon
   git(f.root, ["worktree", "add", "-qb", "other/candidate", sibling, "main"]);
   fs.mkdirSync(path.dirname(path.join(sibling, PRD_PATH)), { recursive: true });
   fs.copyFileSync(path.join(f.root, PRD_PATH), path.join(sibling, PRD_PATH));
+  fs.mkdirSync(path.dirname(path.join(sibling, INTAKE_PATH)), { recursive: true });
+  fs.copyFileSync(path.join(f.root, INTAKE_PATH), path.join(sibling, INTAKE_PATH));
   fs.symlinkSync(sibling, alias, "dir");
   ok(f.cli(["implement", "start", "--prd", PRD_PATH], alias));
   assert.equal(fs.existsSync(path.join(f.root, STATE_PATH)), false);

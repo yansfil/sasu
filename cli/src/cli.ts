@@ -56,11 +56,13 @@ Usage:
   sasu implement escalate --intent <stable-request-key> --reason "<blockage>" [--target <ref>] [--name <advisor-name>] [--kind <agent>] [--model <model>] [--effort <level>] [--json]
     (reserves one of three distinct advisor intents and prints its Hide spawn instructions; replies arrive as Hide letters.)
   sasu implement artifact (--kind <screenshot|image|browser|api|db|log|file> --path <path> --description "<observation>" | --manifest <json-file>) [--source "<collector and method>"] [--collected-at <ISO-time>] [--target "<observed target>"] [--environment "<environment>"] [--refs "<B1,B2,...>"] [--json]
+  sasu implement artifact --recover <missing-command-log-path> --reason "<why missing>" [--json]
   sasu implement status   [--slug <topic> | --state <path>] [--json]
     (reports current contract, deterministic verdict and evidence. Runtime status and letters use hide agent list / hide inbox.)
-  sasu implement verify   [--slug <topic> | --state <path>] [--json]
+  sasu implement verify   [--slug <topic> | --state <path>] [--preview] [--json]
     (executes the sealed required suite, validates current source and evidence, and writes a fresh verification-report.json and verification-report.md.
-     Native Fidelity, Code, and optional Security subagents run visibly through the workflow skill and never change this deterministic result.)
+     Native Fidelity, Code, and optional Security subagents run visibly through the workflow skill and never change this deterministic result.
+     --preview runs every required suite in the verify environment without recording results or a report.)
   sasu implement retire   [--slug <topic> | --state <path>] [--json]
     (ends the run record. End child agents and watches directly through Hide.
      Mutations record an optional --issuer <implementor|observer|human> audit label and refuse a live verify lease.)
