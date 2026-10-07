@@ -19,7 +19,7 @@ import { assertNotImplementor, assertObserverForRun } from "./hide";
 import { DispatchRejected, assertDispatchablePrd, assertHandoff, buildImplementorPrompt, buildSpawnInstruction } from "./dispatch";
 import { intentSource } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
-import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, repositoryHead, requireWorkRoot, sha256, statePathFor, runRoleInputs, changedPathsFromGit, requireRunContext, resolveStatePath, writeTextAtomic, StateConflictError } from "./store";
+import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, repositoryHead, requireWorkRoot, sha256, statePathFor, runRoleInputs, changedPathsFromGit, requireRunContext, recordContext, resolveStatePath, writeTextAtomic, StateConflictError } from "./store";
 import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type MechanicalRunRecord, type RegisteredArtifact, type UnifiedVerificationAttempt, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, type SpawnIntent, type EscalationRecord, ESCALATE_LIMIT_PER_RUN } from "./types";
 
 export interface ImplementArgs {
@@ -209,7 +209,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
         gapAudit: null,
         spec: null,
       };
-  const statePath = statePathFor(projectRoot, slug);
+  const statePath = recordContext(statePathFor(projectRoot, slug)).statePath;
   const existingPath = resolveStatePath(projectRoot, { slug });
   if (fs.existsSync(existingPath)) {
     let existingSchema = "unknown";
@@ -731,7 +731,12 @@ function publicGit(state: ImplementState): CurrentGit {
 }
 
 function deliveryPaths(state: ImplementState, git: CurrentGit, source: ReturnType<typeof captureSourceSnapshot>): string[] {
-  return git.available ? changedPathsFromGit(requireWorkRoot(state), git.baseSha) : changedPathsSince(state.initialSource, source);
+  const paths = git.available ? changedPathsFromGit(requireWorkRoot(state), git.baseSha) : changedPathsSince(state.initialSource, source);
+  // Git defines the candidate range, not permission to deliver another
+  // session's work. Keep the accepted exclusion even after those bytes are
+  // committed; ship requires separation or an explicit approved include.
+  const excluded = new Set(state.baselineAttribution.paths.filter((entry) => entry.disposition === "pre-existing").map((entry) => entry.path));
+  return paths.filter((entry) => !excluded.has(entry));
 }
 
 function publicState(state: ImplementState, currentSourceDigest?: string, currentInputFingerprint?: string): Record<string, unknown> {

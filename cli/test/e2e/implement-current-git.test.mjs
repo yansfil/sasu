@@ -173,3 +173,27 @@ test("changed or missing registered evidence invalidates delivery without rewrit
   assert.deepEqual(f.state().artifacts.find(x => x.path === "agents/proof.txt"), observation);
   assert.equal(f.state().activeVerification, undefined);
 });
+
+for (const mixed of [false, true]) test(`current Git does not acquire pre-existing dirty work${mixed ? " in a mixed path map" : ""}`, (t) => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.root, "peer.txt"), "unrelated existing work\n");
+  if (mixed) fs.writeFileSync(path.join(f.root, "owned.txt"), "approved existing implementation\n");
+  const attribution = mixed ? JSON.stringify({ "peer.txt": "pre-existing", "owned.txt": "run-owned" }) : "pre-existing";
+  ok(f.cli(["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", attribution]));
+  fs.writeFileSync(path.join(f.root, "implementation.txt"), "approved implementation\n");
+  git(f.root, ["add", "."]); git(f.root, ["commit", "-qm", "Commit mixed work"]);
+  f.verify();
+  assert.deepEqual(f.report().ownedFiles, mixed ? ["implementation.txt", "owned.txt"] : ["implementation.txt"]);
+  const refused = f.deliver();
+  assert.notEqual(refused.status, 0); assert.match(refused.text, /Unexpected paths: peer\.txt/);
+  assert.equal(ok(f.deliver(["--include", "peer.txt"])).ok, true, "explicit delivery inclusion remains a separate decision");
+});
+
+test("start refuses a nested record root before writing a run record or seal", (t) => {
+  const f = fixture(t), nested = path.join(f.root, "nested");
+  fs.mkdirSync(nested);
+  fs.cpSync(path.join(f.root, "agents"), path.join(nested, "agents"), { recursive: true });
+  const refused = f.cli(["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"], nested);
+  assert.notEqual(refused.status, 0); assert.match(refused.text, /Git checkout root/);
+  assert.equal(fs.existsSync(path.join(nested, "agents/runs/fixture")), false);
+});

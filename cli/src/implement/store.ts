@@ -137,7 +137,12 @@ const runContexts = new WeakMap<ImplementState, RunContext>();
 
 /** Record location is the sole checkout authority, including after a move. */
 export function recordContext(statePath: string): RunContext {
-  const exact = fs.realpathSync(statePath);
+  // Resolve the existing ancestor so a new record can be checked before any
+  // directory, seal or state is written. A dangling symlink still fails.
+  const absolute = path.resolve(statePath);
+  let ancestor = absolute;
+  while (fs.lstatSync(ancestor, { throwIfNoEntry: false }) === undefined) ancestor = path.dirname(ancestor);
+  const exact = path.join(fs.realpathSync(ancestor), path.relative(ancestor, absolute));
   const runDir = path.dirname(exact);
   const recordRoot = path.dirname(path.dirname(path.dirname(runDir)));
   if (path.basename(exact) !== "state.json" || path.basename(path.dirname(runDir)) !== "runs" || path.basename(path.dirname(path.dirname(runDir))) !== "agents") {
@@ -454,7 +459,8 @@ function assertVerificationHistory(held: ImplementState, next: ImplementState): 
 }
 
 export function persistState(statePath: string, state: ImplementState, options: StateWriteOptions = {}): void {
-  if (fs.existsSync(statePath)) statePath = fs.realpathSync(statePath);
+  const context = recordContext(statePath);
+  statePath = context.statePath;
   const baseline = stateBaseline.get(state);
   const onDisk = stateFileDigest(statePath);
   if (baseline !== undefined && baseline.statePath === statePath) {
@@ -510,7 +516,7 @@ export function persistState(statePath: string, state: ImplementState, options: 
   // twice (ownership adoption, then the command's own change), and the second
   // write is not a conflict with the first.
   stateBaseline.set(state, { statePath: fs.realpathSync(statePath), digest: sha256(text) });
-  runContexts.set(state, recordContext(statePath));
+  runContexts.set(state, context);
 }
 
 function assertVerificationPublicationCurrent(statePath: string, state: ImplementState, token: string): void {
