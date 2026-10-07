@@ -64,7 +64,7 @@ test("implement entrypoint keeps deterministic verification and visible review b
   const skill = fs.readFileSync(skillPath, "utf8");
   const reviewReference = fs.readFileSync(path.join(referencesDir, "reviews-and-finalization.md"), "utf8");
   const requiredContracts = [
-    /`state\.json` stores run ownership/,
+    /`state\.json` stores the sealed contract/,
     /writes the current `verification-report\.json` and `verification-report\.md`/,
     /It does not start reviewers/,
     /follow the CLI's `Next action:` response/,

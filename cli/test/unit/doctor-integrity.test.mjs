@@ -25,7 +25,7 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
       ...state,
     })));
   };
-  writeState("active-run", { status: "active", ownerSessionId: "session-a", worktree: null });
+  writeState("active-run", { status: "active", worktree: null });
   writeState("ended-run", { status: "retired", worktree: { path: worktree, branch: "sasu/ended-run" } });
   writeState("unknown-status", { status: "paused", worktree: null });
   writeState("missing-snapshot", { prd: { ...stateFixture(root).prd, snapshotPath: undefined } });
@@ -34,9 +34,9 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
   writeState("future-active", { schema: "sasu.implement.state.v99", status: "active", worktree: null });
   writeState("experimental-active", { schema: "sasu.implement.state.v9.parallel-review", status: "active", worktree: null });
 
-  const section = runIntegritySection(root, null);
+  const section = runIntegritySection(root);
   assert.equal(section.ok, false);
-  assert.ok(section.lines.includes("retire candidate: active-run owner=session-a command=sasu implement retire --slug active-run --adopt"), section.lines.join("\n"));
+  assert.ok(section.lines.includes("retire candidate: active-run command=sasu implement retire --slug active-run"), section.lines.join("\n"));
   assert.ok(section.lines.includes(`orphan worktree: ended-run status=retired path=${worktree} branch=sasu/ended-run`));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: unknown-status") && line.includes("status must be one of active")));
   assert.ok(section.lines.some((line) => line.startsWith("malformed run state: missing-snapshot") && line.includes("prd.snapshotPath")));
@@ -47,7 +47,7 @@ test("doctor reports active retire candidates and ended runs whose worktrees rem
     ["experimental-active", "v9.parallel-review", "2b1f638dd587261be7e7b0e600db16657421971d"],
   ]) {
     assert.ok(section.lines.includes(
-      `incompatible active run: ${slug} status=active schema=sasu.implement.state.${schema} installed-schema=sasu.implement.state.v12.hide; last supported commit: ${support}; use that matching CLI to inspect or retire the old run, or start a new slug`,
+      `incompatible active run: ${slug} status=active schema=sasu.implement.state.${schema} installed-schema=sasu.implement.state.v13.contract-only; last supported commit: ${support}; use that matching CLI to inspect or retire the old run, or start a new slug`,
     ));
     assert.ok(!section.lines.some((line) => line.startsWith(`retire candidate: ${slug} `)));
   }

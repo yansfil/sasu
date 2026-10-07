@@ -63,30 +63,9 @@ export interface VerifyConfig {
   commandTimeoutMs: number;
 }
 
-/**
- * Worktree isolation for implement runs. This is the SAME config surface the
- * ship/sasu-setup skills already interview for (worktree.enabled/root/link/
- * copy/setup) - promoted from skill-doc prose to code so the harness, not the
- * agent, creates and prepares the worktree (PRINCIPLES 7). `enabled: true`
- * isolates every run; `false` still isolates a run whose target tree already
- * hosts an active in-place run (one working tree, one active run).
- */
-export interface WorktreeConfig {
-  enabled: boolean;
-  /** Worktree parent directory; null means `../<repo-basename>.worktrees`. */
-  root: string | null;
-  /** Read-only shared files symlinked from the record tree (.env, certs). */
-  link: string[];
-  /** Files the app writes to, copied per worktree (.dev.vars, local DBs). */
-  copy: string[];
-  /** One-time preparation commands run in the new worktree (pnpm install). */
-  setup: string[];
-}
-
 export interface SasuConfig {
   judge: JudgeConfig;
   verify: VerifyConfig;
-  worktree: WorktreeConfig;
   /**
    * Principle repository roots declared by the project (each contains a
    * ROOT.md whose domain table names the principle documents). Paths are
@@ -295,7 +274,16 @@ export function loadConfig(projectRoot: string): SasuConfig {
       );
     }
   }
-  const worktreeRaw = (raw["worktree"] ?? {}) as Partial<WorktreeConfig>;
+  // #21 delegates checkout provisioning to Hide. Accept inert old defaults,
+  // but never silently discard requested preparation or secret-copy effects.
+  const retiredWorktree = raw["worktree"];
+  if (retiredWorktree !== undefined) {
+    if (retiredWorktree === null || typeof retiredWorktree !== "object" || Array.isArray(retiredWorktree)
+      || Object.entries(retiredWorktree).some(([key, value]) => !(
+        (key === "enabled" && value === false) || (key === "root" && value === null)
+        || (["link", "copy", "setup"].includes(key) && Array.isArray(value) && value.length === 0)
+      ))) throw new Error("worktree provisioning configuration is retired; prepare the checkout with Hide, remove the worktree key from agents/config.json, then seal the run there");
+  }
   const stringList = (value: unknown, label: string): string[] => {
     if (value === undefined) return [];
     if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || entry.trim() === "")) {
@@ -305,21 +293,9 @@ export function loadConfig(projectRoot: string): SasuConfig {
   };
   const principlesRaw = raw["principles"];
   const principles = stringList(principlesRaw, "principles").map((entry) => expandHomePath(entry));
-  const worktree: WorktreeConfig = {
-    enabled: worktreeRaw.enabled ?? false,
-    root: worktreeRaw.root ?? null,
-    link: stringList(worktreeRaw.link, "worktree.link"),
-    copy: stringList(worktreeRaw.copy, "worktree.copy"),
-    setup: stringList(worktreeRaw.setup, "worktree.setup"),
-  };
-  if (typeof worktree.enabled !== "boolean") throw new Error("worktree.enabled must be a boolean");
-  if (worktree.root !== null && (typeof worktree.root !== "string" || worktree.root.trim() === "")) {
-    throw new Error("worktree.root must be a non-empty string or null");
-  }
   return {
     judge,
     verify: { commands: { ...(verifyRaw.commands ?? {}) }, commandTimeoutMs },
-    worktree,
     principles,
     configPath: found,
   };

@@ -19,14 +19,3 @@ export function implementStatePathFor(projectRoot: string, slug: string): string
   rejectLegacy(path.join(projectRoot, "agents/implement", slug, "state.json"), current);
   return current;
 }
-export const ACTIVE_POINTER_REL = path.join(RUNS_ROOT, ".prd-implement-active.json");
-export const SESSION_POINTER_DIR_REL = path.join(RUNS_ROOT, ".active");
-export function sessionPointerRel(sessionId: string): string { return path.join(SESSION_POINTER_DIR_REL, `${sessionId}.json`); }
-export function activePointerWriteRel(sessionId: string | null): string { return sessionId === null ? ACTIVE_POINTER_REL : sessionPointerRel(sessionId); }
-export function activePointerReadPath(projectRoot: string, sessionId: string | null): string {
-  const candidates = [...(sessionId === null ? [] : [path.join(projectRoot, sessionPointerRel(sessionId))]), path.join(projectRoot, ACTIVE_POINTER_REL)];
-  const current = candidates.find((file) => fs.existsSync(file));
-  if (current) return current;
-  rejectLegacy(path.join(projectRoot, "agents/implement/.prd-implement-active.json"), candidates.at(-1)!);
-  return candidates.at(-1)!;
-}

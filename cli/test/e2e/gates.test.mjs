@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { installFakeHide } from "../helpers/hide-binary.mjs";
+import { stateFixture, AT, SHA } from "../helpers/implement-state.mjs";
 
 const CLI = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "..", "dist", "cli.js");
 const PRELINT_FIXTURES = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..", "fixtures", "prelint");
@@ -52,8 +54,10 @@ function stubFile(dir, responses) {
 }
 
 function runCli(cwd, args, { stub, env: extraEnv } = {}) {
-  const env = { ...process.env, ...extraEnv };
-  if (!("SASU_HERDR_ROLE" in (extraEnv ?? {}))) delete env.SASU_HERDR_ROLE;
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (/^(HERDR_|HIDE_)/.test(key)) delete env[key];
+  delete env.SASU_HERDR_ROLE;
+  Object.assign(env, extraEnv);
   if (stub) {
     env.SASU_JUDGE_BACKEND = "stub";
     env.SASU_JUDGE_STUB_FILE = stub;
@@ -81,20 +85,27 @@ const BLOCK_RESPONSE = {
   ],
 };
 
-test("an Implementor role refuses specification gates before setup writes, and an unmarked session recovers", () => {
+test("a live Hide child cannot run specification gates before setup writes", (t) => {
   const dir = makeProject({ git: true });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const hide = installFakeHide(dir);
+  const state = stateFixture(dir, { dispatchIntent: { intent: "implement", at: AT, name: "impl", kind: "claude", model: null, effort: "high", promptPath: "agents/runs/fixture/handoff.md", promptSha256: SHA, checkout: { repo: dir, path: dir, branch: "fixture" } } });
+  const record = path.join(dir, state.runDir, "state.json");
+  fs.mkdirSync(path.dirname(record), { recursive: true });
+  fs.writeFileSync(record, JSON.stringify(state));
+  fs.writeFileSync(hide.state, JSON.stringify({ seq: 0, participants: { child: { id: "child", name: "impl", machine: "local", hostScope: "/private-fixture.sock", pane: "fixture:p2", parent: "observer", project: dir, runtime: "running", registered: true } }, spawns: {} }));
   const exclude = path.join(dir, ".git", "info", "exclude");
   const beforeExclude = fs.readFileSync(exclude, "utf8");
   const args = ["gate", "gap-audit", "--slug", "role-fixture", "--qa-log", "qa-log.md", "--json"];
   const refused = runCli(dir, args, {
     stub: stubFile(dir, { verdict: "PASS", findings: [] }),
-    env: { SASU_HERDR_ROLE: "implementor" },
+    env: { ...hide.env, HERDR_ENV: "1", HERDR_PANE_ID: "fixture:p2", HERDR_SOCKET_PATH: "/private-fixture.sock" },
   });
 
   assert.equal(refused.status, 1, refused.stdout + refused.stderr);
   const refusal = JSON.parse(refused.stdout);
   assert.equal(refusal.error.code, "implementor-spec-command-refused");
-  assert.match(refusal.error.message, /belongs to the Spec Owner or Observer/);
+  assert.match(refusal.error.message, /run child in Hide/);
   assert.equal(fs.existsSync(path.join(dir, "agents", "runs", "role-fixture")), false);
   assert.equal(fs.readFileSync(exclude, "utf8"), beforeExclude, "the refusal happens before ensureSetup");
 
@@ -572,7 +583,7 @@ test("gate reopen --json and gate answer --json say what they did beside the NOT
 
 test("json contract: doctor, status, and override all emit contractVersion-tagged JSON", () => {
   const dir = makeProject();
-  const doctor = runCli(dir, ["doctor", "--json"], {});
+  const doctor = runCli(dir, ["doctor", "--json"], { env: installFakeHide(dir).env });
   const doctorParsed = JSON.parse(doctor.stdout);
   assert.match(doctorParsed.contractVersion, /^\d+\.\d+\.\d+$/);
   assert.ok(Array.isArray(doctorParsed.sections));

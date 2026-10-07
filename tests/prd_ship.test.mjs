@@ -77,7 +77,7 @@ function fixture(baselineFiles = {}) {
   const reportText = `${JSON.stringify(report, null, 2)}\n`;
   identity.reportSha256 = crypto.createHash("sha256").update(reportText).digest("hex");
   const state = {
-    schema: "sasu.implement.state.v12.hide",
+    schema: "sasu.implement.state.v13.contract-only",
     status: "active",
     topicSlug: "fixture",
     projectRoot: root,
@@ -123,21 +123,17 @@ test("local delivery accepts a report bound to the already committed implementat
   assert.equal(run("git", ["log", "-1", "--format=%s"], { cwd: current.root }).stdout.trim(), "Implement feature");
 });
 
-test("a completed delivery of a Hide-supervised run ends its implementor as the native caller", () => {
+test("delivery discovers the unique active record across checkouts without a session bookmark", (t) => {
   const current = fixture();
-  current.state.supervision = { runInstanceId: "run-key-1", hide: { observer: "a_observer", implementor: "a_implementor" } };
-  write(current.statePath, `${JSON.stringify(current.state, null, 2)}\n`);
-  const bin = path.join(current.root, "agents", "test-bin");
-  write(path.join(bin, "hide"), `#!/usr/bin/env node
-require("node:fs").appendFileSync(${JSON.stringify(path.join(current.root, "agents", "hide-argv.log"))}, JSON.stringify(process.argv.slice(2)) + "\\n");
-process.stdout.write(JSON.stringify({ ok: true, delivery: "delivered", value: {} }));
-`, 0o755);
-  const result = run(process.execPath, [shipScript, "local", "--state", current.statePath, "--no-gpg-sign"], { cwd: current.root, env: current.env });
-  const output = JSON.parse(result.stdout);
-  assert.equal(output.ok, true);
-  assert.deepEqual(output.coordination, { ended: true, implementor: "a_implementor", delivery: "delivered" });
-  const asked = fs.readFileSync(path.join(current.root, "agents", "hide-argv.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
-  assert.deepEqual(asked, [["agent", "end", "a_implementor"]]);
+  const sibling = `${current.root}-sibling`;
+  t.after(() => { fs.rmSync(sibling, { recursive: true, force: true }); fs.rmSync(current.root, { recursive: true, force: true }); });
+  run("git", ["worktree", "add", "-qb", "fixture-sibling", sibling], { cwd: current.root });
+  const result = run(process.execPath, [shipScript, "local", "--no-gpg-sign"], { cwd: sibling, env: { ...current.env, CODEX_THREAD_ID: "new-session" } });
+  assert.equal(JSON.parse(result.stdout).ok, true);
+  write(path.join(sibling, current.state.runDir, "state.json"), JSON.stringify({ ...current.state, projectRoot: sibling }));
+  const ambiguous = run(process.execPath, [shipScript, "local"], { cwd: sibling, env: current.env, allowFailure: true });
+  assert.notEqual(ambiguous.status, 0);
+  assert.match(ambiguous.stderr, /Expected one active run, found 2/);
 });
 
 test("local delivery never amends a verified checkpoint commit", () => {
@@ -345,7 +341,7 @@ test("old receipt-era state is rejected explicitly", () => {
     allowFailure: true,
   });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /expected sasu\.implement\.state\.v12\.hide/);
+  assert.match(result.stderr, /expected sasu\.implement\.state\.v13\.contract-only/);
   assert.match(result.stderr, /last supported commit/);
 });
 

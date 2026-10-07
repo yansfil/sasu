@@ -34,6 +34,7 @@ function stubFile(dir, responses) {
 
 function runCli(cwd, args, { stub, capture } = {}) {
   const env = { ...process.env };
+  for (const key of Object.keys(env)) if (/^(HERDR_|HIDE_)/.test(key)) delete env[key];
   delete env.SASU_HERDR_ROLE;
   if (capture) env.SASU_JUDGE_STUB_CAPTURE_DIR = capture;
   else delete env.SASU_JUDGE_STUB_CAPTURE_DIR;

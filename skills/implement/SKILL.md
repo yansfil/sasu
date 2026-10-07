@@ -24,7 +24,9 @@ approved PRD -> implement, focused checks, and real-behavior observation -> comm
 
 An integration-risk change may run an earlier full verify; the execution plan names when.
 
-`state.json` stores run ownership, the sealed contract and suite, evidence registrations, and the current deterministic report identity.
+`state.json` stores the sealed contract and suite, evidence registrations, advisor request budget, and the current deterministic report identity.
+Hide owns live identities, parent relationships, watches and letters.
+Sasu never copies native session or terminal identities into the run record.
 `verification-report.json` and `verification-report.md` describe the current verified input.
 They are fresh derived results, not completion tokens.
 Agent reviews are ordinary Markdown advice and never become CLI state or delivery authority.
@@ -44,8 +46,8 @@ Read each linked reference completely when its condition applies.
 
 ## Role And Ownership
 
-Resolve the structural Herdr role before any repository write.
-The user-facing session is the Observer and one marked Implementor owns source changes.
+Resolve the live Hide parent relationship before any repository write.
+The user-facing session is the Observer and its delegated Implementor owns source changes.
 The Implementor never dispatches another Implementor recursively.
 Native review subagents are review workers inside the current runtime, not additional Implementors and not hidden CLI judges.
 
@@ -59,8 +61,10 @@ Do not touch unrelated user or sibling changes.
 sasu implement start --prd <approved-prd-path>
 ```
 
-Under Herdr the Observer runs `start` before it dispatches, and the Implementor's pane opens in the tree the run edits: the Implementor never runs `start` itself, and its bare `sasu implement ...` commands already resolve the run.
-Outside Herdr the session that will implement runs `start` and works in the returned worktree when one is created.
+Under Hide the Observer seals the run with `start`, asks `dispatch` for the handoff command, then runs the returned `hide agent spawn --parent here` command directly.
+The Implementor reads the sealed run using the explicit state path in its handoff.
+Retry the same spawn intent after an interrupted response; Hide owns child reuse and startup recovery.
+Outside a managed runtime, the implementing session runs `start` in the selected checkout and continues there.
 Read the complete approved PRD and its decisions before editing.
 Write the execution plan from `references/execution-planning.md` before the first source change.
 Implement every required behavior and perform actual browser, native, API, database, CLI, or document observation appropriate to the product.
@@ -130,14 +134,14 @@ It also states when consecutive FAIL attempts ran on identical input; a rerun wi
 
 ## Blocks And The Completion Notice
 
-`sasu implement status` names the run's recorded Hide participants and watch ID.
-`status --digest` reads the current watch through `hide agent show`; plain status does not query Hide.
-A blocked Implementor runs `sasu implement block` with the question, recommendation, reversibility and scope impact, then ends its turn.
-The Observer answers the resulting Hide block request from its own native pane; the Implementor reads the reply through normal mailbox intake.
-There is no legacy backend or automatic unanswered-question escalation.
-Right before its final report, the Implementor runs `sasu implement report`.
-The pending report asks the Observer to inspect the current verification and completes nothing by itself.
-Confirmed delivery stops the Hide watch without waiting for the parent's acknowledgement.
+`sasu implement status` reports the current contract, suites, evidence and verification.
+Inspect runtime liveness with `hide agent list` and `hide agent show <id>`.
+Send an execution plan with `hide request send <observer> --intent <stable-key> --body <plan>` and continue working while the Observer reviews it.
+A blocked Implementor sends `hide request send <observer> --kind block --intent <stable-key> --body <question, recommendation, reversibility and scope impact>` and ends its turn.
+The Observer reads `hide inbox` and answers with `hide request reply <id> --intent <reply-key> --body <answer>`.
+Right before its final report, the Implementor sends `hide request send <observer> --kind report --intent <stable-key> --body <current verification and review result>`.
+A report letter requests inspection; it is not a completion verdict.
+Hide owns notification delivery and watch completion.
 
 ## Delivery
 
@@ -161,31 +165,24 @@ High-risk changes require the repository's independent specialist review and exp
 | --- | --- | --- |
 | `intake` | none | read-only |
 | `start` | `--prd` | Observer under Herdr; the implementing session outside Herdr |
-| `dispatch` | `--name`, `--prd` | after `start`; refused from a pane marked implementor; records the Observer, registers both native identities with Hide, and starts an inactivity watch |
-| `status` | optional `--state` or `--slug` | read-only |
+| `dispatch` | current run and initial context | prints a complete spawn command and a handoff file; Observer executes the command directly |
+| `status` | optional `--state` or `--slug` | read-only contract and verification facts |
 | `artifact` | kind, path, description | registers runtime evidence |
-| `plan` | `--path` | records the execution plan and sends an ordinary Hide request; implementation continues, and the Observer closes it with a confirmation reply |
-| `block` | `--kind`, `--question`, `--recommendation`, `--reversible`, `--scope-impact` | records the block and sends a Hide block request; end the turn and wait for the reply |
-| `report` | optional `--summary` | right before the final report, sends the current verification verdict as a Hide report letter |
-| `amend` | `--approval`, `--reason` | re-seals the PRD with the recorded human approval; invalidates the report |
-| `escalate` | `--reason` | Observer diagnosis; the recorded Observer needs no `--adopt`; refused from a pane marked implementor |
-| `retire` | active run | ends the run; another session's run needs `--adopt` |
+| `amend` | `--approval`, `--reason` | re-seals the PRD with human approval; invalidates the report |
+| `escalate` | `--reason` and stable `--intent` | reserves one of three advisor requests and prints its spawn command; the advisor returns a Hide letter |
+| `retire` | active run | ends the contract run; runtime cleanup remains with Hide |
 | `verify` | current run | runs the sealed suite and writes the report |
 
-Mutating commands take an optional `--issuer implementor|observer|human` label that is recorded in the verb history; it gates nothing.
-Ownership is by session: a run owned by another session is mutated only with `--adopt`, which records the takeover; the recorded Observer's `escalate` is the one exception and leaves ownership unchanged.
+Mutating commands take an optional `--issuer implementor|observer|human` audit label; it grants no authority.
+Role restrictions use current Hide registration and its parent relationship.
+Changing a native terminal or session during handoff or compaction does not transfer Sasu ownership because Sasu stores neither identity.
+The verification lease still excludes concurrent run mutations.
 
-`finalize`, `confirm`, implementation `risk`, and the one-shot `await` waiter are retired.
-Reviewer judgment is no longer encoded as CLI state.
-Under Herdr, Hide owns inactivity watches and mailbox delivery.
-`sasu supervisor status` inspects recorded runs through `hide agent show`.
-`handover` assigns an active watch with explicit approval and its current generation before changing Sasu state.
-A positively observed ended watch permits the approved Observer update without restarting the watch; a transport refusal preserves the recorded Observer.
-No Sasu service is installed.
-Automatic replacement requires the actual current Observer, and watch assignment does not grant permission to end the original parent's child.
-An unstarted reset returns `reset_not_started` with the refusal and next action, rather than claiming a replacement exists.
-The actual Implementor may end its own registration from its native pane.
-Sasu omits `--actor` from `agent end` and lets Hide authorize the actual target or original parent.
+Use Hide directly for spawning, watches, inbox intake, replies and reports.
+The former session adoption, pending dispatch recovery, supervisor registry and handover machinery is removed.
+Old run schemas require their matching CLI; finish old runs before installing this version.
+After three distinct advisor requests, ask a human for a decision and report the attempted approaches.
+Retrying one advisor intent does not consume another request.
 
 ## Final Report
 

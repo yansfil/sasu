@@ -79,6 +79,10 @@ int main(int argc,char **argv) {
   for(int i=1;i<argc;i++) if(!strcmp(argv[i],"--json-schema")) return 1;
   signal(SIGTERM,stop_runner); signal(SIGHUP,stop_runner); signal(SIGINT,stop_runner);
   const char *pane=getenv("HERDR_PANE_ID"); if(!pane || !*pane) return 1;
+  char args_path[4096]; snprintf(args_path,sizeof args_path,"%s/%s.argv",directory,pane);
+  int args_log=open(args_path,O_WRONLY|O_CREAT|O_TRUNC,0600); if(args_log<0) return 1;
+  for(int i=1;i<argc;i++) if(write(args_log,argv[i],strlen(argv[i])+1)!=(ssize_t)(strlen(argv[i])+1)) return 1;
+  close(args_log);
   char session[80]; snprintf(session,sizeof session,"fixture-%d",getpid()); setenv("CLAUDE_SESSION_ID",session,1);
   char *report[]={(char*)herdr,"pane","report-agent-session",(char*)pane,"--source","herdr:claude","--agent","claude","--agent-session-id",session,"--seq","1",NULL};
   if(run_child(report)) return 1;
@@ -143,7 +147,13 @@ int main(int argc,char **argv) {
     const pane = created.root_pane.pane_id;
     await waitFor(() => { const info = herdr(["pane", "process-info", "--pane", pane]).result.process_info; return info.shell_pid > 1 && info.foreground_process_group_id === info.shell_pid && info.foreground_processes.every((process) => process.pid === info.shell_pid); }, "Observer shell foreground");
     herdr(["agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", "10000"]);
-    await waitFor(() => herdr(["agent", "get", pane]).result.agent.agent_session?.value, "native Observer session");
+    const native = await waitFor(() => {
+      const agent = herdr(["agent", "get", pane]).result.agent;
+      return agent.agent_session?.value ? agent : null;
+    }, "native Observer session");
+    const registration = await command(pane, candidate.hide, ["agent", "register", "--host-scope", socket,
+      "--session", native.agent_session.value, "--instance", native.terminal_id, "--name", name, "--pane", pane, "--project", root]);
+    assert.equal(registration.status, 0, registration.text);
     return pane;
   };
   const command = async (pane, binary, argv, options = {}) => {

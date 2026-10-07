@@ -7,7 +7,7 @@
 - [Verification](#verification)
 
 Read the complete PRD and its decision sources before implementing.
-The PRD owns requirements and approved structure; `state.json` owns execution history, evidence identity, run authority, and the current deterministic report identity.
+The PRD owns requirements and approved structure; `state.json` owns execution history, evidence identity, and the current deterministic report identity.
 Requirement IDs are references, not a task ledger.
 
 ## Plan Before The First Write
@@ -23,31 +23,29 @@ Nothing validates its shape, and nothing checks conformance to it later.
 1. **How I will build it.**
    Map the PRD's `Technical structure` onto the real code: which modules or boundaries, what talks to what, what existing code is reused, and what is new.
    Name the one or two decisions that are expensive to reverse and why they go this way.
-   A structure that differs from the approved PRD is a block before the first write (`sasu implement block`), not a note in the plan.
+   A structure that differs from the approved PRD is a block before the first write (`hide request send <observer> --kind block`), not a note in the plan.
 2. **Where it can go wrong.**
    Name the risks that decide the order.
    A plan with no risk is the PRD restated and reads as such.
 3. **What I decide and go with.**
    List the product or implementation choices the PRD does not settle, each with its reason, under the heading "say now if you disagree" ("이견 있으면 지금").
-   Do not wait for an answer: proceed, and the Observer answers at the `plan` wake only when it disagrees.
+   Do not wait for an answer: proceed, and the Observer answers at the plan request only when it disagrees.
 4. **Order and the check for each step.**
    A step is a work unit that becomes one commit, cut by observable behavior rather than by layer, ordered by dependency and risk, and labeled with the Behaviors rows it makes visible.
    Each step names what a person sees or which test turns green when it is done; "it builds" and "the table exists" are not checks.
    Say when the first full `sasu implement verify` runs: on the final committed candidate by default, earlier when a step first connects an integration boundary.
 
-Write it to `agents/runs/<slug>/plan.md`, print it as ordinary text, and register it:
+Write it to `agents/runs/<slug>/plan.md`, print it as ordinary text, and send its path and summary to the Observer:
 
 ```sh
-sasu implement plan --path agents/runs/<slug>/plan.md
+hide request send <observer> --intent <plan-revision-key> --body '<plan path and summary>'
 ```
 
 Then continue in the same turn.
-The command records one `plan` event and sends an ordinary Hide request with a stable intent when the run has a recorded Observer.
-The Implementor continues while the Observer reads the plan and closes the request with a confirmation reply.
-The plan request creates no patrol timer or gate, and the Implementor does not wait for the confirmation reply.
-The plan is run bookkeeping: not verify input and not a gate the Observer approves.
-When the plan turns out wrong mid-run, rewrite the file, say so in one line, register it again, and continue; the changed plan gets a new intent and a new request.
-A run that never registers one is not a signal of anything.
+The Observer reads the plan and closes the request with a confirmation reply.
+The plan is run bookkeeping, not a verification input or a gate requiring approval.
+When the plan changes, rewrite the file and send a new intent for that revision.
+A run that never sends a plan is not evidence of any runtime state.
 
 ### Example
 

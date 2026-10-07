@@ -1,199 +1,89 @@
 import fs from "node:fs";
-import { spawnImplementor, type PreparedSpawn, type SpawnPlacement, type SpawnResult } from "./herdr";
+import path from "node:path";
 import { normalizeProjectPath } from "./store";
-import type { ImplementState } from "./types";
 
 const { parseFrontmatterBlock } = require("../../lib/prd_parser.js") as {
   parseFrontmatterBlock(markdown: string): { entries: { key: string; value: string; line: number }[]; body: string } | null;
 };
 
-/**
- * Start exactly one Implementor in a pane of its own.
- *
- * This verb exists because its absence was a lie the documentation told. The
- * Observer reference described a "deterministic helper" with preconditions,
- * marker injection and a JSON return, and then printed a raw `herdr agent new`
- * command carrying `--env` and `--prompt` - two flags herdr has never had.
- * Nothing implemented the helper, so every dispatch was hand-typed from prose
- * against a CLI contract nobody was checking, and it drifted (2026-09-07: a
- * live run could not dispatch at all). A rule that lives only in a skill
- * document is a request for discipline, not a guard (AGENTS.md Review Guide
- * 7); this is the guard, and the prose command block leaves with it.
- *
- * The preconditions are ordered so nothing is created before every refusal has
- * had its say: a refused dispatch costs a message, a half-made one costs a
- * stray pane and a confused supervisor.
- */
-export interface DispatchInput {
-  name: string;
-  prdPath: string;
-  handoff: string;
-  placement: SpawnPlacement;
-  kind?: string;
-  model?: string;
-  effort?: string;
-  /** Extra `KEY=VALUE` variables for the Implementor's pane, already parsed. */
-  env?: Record<string, string>;
-  afterCreate?: (prepared: PreparedSpawn) => void;
-  beforeHandoff?: (started: SpawnResult) => void;
-  beforeSubmit?: (started: SpawnResult) => void;
-}
-
-/**
- * `--env KEY=VALUE`, repeated, as the pane environment the adapter injects.
- * Only the shape is decided here (a name a shell accepts, exactly one `=`
- * boundary); which names are reserved is the adapter's own rule.
- */
-export function parseEnvPairs(values: string[]): Record<string, string> {
-  const pairs: Record<string, string> = {};
-  for (const value of values) {
-    const boundary = value.indexOf("=");
-    const key = boundary === -1 ? "" : value.slice(0, boundary);
-    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-      throw new DispatchRejected(`--env expects KEY=VALUE with a shell variable name, got: ${value}`);
-    }
-    pairs[key] = value.slice(boundary + 1);
-  }
-  return pairs;
-}
-
-export interface DispatchRefusal {
-  reason: string;
-}
-
 export class DispatchRejected extends Error {}
 
-const ROLE_ENV_KEY = "SASU_HERDR_ROLE";
-
-/**
- * The recursion guard, and the reason the marker is an environment value
- * rather than a line in the handoff: an Implementor that dispatches an
- * Implementor forks the run's authority in a way no later record can undo.
- * This reads the marker on the *dispatching* process, so it refuses before
- * herdr is touched at all.
- */
-export function assertNotImplementor(env: NodeJS.ProcessEnv = process.env): void {
-  if (env[ROLE_ENV_KEY]?.trim() === "implementor") {
-    throw new DispatchRejected(
-      `this pane is marked ${ROLE_ENV_KEY}=implementor; an implementor executes its handed-off PRD and never dispatches another implementor`,
-    );
-  }
-}
-
-function frontmatterValue(text: string, key: string): string | null {
-  const block = parseFrontmatterBlock(text);
-  if (block === null) return null;
-  for (const entry of block.entries) if (entry.key === key) return entry.value;
-  return null;
-}
-
-/**
- * A dispatch hands over a PRD the supervisor has already sealed. Checking the
- * document here rather than at `implement start` means the failure lands in
- * the pane that can still fix it, instead of in a freshly spawned agent that
- * cannot.
- */
 export function assertDispatchablePrd(projectRoot: string, prdPath: string): { relative: string; status: string } {
   const resolved = normalizeProjectPath(projectRoot, prdPath);
-  if (!fs.existsSync(resolved.absolute)) {
-    throw new DispatchRejected(`PRD not found: ${resolved.relative}; dispatch hands over a sealed document, it does not create one`);
-  }
-  const status = frontmatterValue(fs.readFileSync(resolved.absolute, "utf8"), "status")?.trim() ?? "";
-  if (status !== "ready") {
-    throw new DispatchRejected(
-      `${resolved.relative} is \`status: ${status === "" ? "(unset)" : status}\`; run \`sasu prd ready --prd ${resolved.relative}\` before dispatching`,
-    );
-  }
+  if (!fs.existsSync(resolved.absolute)) throw new DispatchRejected(`PRD not found: ${resolved.relative}; dispatch requires the approved document`);
+  const block = parseFrontmatterBlock(fs.readFileSync(resolved.absolute, "utf8"));
+  const status = block?.entries.find((entry) => entry.key === "status")?.value.trim() ?? "";
+  if (status !== "ready") throw new DispatchRejected(`${resolved.relative} is \`status: ${status || "(unset)"}\`; run \`sasu prd ready --prd ${resolved.relative}\` before dispatching`);
   return { relative: resolved.relative, status };
 }
 
-/**
- * The handoff is the only context the Implementor gets, so an empty one is
- * refused rather than sent: a started agent with no packet is worse than no
- * agent, because it looks like a working dispatch.
- */
 export function assertHandoff(handoff: string): string {
   const text = handoff.trim();
-  if (text === "") {
-    throw new DispatchRejected("the handoff packet is empty; send it on stdin (ROLE, PIPELINE, ORIGINAL INVOCATION, GOAL AND CONTEXT, AUTHORITY, SOURCE, RETURN CONTRACT)");
-  }
+  if (text === "") throw new DispatchRejected("the handoff packet is empty; send the goal, approved contract and authority on stdin");
   return text;
 }
 
-/** The Herdr workspace this process sits in; the in-place placement's target. */
-const WORKSPACE_ID_ENV_KEY = "HERDR_WORKSPACE_ID";
-
-/**
- * Where a run's implementor is placed, decided by the run itself: a run
- * isolated into a worktree gets a workspace on that worktree, so hide lists
- * the agent under the checkout it edits; an in-place run gets a tab in the
- * workspace the Observer is in, because that is the tree it edits. Neither
- * is a split of the Observer's pane.
- */
-export function placementFor(state: ImplementState, env: NodeJS.ProcessEnv = process.env): { placement: SpawnPlacement | null; problem: string | null } {
-  const worktree = state.worktree ?? null;
-  if (worktree !== null) {
-    if (!fs.existsSync(worktree.path)) {
-      return { placement: null, problem: `the run's worktree is missing: ${worktree.path}; recreate it with \`git worktree add ${worktree.path} ${worktree.branch}\` before dispatching` };
-    }
-    return { placement: { kind: "workspace", cwd: worktree.path, label: state.topicSlug }, problem: null };
-  }
-  const workspaceId = env[WORKSPACE_ID_ENV_KEY]?.trim() ?? "";
-  if (workspaceId === "") {
-    return { placement: null, problem: `${WORKSPACE_ID_ENV_KEY} is unset, so an in-place run has no workspace to open the implementor's tab in` };
-  }
-  return { placement: { kind: "tab", workspaceId, cwd: state.projectRoot, label: state.topicSlug }, problem: null };
+export function buildImplementorPrompt(input: { slug: string; prdPath: string; statePath: string; handoff: string }): string {
+  return [
+    "You are the Implementor for an approved Sasu run.",
+    `Run: ${input.slug}`,
+    `Approved PRD: ${input.prdPath}`,
+    `Run state: ${input.statePath}`,
+    `Select this record explicitly: sasu implement status --state ${shellQuote(input.statePath)}; use the same --state argument for artifact, amend and verify.`,
+    "Read the approved PRD and repository instructions before editing. Implement the complete approved contract and preserve peers' work.",
+    "The Observer owns dispatch and escalation. Do not spawn an Implementor or advisor, invoke gates, or change the approved contract without recorded human approval.",
+    "Write a concise execution plan answering what must change, how the result will be observed, what can go wrong, and what is outside scope. Send it directly to your Hide parent with hide request send before the first source edit.",
+    "Use hide agent list to find your live registration and its parent. Use hide inbox and hide request reply for coordination. Send missing decisions or blockers to that parent with hide request send --kind block and end your turn; do not use interactive user-question tools.",
+    "Commit coherent work, request native Fidelity and Code review on the committed candidate, fix current-scope defects, then run sasu implement verify on the final committed head. Report unavailable checks honestly.",
+    "Before your final response, send your Hide parent a report with hide request send --kind report, including changed files, verification evidence and unresolved items. Letters do not authorize changes to the approved PRD.",
+    "",
+    "Handoff from the Observer:",
+    assertHandoff(input.handoff),
+    "",
+  ].join("\n");
 }
 
-export interface DispatchResult {
-  paneId: string;
-  workspaceId: string;
-  tabId: string;
-  cwd: string;
-  agent: string;
+export interface SpawnInstructionInput {
+  intent: string;
+  name: string;
+  kind?: string;
+  model?: string;
+  effort?: string;
+  repo: string;
+  branch: string;
+  path: string;
+  promptPath: string;
+}
+export interface SpawnInstruction {
+  command: string;
+  /** Arguments to hide, excluding the environment bootstrap prefix. */
+  argv: string[];
+  prompt: string;
   kind: string;
-  prd: string;
-  /**
-   * The `parent_pane` token on the new pane, naming the dispatching pane.
-   * `reported` when herdr accepted it; otherwise the reason the row will
-   * show as a root, so a supervisor looking for its child knows why.
-   */
-  parentLineage: "reported" | { unreported: string };
-  sessionId: string;
-  terminalId: string;
-  hostScope: string;
-  recordedAt: string;
+  effort: string;
 }
 
-export function dispatchImplementor(
-  projectRoot: string,
-  input: DispatchInput,
-  env: NodeJS.ProcessEnv = process.env,
-): DispatchResult {
-  assertNotImplementor(env);
-  const name = input.name.trim();
-  if (name === "") throw new DispatchRejected("dispatch requires --name <unique-agent-name>");
-  const handoff = assertHandoff(input.handoff);
-  const prd = assertDispatchablePrd(projectRoot, input.prdPath);
+const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
 
-  const spawned = spawnImplementor(
-    { name, placement: input.placement, prompt: handoff, kind: input.kind, model: input.model, effort: input.effort, env: input.env, afterCreate: input.afterCreate, beforePrompt: input.beforeHandoff, beforeSubmit: input.beforeSubmit },
-    { env },
-  );
-  if (!spawned.ok || spawned.value === null) throw new DispatchRejected(spawned.problem ?? "dispatch failed for an unreported reason");
-
-  return {
-    paneId: spawned.value.paneId,
-    workspaceId: spawned.value.workspaceId,
-    tabId: spawned.value.tabId,
-    cwd: input.placement.cwd,
-    agent: spawned.value.name,
-    kind: spawned.value.kind,
-    prd: prd.relative,
-    parentLineage: spawned.value.lineage.problem === null ? "reported" : { unreported: spawned.value.lineage.problem },
-    sessionId: spawned.value.sessionId,
-    terminalId: spawned.value.terminalId,
-    hostScope: spawned.value.hostScope,
-    recordedAt: spawned.value.recordedAt,
-  };
+/** Generate the public command only. The Observer executes it directly. */
+export function buildSpawnInstruction(input: SpawnInstructionInput): SpawnInstruction {
+  for (const field of ["intent", "name", "repo", "branch", "path", "promptPath"] as const) {
+    if (input[field].trim() === "" || /[\x00-\x1f\x7f]/.test(input[field])) throw new DispatchRejected(`dispatch requires a nonempty ${field} without control characters`);
+  }
+  if (!path.isAbsolute(input.repo) || !path.isAbsolute(input.path) || !path.isAbsolute(input.promptPath)) throw new DispatchRejected("dispatch repo, checkout and prompt paths must be absolute");
+  const kind = input.kind ?? "claude";
+  if (kind !== "claude" && kind !== "codex") throw new DispatchRejected(`unsupported agent kind: ${kind}; use claude or codex`);
+  const effort = input.effort ?? "high";
+  if (!/^[a-z]+$/.test(effort)) throw new DispatchRejected("effort must be a native reasoning effort name");
+  if (input.model !== undefined && (input.model.trim() === "" || /[\x00-\x1f\x7f]/.test(input.model))) throw new DispatchRejected("model must be nonempty and contain no control characters");
+  // A live 2026-10-07 launch truncated a long pasted command. Keep the first
+  // native prompt short; the caller preserves the full immutable handoff file.
+  const prompt = `Read ${JSON.stringify(input.promptPath)} and carry out the assigned work.`;
+  const native = input.model === undefined ? [] : ["--model", input.model];
+  if (kind === "codex") native.push("--config", `model_reasoning_effort="${effort}"`);
+  else native.push("--effort", effort);
+  native.push("--", prompt);
+  const argv = ["agent", "spawn", "--parent", "here", "--name", input.name, "--intent", input.intent, "--kind", kind,
+    "--repo", input.repo, "--branch", input.branch, "--path", input.path, "--", ...native];
+  return { command: `env -u HIDE_CAP_REF hide ${argv.map(shellQuote).join(" ")}`, argv, prompt, kind, effort };
 }

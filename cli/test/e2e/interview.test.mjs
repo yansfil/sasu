@@ -43,6 +43,7 @@ function appendCodexTurn(file, asked, answer, number = 1) {
 
 function runCli(cwd, args, { stub } = {}) {
   const env = { ...process.env };
+  for (const key of Object.keys(env)) if (/^(HERDR_|HIDE_)/.test(key)) delete env[key];
   delete env.SASU_HERDR_ROLE;
   for (const key of ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"]) {
     delete env[key];

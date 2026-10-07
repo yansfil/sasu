@@ -1,19 +1,17 @@
-import type { JudgeCallRecord, JudgeFailureCause } from "../judge/types";
-
-// Implementation state records reproducible execution facts and run authority.
-export const IMPLEMENT_SCHEMA = "sasu.implement.state.v12.hide" as const;
-export const IMPLEMENT_ACTIVE_SCHEMA = "sasu.implement.active.v3" as const;
+// Implementation state records the sealed contract and deterministic execution facts.
+export const IMPLEMENT_SCHEMA = "sasu.implement.state.v13.contract-only" as const;
 export const RETIRED_IMPLEMENT_SUPPORT_COMMIT = "9149d9826fad2af3ba7200761e674b5228ef9b7d";
 export const RETIRED_PARALLEL_REVIEW_SUPPORT_COMMIT = "2b1f638dd587261be7e7b0e600db16657421971d";
 export const RETIRED_COORDINATION_SUPPORT_COMMIT = "fbdf62913b4fbe5fde1ebce26c3e290c8eac0e92";
+export const RETIRED_RUNTIME_SUPPORT_COMMIT = "6f75d9352e3b5b93aa7df8b81b93476246c68aaf";
 export function retiredImplementSupportCommit(schema: unknown): string {
+  if (schema === "sasu.implement.state.v12.hide") return RETIRED_RUNTIME_SUPPORT_COMMIT;
   if (schema === "sasu.implement.state.v11.stateless-verification") return RETIRED_COORDINATION_SUPPORT_COMMIT;
   return schema === "sasu.implement.state.v9.parallel-review" || schema === "sasu.implement.receipt.v5.parallel-review"
     ? RETIRED_PARALLEL_REVIEW_SUPPORT_COMMIT : RETIRED_IMPLEMENT_SUPPORT_COMMIT;
 }
 export type VerificationStatus = "NOT_RUN" | "PASS" | "FAIL" | "BLOCKED" | "ERROR" | "STALE";
 export type ReviewProfile = "trivial" | "standard" | "high-risk";
-export interface JudgeLaneError { code: string; message: string; cause?: JudgeFailureCause }
 export interface BehaviorRequirement { id: string; behavior: string; decisionIds: string[] }
 export interface ExecutionTreeFingerprint { product: string }
 export interface SourceEntry {
@@ -72,17 +70,6 @@ export interface MechanicalRunRecord {
   logPath: string;
 }
 
-export interface LaneRecord<T> {
-  invocationId: string;
-  startedAt: string;
-  finishedAt: string;
-  durationMs: number;
-  verdict: VerificationStatus;
-  result: T | null;
-  judge: JudgeCallRecord | null;
-  error: JudgeLaneError | null;
-}
-
 export interface UnifiedVerificationAttempt {
   id: string;
   prdSha256: string;
@@ -114,12 +101,12 @@ export interface VerificationReportIdentity {
   reportSha256: string;
 }
 export type IssuerLabel = "implementor" | "observer" | "human";
-export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify" | "dispatch" | "handover" | "plan" | "block" | "report";
+export type ImplementEventKind = "amendment" | "escalate" | "artifact" | "verify" | "dispatch";
 export interface ImplementEvent {
   id: number; at: string; kind: ImplementEventKind; actor: IssuerLabel;
   subject: string | null; summary: string;
 }
-export type IssuedCommand = "artifact" | "plan" | "block" | "report" | "verify" | "escalate" | "amend" | "retire";
+export type IssuedCommand = "artifact" | "verify" | "escalate" | "amend" | "retire";
 export type VerbRejectionCheck = "arguments" | "transition";
 export interface VerbRecord {
   id: number;
@@ -196,127 +183,24 @@ export interface SuiteLedger {
   results: SuiteResult[];
 }
 
-export interface SolverHandoff { prdSnapshotPath: string; diagnosisPath: string; verificationPath: string }
-export interface EscalationRecord {
-  id: number;
+/** Requested launch inputs only; Hide owns the child, lineage and watch. */
+export interface SpawnIntent {
+  intent: string;
   at: string;
-  /** Finding the implementor was stuck on, or the whole run. */
+  name: string;
+  kind: string;
+  model: string | null;
+  effort: string;
+  promptPath: string;
+  promptSha256: string;
+  /** Complete requested checkout inputs, fixed for retries of this intent. */
+  checkout: { repo: string; branch: string; path: string };
+}
+
+export interface EscalationRecord extends SpawnIntent {
+  id: number;
   target: string | null;
   reason: string;
-  /** Judge routing profile reused for the solver (R12); no new knob. */
-  profile: ReviewProfile;
-  model: string | null;
-  /** Actual solver backend executions, including retries and fallback. */
-  judge: JudgeCallRecord | null;
-  /** Measured solver invocation duration; a refused backend may make zero calls. */
-  durationMs: number;
-  outcome: "diagnosed" | "summon-failed";
-  /** Diagnosis text on success; null when the summon failed. */
-  diagnosis: string | null;
-  /** Failure detail on summon-failed; null on success. */
-  error: string | null;
-  /** Non-null only on success, when a replacement was actually briefed. */
-  handoff: SolverHandoff | null;
-}
-
-/**
- * One implementor started for this run by `dispatch` or by an escalation's
- * reset. The pane is recorded so a replacement can be placed in the same
- * workspace and a second dispatch can ask herdr whether the last one is
- * still alive before it opens another pane.
- */
-export interface DispatchRecord {
-  id: number;
-  at: string;
-  agent: string;
-  kind: string;
-  paneId: string;
-  workspaceId: string;
-  tabId: string;
-  /** The tree the implementor's shell starts in: the run's worktree, else the record tree. */
-  cwd: string;
-  /** Who handed the run over; null when the run was unowned at dispatch. */
-  fromSessionId: string | null;
-}
-
-/**
- * The identity a wake is addressed to. A wake is sent only when `agent get`
- * on the recorded pane still answers with this session UUID and terminal
- * (D-06); the same name, pane, cwd or PID in a new session is a stranger.
- * Measured 2026-09-18: a herdr server restart keeps pane ids and session
- * UUIDs but rotates terminal ids, so after a restart every run reads as
- * `observer-gone` until an explicit handover re-records the identity. That
- * is the contract's chosen failure direction: silence over a misrouted wake.
- */
-export interface ObserverIdentity {
-  /** Agent kind herdr reports for the pane (claude, codex). */
-  runtime: string;
-  /** The runtime's own session UUID (`agent_session.value`). */
-  sessionId: string;
-  terminalId: string;
-  paneId: string;
-  /** The herdr socket the identity was read from; two servers never share ids. */
-  hostScope: string;
-  recordedAt: string;
-}
-
-/**
- * Explicit re-recording of the Observer after the original session is gone
- * (B18). Verbatim user words, like every other takeover the harness accepts.
- */
-export interface ObserverHandover {
-  at: string;
-  from: ObserverIdentity;
-  to: ObserverIdentity;
-  approval: string;
-}
-
-/**
- * What Hide registration and `status --digest` read about a dispatched
- * run (D-04). Written by `dispatch`, refreshed by an escalation's replacement
- * and by a handover; Hide never writes this record.
- */
-export interface SupervisionRecord {
-  /** Random per dispatch; the child pane carries it as SASU_RUN_INSTANCE_ID. */
-  runInstanceId: string;
-  observer: ObserverIdentity;
-  /** Exact identity captured after start and before the handoff is submitted. */
-  implementor: { paneId: string; agent: string; sessionId: string; terminalId: string; hostScope: string; recordedAt: string };
-  /** Realpath of the repository's common git dir, so two worktrees of one repository and two repositories with one slug never collide. */
-  canonicalRepository: string;
-  prdPath: string;
-  /** HEAD of the judged tree when the implementor was dispatched; the digest measures from here. */
-  dispatchHead: string | null;
-  dispatchedAt: string;
-  /** Hide registration is recorded only after the native child identity is durable. */
-  hide?: { observer: string; implementor: string; watchId: string; registeredAt: string };
-  handovers: ObserverHandover[];
-}
-
-export interface PendingDispatch {
-  runInstanceId: string;
-  observer: ObserverIdentity;
-  plannedAgent: string;
-  phase: "planned" | "prepared" | "started";
-  /** Exact pane created before an agent is started, so crash recovery owns it. */
-  prepared: {
-    paneId: string;
-    workspaceId: string;
-    tabId: string;
-    cwd: string;
-    kind: string;
-    placement: "workspace" | "tab";
-    hostScope: string;
-    parentPaneId: string;
-    preparedAt: string;
-  } | null;
-  implementor: SupervisionRecord["implementor"] | null;
-  canonicalRepository: string;
-  prdPath: string;
-  dispatchHead: string | null;
-  dispatchedAt: string;
-  /** Human-approved recovery-authority transfers before supervision exists. */
-  handovers?: ObserverHandover[];
 }
 
 export type PrdJudgeRecord =
@@ -351,18 +235,12 @@ export interface ImplementState {
     reviewProfile: ReviewProfile;
     reviewRationale: string;
     sourceIntake: string;
-      judge?: PrdJudgeRecord;
+    judge?: PrdJudgeRecord;
   };
   initialSource: SourceSnapshot;
   baselineAttribution: BaselineAttribution;
-  ownerSessionId?: string | null;
-  adoptions?: { at: string; fromSessionId: string; note?: string }[];
-  /** Absent on records written before dispatch recorded itself; read as none. */
-  dispatches?: DispatchRecord[];
-  /** Absent until a Herdr dispatch enrolls the run for supervision; read as none. */
-  supervision?: SupervisionRecord | null;
-  /** Durable dispatch intent, cleared only after the handoff submission succeeds. */
-  pendingDispatch?: PendingDispatch | null;
+  /** Stable requested launch, never a copy of Hide's execution identity. */
+  dispatchIntent: SpawnIntent | null;
   requirements: BehaviorRequirement[];
   activeVerification?: ActiveVerification;
   artifacts: RegisteredArtifact[];
@@ -376,27 +254,9 @@ export interface ImplementState {
   escalations: EscalationRecord[];
   retirement: {
     retiredAt: string;
-    retiredBySessionId: string | null;
-    adoptedFromSessionId?: string;
-    adoptionNote?: string;
   } | null;
   verificationReport: VerificationReportIdentity | null;
   createdAt: string;
-  updatedAt: string;
-}
-
-export interface ImplementActivePointer {
-  schema: typeof IMPLEMENT_ACTIVE_SCHEMA;
-  statePath: string;
-  topicSlug: string;
-  /**
-   * Absolute record-tree root, present only on pointers written OUTSIDE the
-   * record tree (the copy inside a run's worktree): `statePath` then resolves
-   * against it, so bare commands typed from inside the worktree reach the
-   * same record every other surface reads. Pointers inside the record tree
-   * omit it and keep resolving relative to their own tree.
-   */
-  projectRoot?: string;
   updatedAt: string;
 }
 
@@ -423,16 +283,5 @@ export interface ImplementCommandResult {
   summary?: string[];
 }
 
-/** The digest reports a working tree whose newest uncommitted edit is this old. */
-export const UNCOMMITTED_AGE_MS = 20 * 60 * 1000;
-
-/**
- * Escalations allowed per run before further attempts are refused.
- *
- * Also an unmeasured initial default (D-46). The bound exists because a fresh
- * adversarial diagnosis is a stage that cannot converge on its own
- * (PRINCIPLES 13): without a cap, "reset the implementor and try again" is an
- * unbounded loop. Three is the point past which the honest move is to stop and
- * ask a human rather than reset a fourth time.
- */
+/** Three distinct advisor intents per run; retries reuse their reservation. */
 export const ESCALATE_LIMIT_PER_RUN = 3;

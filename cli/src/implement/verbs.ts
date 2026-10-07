@@ -3,8 +3,8 @@ import type { ImplementState, IssuedCommand, IssuerLabel, VerbRecord, VerbReject
 /**
  * Append one verb to the run's history.
  *
- * Refusals are recorded too, and they name WHICH of the three checks refused
- * (arguments, authority, transition). A history that only remembers what
+ * Refusals are recorded too, and they name which check refused
+ * (arguments, transition). A history that only remembers what
  * succeeded cannot answer "why did nothing happen when I asked?", which is
  * the question a supervisor actually has.
  */
@@ -53,9 +53,9 @@ export class VerbRejected extends Error {
  * the same process it claimed to restrict, so the gate stopped nothing a
  * transcript would not already show and blocked legitimate cleanup (an
  * Observer retiring its own scratch run, 2026-09-24). Structural facts guard
- * what needs guarding: session ownership, the pane marker, the verify lease.
+ * what needs guarding: live Hide parent relationships and the verify lease.
  */
-export const ISSUED_COMMANDS: IssuedCommand[] = ["artifact", "plan", "block", "report", "verify", "retire", "escalate", "amend"];
+export const ISSUED_COMMANDS: IssuedCommand[] = ["artifact", "verify", "retire", "escalate", "amend"];
 
 /**
  * Subcommands with no verb record: reads, and the two that run before a run

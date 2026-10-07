@@ -65,7 +65,8 @@ High-risk changes add an independent Security review.
 Reviewer timeouts and runtime failures are reported as `REVIEW_UNAVAILABLE` and do not rewrite deterministic results.
 
 `state.json` is the only mutable run record.
-It stores ownership, the sealed PRD and suite, evidence registrations, actual verification attempts, and the current report identity.
+It stores the sealed PRD and suite, evidence registrations, launch request intents, actual verification attempts, and the current report identity.
+Hide owns runtime identity, parent relationships, watches and letters.
 The report is derived from current inputs and becomes stale after source, contract, suite, or evidence changes.
 Delivery requires the report head to equal the current Git HEAD and refuses Git-visible uncommitted changes.
 There is no receipt, finalize command, reviewer ledger, semantic correction budget, or second writer.
@@ -100,7 +101,9 @@ Shared document and PRD gate helpers stay in `cli/lib/`.
 
 The CLI is the only writer of `state.json`.
 Mutating commands record an optional `--issuer` label (`implementor`, `observer`, `human`) in the verb history for audit; the label is self-declared and gates nothing.
-Structural facts do the guarding: session ownership of the run, the `SASU_HERDR_ROLE` pane marker for dispatch and escalate, and the verification lease.
+Structural facts do the guarding: live Hide parent relationships for specification and advisor roles, and the verification lease.
+Sasu records no session, terminal, registration or watch identity.
+Run-owned launch intent and arguments make repeated instructions deterministic; Hide owns spawn idempotency.
 `amend` requires the recorded human approval text and invalidates the current verification report.
 `retire` ends a run before delivery.
 `finalize`, `confirm`, and implementation `risk` are retired and fail explicitly.
@@ -125,8 +128,10 @@ Neither hook changes verification or completion state.
 Any hook the installer has owned stays listed in `HARNESS_HOOK_MARKERS` in `cli/lib/hooks.js` so later installs can retire it without touching foreign hooks.
 The legacy Stop marker remains for cleanup; the installer does not register a Stop hook or install, query or change a supervisor LaunchAgent.
 
-Sasu uses the running Hide installation for registration, watches and requests.
-Dispatch creates the pane through the existing Herdr adapter, then registers its native identity with Hide and starts an inactivity watch.
+The Observer runs the generated `hide agent spawn --parent here` command directly.
+Dispatch writes a handoff and prints instructions; it does not start an agent.
+The Observer uses Hide inbox, requests and replies directly, including for advisors.
+Sasu has no supervisor registry, native startup-screen handling or hidden solver process.
 Tests never address the operator's Hide or Herdr.
 Boundary tests use a private fake Hide executable; runtime tests name the candidate explicitly and use their own HOME, state and Herdr server.
 The installer removes only the exact regular-file shim it formerly owned beside `sasu`, preserves foreign files and symlinks, and never inspects the old coordinator's HOME or remote shim.
@@ -140,8 +145,8 @@ Follow [Shared-worktree verification](docs/shared-worktree-verification.md) and 
 
 ### Browser Tooling
 
-Use chromux for exploratory browser QA and screenshots.
-Committed automated browser tests must launch and tear down their own browser process, such as Playwright, because chromux is a shared daemon.
+Use aside for exploratory browser QA and screenshots.
+Committed automated browser tests must launch and tear down their own browser process, such as Playwright, because exploratory browser sessions are shared.
 
 ### Comments
 

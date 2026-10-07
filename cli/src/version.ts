@@ -8,6 +8,32 @@ export function contractVersion(): string {
   return pkg.version ?? "0.0.0";
 }
 
+export type BuildIdentity =
+  | { status: "available"; commit: string; dirty: boolean }
+  | { status: "unavailable"; reason: "git-unavailable" | "metadata-missing" | "metadata-invalid" };
+
+/** Never consult runtime Git: an installed build can outlive its source HEAD. */
+export function buildIdentity(): BuildIdentity {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(path.join(__dirname, "build-info.json"), "utf8"));
+  } catch (error) {
+    return { status: "unavailable", reason: (error as NodeJS.ErrnoException).code === "ENOENT" ? "metadata-missing" : "metadata-invalid" };
+  }
+  if (raw !== null && typeof raw === "object") {
+    const value = raw as Record<string, unknown>;
+    if (value.status === "available" && typeof value.commit === "string" && /^[a-f0-9]{40,64}$/.test(value.commit) && typeof value.dirty === "boolean") {
+      return { status: "available", commit: value.commit, dirty: value.dirty };
+    }
+    if (value.status === "unavailable" && value.reason === "git-unavailable") return { status: "unavailable", reason: "git-unavailable" };
+  }
+  return { status: "unavailable", reason: "metadata-invalid" };
+}
+
+export function buildIdentityLine(build: BuildIdentity = buildIdentity()): string {
+  return build.status === "available" ? `build commit: ${build.commit} (dirty: ${build.dirty})` : `build provenance unavailable: ${build.reason}; rebuild from a Git checkout`;
+}
+
 let buildDigest: string | null = null;
 
 /**

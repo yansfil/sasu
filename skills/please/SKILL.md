@@ -47,7 +47,8 @@ Spec never asks the user directly or seals a decision via `gate answer --gate sp
 Never run `sasu gate override` yourself.
 
 Start implementation only from a complete ready PRD.
-In Herdr, the user-facing session remains the Observer and dispatches one marked Implementor after the PRD is ready.
+In Herdr, the user-facing session remains the Observer and seals the run after the PRD is ready, obtains its dispatch instructions, and runs the returned `hide agent spawn --parent here` command directly.
+Hide owns lineage, watches, inbox delivery and replies.
 Outside Herdr, the current session may execute the same steps directly.
 Never recursively dispatch an Implementor.
 

@@ -13,21 +13,6 @@ const { isDeepStrictEqual } = require("node:util");
 const NAMESPACE_ROOT = "agents";
 // Gate and implement records share the current run namespace.
 const RUNS_ROOT_REL = path.join(NAMESPACE_ROOT, "runs");
-const ACTIVE_PATH = path.join(RUNS_ROOT_REL, ".prd-implement-active.json");
-const SESSION_POINTER_DIR_REL = path.join(RUNS_ROOT_REL, ".active");
-
-// Session-scoped pointer mirror of cli/src/runs/session.ts + runs/paths.ts;
-// the key list and sanitizer must match SESSION_ID_ENV_KEYS there. Kept local
-// so the ship skill stays installable without an implement checkout.
-const SESSION_ID_ENV_KEYS = ["CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDE_CODE_SESSION_ID"];
-function currentSessionId() {
-  for (const key of SESSION_ID_ENV_KEYS) {
-    const value = (process.env[key] || "").trim();
-    if (value) return value.replace(/[^A-Za-z0-9._-]/g, "-");
-  }
-  return null;
-}
-
 const AGENT_FILL_PATTERN = /<!--\s*AGENT-FILL/i;
 const ATTRIBUTION_PATTERNS = [
   /co-authored-by:.*\b(claude|codex|copilot|cursor|chatgpt|gpt|openai|anthropic|gemini)\b/i,
@@ -245,17 +230,27 @@ function resolveState(options) {
   const repoRoot = findGitRoot(process.cwd());
   let statePath = options.state ? resolveInput(options.state, repoRoot) : null;
   if (!statePath) {
-    const sessionId = currentSessionId();
-    let activePath = sessionId === null ? null : path.join(repoRoot, SESSION_POINTER_DIR_REL, `${sessionId}.json`);
-    if (activePath === null || !fs.existsSync(activePath)) activePath = path.join(repoRoot, ACTIVE_PATH);
-    if (!fs.existsSync(activePath)) throw new Error(`No --state provided and no active pointer for this session; pass --state <path>`);
-    const active = readJson(activePath);
-    // A pointer inside a run's worktree names its record tree explicitly.
-    statePath = resolveInput(active.statePath, active.projectRoot || repoRoot);
+    const trees = run("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot }).stdout
+      .split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice(9));
+    const candidates = [];
+    for (const tree of trees) {
+      const directory = path.join(tree, RUNS_ROOT_REL);
+      if (!fs.existsSync(directory)) continue;
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const file = path.join(directory, entry.name, "state.json");
+        if (entry.isDirectory() && fs.existsSync(file)) {
+          const candidate = readJson(file);
+          if (candidate.schema === "sasu.implement.state.v13.contract-only" && candidate.status === "active") candidates.push(fs.realpathSync(file));
+        }
+      }
+    }
+    const unique = [...new Set(candidates)];
+    if (unique.length !== 1) throw new Error(`Expected one active run, found ${unique.length}; pass --state <path>`);
+    statePath = unique[0];
   }
   if (!fs.existsSync(statePath)) throw new Error(`State file not found: ${statePath}`);
   const state = readJson(statePath);
-  assertSchema(state, "sasu.implement.state.v12.hide", "state");
+  assertSchema(state, "sasu.implement.state.v13.contract-only", "state");
   const stateDir = path.dirname(statePath);
   const reportPath = path.join(stateDir, "verification-report.json");
   const resultPath = path.join(stateDir, "verification-report.md");
@@ -286,7 +281,8 @@ const LAST_SUPPORTED_COMMIT = "9149d982";
 
 function assertSchema(value, expected, label) {
   if (value?.schema !== expected) {
-    const supported = value?.schema === "sasu.implement.state.v11.stateless-verification" ? "fbdf62913b4fbe5fde1ebce26c3e290c8eac0e92" : LAST_SUPPORTED_COMMIT;
+    const supported = value?.schema === "sasu.implement.state.v12.hide" ? "6f75d9352e3b5b93aa7df8b81b93476246c68aaf"
+      : value?.schema === "sasu.implement.state.v11.stateless-verification" ? "fbdf62913b4fbe5fde1ebce26c3e290c8eac0e92" : LAST_SUPPORTED_COMMIT;
     throw new Error(`${label} received schema ${value?.schema ?? "missing"}; expected ${expected}; last supported commit ${supported}. Finish the old run with that CLI using sasu implement status --state <old-state> and its supported delivery commands, or start a separate run with sasu implement start --prd <path> --slug <new-slug>. No automatic migration is available.`);
   }
 }
@@ -774,7 +770,6 @@ function resolveBodyPath(context, options) {
 function defaultExcludedPaths(context) {
   const runDir = context.state.runDir || path.dirname(toRepoRelative(context.statePath, context.repoRoot));
   return [
-    ACTIVE_PATH,
     path.join(runDir, "artifacts"),
     // Gate state shares the unified run dir but was never delivery material:
     // it is runtime bookkeeping, never a verification input (AGENTS.md).
@@ -1233,7 +1228,6 @@ function cmdLocal(options) {
       ...recorded,
       alreadyCommitted: true,
       resultPath: toRepoRelative(deliveryResultPath(context), context.repoRoot),
-      coordination: endCoordination(context),
     }, null, 2) + "\n");
     return;
   }
@@ -1260,37 +1254,7 @@ function cmdLocal(options) {
     ...result,
     alreadyCommitted: false,
     resultPath: toRepoRelative(deliveryResultPath(context), context.repoRoot),
-    coordination: endCoordination(context),
   }, null, 2) + "\n");
-}
-
-/**
- * A completed delivery ends a Hide-supervised run's implementor
- * participant from its attested native caller. The participant IDs are the ones state.json
- * records. The delivery already happened, so a refusal here is reported with
- * its retry instead of failing the delivery.
- */
-function endCoordination(context) {
-  const supervision = context.state && context.state.supervision;
-  if (!supervision) return null;
-  const participants = supervision.hide;
-  if (!participants || !participants.implementor || !participants.observer) {
-    const problem = "state.json records no Hide participants for this run";
-    const retry = "sasu implement dispatch --resume-handoff from the recorded Observer, then hide agent end <implementor> from the target or original parent pane";
-    process.stderr.write(`Delivery is recorded, but Hide may still watch this run: ${problem}. Retry with: ${retry}\n`);
-    return { ended: false, problem, retry };
-  }
-  const args = ["agent", "end", participants.implementor];
-  const retry = `hide ${args.join(" ")} from the target or original registered parent pane; watch handover does not transfer lineage authority`;
-  const result = childProcess.spawnSync("hide", args, { cwd: context.repoRoot, encoding: "utf8", shell: false });
-  let parsed = null;
-  try { parsed = JSON.parse(result.stdout || ""); } catch { parsed = null; }
-  if (parsed && parsed.ok === true && result.status === 0) return { ended: true, implementor: participants.implementor, delivery: "delivered" };
-  const problem = parsed && parsed.error
-    ? `${parsed.error.code}: ${parsed.error.message}`
-    : ((result.error && result.error.message) || result.stderr || result.stdout || `Hide exited ${result.status}`).trim();
-  process.stderr.write(`Delivery is recorded, but Hide still watches implementor ${participants.implementor}: ${problem}. Retry with: ${retry}\n`);
-  return { ended: false, implementor: participants.implementor, problem, retry };
 }
 
 function cmdShip(options) {
@@ -1573,7 +1537,6 @@ function cmdMerge(options) {
     ok: true,
     ...result,
     resultPath: toRepoRelative(deliveryResultPath(context), context.repoRoot),
-    coordination: endCoordination(context),
   };
   process.stdout.write(JSON.stringify(output, null, 2) + "\n");
 }
