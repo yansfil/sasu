@@ -240,7 +240,7 @@ const LAST_SUPPORTED_COMMIT = "9149d982";
 
 function assertSchema(value, expected, label) {
   if (value?.schema !== expected) {
-    const supported = value?.schema === "sasu.implement.state.v13.contract-only" ? "496ea02ac25064bd795cbf833c92749544fb5bcf"
+    const supported = value?.schema === "sasu.implement.state.v13.contract-only" ? "ba58f5dfe93720d2f757ef0f55201b8845f81f06"
       : value?.schema === "sasu.implement.state.v12.hide" ? "6f75d9352e3b5b93aa7df8b81b93476246c68aaf"
       : value?.schema === "sasu.implement.state.v11.stateless-verification" ? "fbdf62913b4fbe5fde1ebce26c3e290c8eac0e92" : LAST_SUPPORTED_COMMIT;
     throw new Error(`${label} received schema ${value?.schema ?? "missing"}; expected ${expected}; last supported commit ${supported}. Finish the old run with that CLI using sasu implement status --state <old-state> and its supported delivery commands, or start a separate run with sasu implement start --prd <path> --slug <new-slug>. No automatic migration is available.`);
@@ -278,17 +278,9 @@ function projectDeliveryConfig(context) {
 function deliveryConfig(context, options = {}) {
   // The project config is the delivery contract. Verification reports contain
   // execution facts and do not silently override delivery policy.
-  const project = projectDeliveryConfig(context);
-  const stateDelivery = {};
-  const delivery = { ...project, ...stateDelivery };
-  const staging = {
-    ...(project.staging && typeof project.staging === "object" ? project.staging : {}),
-    ...(stateDelivery.staging && typeof stateDelivery.staging === "object" ? stateDelivery.staging : {}),
-  };
-  const ci = {
-    ...(project.ci && typeof project.ci === "object" ? project.ci : {}),
-    ...(stateDelivery.ci && typeof stateDelivery.ci === "object" ? stateDelivery.ci : {}),
-  };
+  const delivery = projectDeliveryConfig(context);
+  const staging = { ...(delivery.staging && typeof delivery.staging === "object" ? delivery.staging : {}) };
+  const ci = { ...(delivery.ci && typeof delivery.ci === "object" ? delivery.ci : {}) };
   const mode = String(delivery.mode || "local").trim().toLowerCase();
   if (!["local", "pr"].includes(mode)) {
     throw new Error(`Unsupported delivery mode '${mode}'. Expected local or pr.`);
@@ -315,9 +307,8 @@ function deliveryConfig(context, options = {}) {
 
 function verifyDelivery(context) {
   if (context.verifiedDelivery) return context.verifiedDelivery;
-  // sasu confines --state to the tree it runs in, and the state lives in the
-  // record tree, so status runs there even when the judged tree is a linked
-  // worktree; sasu finds that worktree from the state itself.
+  // The validated record checkout owns source and delivery. Query its exact
+  // record so sibling invocation cannot select a different candidate.
   const result = run("sasu", ["implement", "status", "--state", context.statePath, "--json"], {
     cwd: context.repoRoot,
     allowFailure: true,
@@ -403,7 +394,7 @@ function summarizeChangedFiles(context) {
 }
 
 function deliverySummary(context) {
-  const delivery = context.state.delivery || {};
+  const delivery = deliveryConfig(context);
   const parts = [];
   if (delivery.mode) parts.push(`mode ${delivery.mode}`);
   if (delivery.branch) parts.push(`branch \`${delivery.branch}\``);

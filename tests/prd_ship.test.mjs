@@ -169,6 +169,7 @@ test("local delivery never amends a verified checkpoint commit", () => {
 
 test("PR body draft reads Summary, Review, Evidence first and folds the machine record", () => {
   const current = fixture();
+  write(path.join(current.root, "agents", "config.json"), JSON.stringify({ delivery: { mode: "pr" } }));
   const result = run(process.execPath, [shipScript, "body", "--state", current.statePath], { cwd: current.root, env: current.env });
   const output = JSON.parse(result.stdout);
   assert.equal(output.template, null);
@@ -181,6 +182,7 @@ test("PR body draft reads Summary, Review, Evidence first and folds the machine 
   assert.match(record, /S1: GREEN/);
   assert.match(record, /verification-report\.json/);
   assert.match(record, /Reviews: <!-- AGENT-FILL/);
+  assert.ok(record.includes("- Delivery: mode pr, branch `feature/current`, base `main`"));
   assert.doesNotMatch(body.slice(0, body.indexOf("<details>")), /sha256|fingerprint/i, "hashes belong in the folded record only");
   assert.doesNotMatch(body, /## Deterministic Verification|## Human Review Focus|## Delivery Staging/);
   assert.doesNotMatch(body, /Mode: unknown|Branch: unknown/);
@@ -256,7 +258,9 @@ function ciFixture(t, responses, { ci = {}, merge = false } = {}) {
   const store = path.join(current.root, "agents", "fake-gh");
   const callsPath = path.join(store, "calls.jsonl");
   write(path.join(store, "responses.json"), JSON.stringify(responses));
-  write(path.join(current.root, "agents", "config.json"), JSON.stringify({ delivery: { ci } }));
+  write(path.join(current.root, "agents", "config.json"), JSON.stringify({ delivery: {
+    ci, ...(merge ? { mode: "pr", branch: "prd/fixture", baseBranch: "main" } : {}),
+  } }));
   const pr = {
     number: 21, url: "https://github.com/example/product/pull/21", state: "OPEN",
     isDraft: false, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN",
@@ -302,8 +306,6 @@ process.exit(99);
     run("git", ["update-ref", "refs/heads/main", current.state.initialSource.head], { cwd: current.root });
     run("git", ["remote", "add", "origin", remote], { cwd: current.root });
     run("git", ["push", "-q", "origin", "main"], { cwd: current.root });
-    current.state.delivery = { mode: "pr", branch: "prd/fixture", baseBranch: "main" };
-    write(current.statePath, JSON.stringify(current.state));
   }
   return {
     ...current,
