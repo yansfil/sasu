@@ -13,19 +13,22 @@ export function renderDecisions(contract: ImplementContract): string {
   return contract.decisions.map((entry) => `- ${entry.id}: ${entry.decision} (근거: ${entry.rationale})`).join("\n");
 }
 
-/** Resolve canonical intent without silently substituting a missing source. */
-export function intentSource(projectRoot: string, contract: ImplementContract, specGateFresh: boolean): IntentSource {
+/** Seal and read the same real intake file; prose cannot substitute for evidence. */
+export function resolveIntakePath(projectRoot: string, contract: ImplementContract): string {
   const source = contract.frontmatter["source_intake"];
   if (source === undefined || source.trim() === "") throw new Error("canonical intent source_intake is missing");
-  if (source === "current conversation") {
-    return { routing: "decisions", content: renderDecisions(contract), explanation: "The CLI cannot read chat history; the approved Decisions table records the canonical user intent." };
-  }
   const root = fs.realpathSync(projectRoot);
   const resolved = path.resolve(root, source);
   if (resolved === root || !resolved.startsWith(`${root}${path.sep}`)) throw new Error(`canonical intent source escapes project: ${source}`);
   if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) throw new Error(`canonical intent source is missing or is not a file: ${source}`);
   const real = fs.realpathSync(resolved);
   if (!real.startsWith(`${root}${path.sep}`)) throw new Error(`canonical intent source resolves outside project: ${source}`);
+  return real;
+}
+
+/** Resolve canonical intent without silently substituting a missing source. */
+export function intentSource(projectRoot: string, contract: ImplementContract, specGateFresh: boolean): IntentSource {
+  const real = resolveIntakePath(projectRoot, contract);
   if (specGateFresh) {
     return { routing: "decisions", content: renderDecisions(contract), explanation: "The current spec gate compared the canonical intake with the PRD; verification starts from the complete approved Decisions table." };
   }

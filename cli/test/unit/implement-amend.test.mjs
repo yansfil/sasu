@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { scratchDir } from "../scratch.mjs";
 import { stateFixture, AT } from "../helpers/implement-state.mjs";
-import { prd } from "../helpers/implement-fixture.mjs";
+import { prd, INTAKE_PATH } from "../helpers/implement-fixture.mjs";
 import { applyAmendment, planAmendment, sealRequirement } from "../../dist/implement/amend.js";
 import { parseImplementContract } from "../../dist/implement/contract.js";
 import { sha256, persistState, persistClose, loadState } from "../../dist/implement/store.js";
@@ -14,6 +14,8 @@ function fixture(t, text = prd()) {
   const root = scratchDir("sasu-amend-");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const state = stateFixture(root);
+  fs.mkdirSync(path.dirname(path.join(root, INTAKE_PATH)), { recursive: true });
+  fs.writeFileSync(path.join(root, INTAKE_PATH), "Approved fixture requirements.\n");
   const pinned = path.join(root, state.prd.snapshotPath);
   fs.mkdirSync(path.dirname(pinned), { recursive: true }); fs.writeFileSync(pinned, text);
   state.requirements = parseImplementContract(text).rows.map(sealRequirement);
@@ -34,6 +36,8 @@ test("every PRD amendment and suite exclusion needs the recorded approval text",
 test("amendment invalidates the whole contract and refreshes execution metadata together", (t) => {
   const f = fixture(t);
   const text = prd({ count: 3, profile: "high-risk", sourceIntake: "agents/interview/new/qa-log.md" });
+  fs.mkdirSync(path.join(f.root, "agents/interview/new"), { recursive: true });
+  fs.writeFileSync(path.join(f.root, "agents/interview/new/qa-log.md"), "Approved changed requirements.\n");
   const outcome = applyAmendment(f.root, f.state, input(text), AT);
   assert.equal(f.state.prd.reviewProfile, "high-risk");
   assert.equal(f.state.prd.sourceIntake, "agents/interview/new/qa-log.md");

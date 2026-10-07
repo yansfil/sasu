@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
 import os from "node:os";
 import { requireWorkRoot, loadState, nowIso, persistClose, persistState, StateConflictError } from "./store";
-import type { ImplementState, UnifiedVerificationAttempt } from "./types";
+import type { ActiveVerification, ImplementState, UnifiedVerificationAttempt } from "./types";
+
+const leaseName = (active: ActiveVerification): string => active.mode === "preview" ? "preview" : active.attemptId;
 
 /**
  * ESRCH is the only answer that means "not there". Everything else is a
@@ -34,7 +36,7 @@ function assertChildrenExited(state: ImplementState): void {
   const active = state.activeVerification;
   if (active === undefined) return;
   if (active.hostname !== os.hostname() || active.pendingSpawns > 0) {
-    throw new Error(`verification still active or uninspectable: ${active.attemptId}; process registration or host is uncertain`);
+    throw new Error(`verification still active or uninspectable: ${leaseName(active)}; process registration or host is uncertain`);
   }
   for (const pid of active.executionPids) {
     if (process.platform === "win32") throw new Error(`verification process group ${pid} is uninspectable on this platform`);
@@ -53,8 +55,9 @@ export function assertNoActiveVerification(state: ImplementState): boolean {
   let alive: boolean;
   try { alive = processPresent(active.pid); }
   catch (error) { throw new Error(`verification owner liveness is uninspectable; execution lease retained (${(error as Error).message})`); }
-  if (alive) throw new Error(`verification still active: ${active.attemptId} (pid ${active.pid}); retry after it finishes`);
+  if (alive) throw new Error(`verification still active: ${leaseName(active)} (pid ${active.pid}); retry after it finishes`);
   assertChildrenExited(state);
+  if (active.mode === "preview") { delete state.activeVerification; return true; }
   const attempt = state.verificationAttempts.find((entry) => entry.id === active.attemptId);
   if (attempt === undefined) throw new Error("active verification attempt is missing");
   const at = nowIso();
@@ -83,10 +86,24 @@ export function beginVerification(statePath: string, state: ImplementState, atte
   return state;
 }
 
+/** Preview shares the execution lease but never creates a verification attempt. */
+export function beginPreview(statePath: string, state: ImplementState, inputFingerprint: string): ImplementState {
+  if (state.activeVerification !== undefined) throw new Error(`verification still active: ${leaseName(state.activeVerification)}; finish or recover it before preview`);
+  if (state.status !== "active") throw new Error("preview requires an active run");
+  state.activeVerification = {
+    mode: "preview", token: crypto.randomUUID(), pid: process.pid,
+    hostname: os.hostname(), startedAt: nowIso(), inputFingerprint,
+    prdSha256: state.prd.sha256, executionPids: [], pendingSpawns: 0,
+  };
+  persistState(statePath, state, { preview: {} });
+  return state;
+}
+
 /** Latest-state merge preserves refusals appended while suites or judges run. */
 export function progressVerification(
   statePath: string, state: ImplementState, apply: (fresh: ImplementState) => void,
   derived?: (fresh: ImplementState) => Array<{ file: string; text: string }>,
+  restoreText?: string,
 ): ImplementState {
   const active = state.activeVerification;
   if (active === undefined) throw new Error("this command holds no verification execution lease");
@@ -98,7 +115,11 @@ export function progressVerification(
     apply(fresh);
     try {
       const files = derived?.(fresh);
-      if (files === undefined) persistState(statePath, fresh, { verificationToken: active.token });
+      if (active.mode === "preview" && files !== undefined) throw new Error("preview cannot publish derived records");
+      if (files === undefined) persistState(statePath, fresh, {
+        verificationToken: active.token,
+        ...(active.mode === "preview" ? { preview: { ...(restoreText === undefined ? {} : { restoreText }) } } : {}),
+      });
       else persistClose(statePath, fresh, files, { verificationToken: active.token });
     }
     catch (error) {
@@ -137,11 +158,20 @@ export function finishVerification(
   statePath: string, state: ImplementState, applyResult?: (fresh: ImplementState) => void,
   derived?: (fresh: ImplementState) => Array<{ file: string; text: string }>,
 ): ImplementState {
+  if (state.activeVerification?.mode === "preview") throw new Error("preview cannot complete a verification attempt");
   return progressVerification(statePath, state, (fresh) => {
     assertChildrenExited(fresh);
     applyResult?.(fresh);
     delete fresh.activeVerification;
   }, derived);
+}
+
+export function finishPreview(statePath: string, state: ImplementState, originalText: string): ImplementState {
+  if (state.activeVerification?.mode !== "preview") throw new Error("this command holds no preview execution lease");
+  return progressVerification(statePath, state, (fresh) => {
+    assertChildrenExited(fresh);
+    delete fresh.activeVerification;
+  }, undefined, originalText);
 }
 
 /**
@@ -156,7 +186,7 @@ export async function recoverVerification(statePath: string, state: ImplementSta
   let ownerAlive: boolean;
   try { ownerAlive = processPresent(active.pid); }
   catch (error) { throw new Error(`verification owner liveness is uninspectable; execution lease retained (${(error as Error).message})`); }
-  if (ownerAlive) throw new Error(`verification still active: ${active.attemptId} (pid ${active.pid})`);
+  if (ownerAlive) throw new Error(`verification still active: ${leaseName(active)} (pid ${active.pid})`);
   if (active.pendingSpawns > 0 || (process.platform === "win32" && active.executionPids.length > 0)) throw new Error("verification still active or uninspectable: process registration is uncertain");
   // Inspect every group before sending any signal; EPERM is not authority.
   const alive = active.executionPids.filter((pid) => processPresent(-pid));
@@ -172,6 +202,7 @@ export async function recoverVerification(statePath: string, state: ImplementSta
   while (alive.some((pid) => processPresent(-pid)) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 10));
   return progressVerification(statePath, state, (fresh) => {
     assertChildrenExited(fresh);
+    if (active.mode === "preview") { delete fresh.activeVerification; return; }
     const attempt = fresh.verificationAttempts.find((entry) => entry.id === active.attemptId)!;
     const at = nowIso();
     attempt.verdict = "ERROR";
@@ -192,4 +223,18 @@ export function completeVerificationExecution(statePath: string, state: Implemen
     if (processPresent(-pid)) throw new Error(`verification process group ${pid} is still active; execution lease retained`);
     active.executionPids = active.executionPids.filter((entry) => entry !== pid);
   });
+}
+
+/** Both execution modes register and settle the same owned process groups. */
+export function verificationExecutionHooks(statePath: string, state: ImplementState): { prepare(): void; spawned(pid: number): void; settled(): void } {
+  let pending = false;
+  let childPid: number | null = null;
+  return {
+    prepare: () => { prepareVerificationExecution(statePath, state); pending = true; },
+    spawned: (pid) => { recordVerificationExecution(statePath, state, pid); childPid = pid; pending = false; },
+    settled: () => {
+      if (pending) { cancelVerificationExecution(statePath, state); pending = false; }
+      if (childPid !== null) { completeVerificationExecution(statePath, state, childPid); childPid = null; }
+    },
+  };
 }

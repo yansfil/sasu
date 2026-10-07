@@ -14,6 +14,31 @@ Evidence records preserve file bytes, collection time, method, target, and envir
 Registration proves identity and provenance, not semantic sufficiency.
 The human reviewer and advisory subagents judge whether it supports the PRD.
 
+The canonical `source_intake` must be an existing file inside the project before `start` or `amend` seals it.
+If the conversation supplied the requirements, use the intake snapshot saved by `gen-prd`.
+
+To exercise the sealed suites before recording verification, run:
+
+```sh
+sasu implement verify --preview
+```
+
+Preview uses the real verification executor, environment, timeout, exclusions and execution lease.
+It reports all required command outputs and failures without creating a verification attempt, evidence registration or report.
+Suite commands still perform their normal work, so inspect source changes they produce.
+Preview is never a delivery verdict.
+
+If a generated command log was lost, recover its registration explicitly:
+
+```sh
+sasu implement artifact --recover agents/runs/<slug>/artifacts/logs/<missing-log> --reason '<why the log is missing>'
+```
+
+Recovery invalidates the current report and keeps the old path, hash, observation time and execution attempts as history.
+It does not recreate old output or turn an earlier result into a current pass.
+Run full verification again to collect fresh execution evidence.
+Existing changed logs must be inspected and restored; missing runtime observations must be recollected and registered.
+
 Run:
 
 ```sh

@@ -37,15 +37,19 @@ When qa-log.md is the source, read the complete file.
 Treat its Current Understanding as a navigation aid, not a substitute for the Decision Register, material Raw Q&A (Decision Packet content lives in each entry's `immediate_notes`), UX Scenario Cards, objections, evidence, and audit findings.
 The qa-log is the canonical interview source even when a shorter summary exists elsewhere.
 
+`source_intake` must name an existing regular file inside the project.
+When the current conversation is the only source, first preserve the user's requests and confirmed decisions in `agents/intake/<topic-slug>/source.md`, then reference that file.
+Do not use a free-form description or `current conversation` as the field value.
+
 ## Output Contract
 
-Create exactly one file:
+Create the PRD:
 
 ```text
 agents/prd/<topic-slug>/prd.md
 ```
 
-Do not write side files (context notes, audit reports).
+Besides the intake snapshot required when no source file exists, do not write side files (context notes, audit reports).
 Decisions and their provenance live in the Decisions table inside `prd.md`;
 quality checks are inline self-checks plus the mechanical Harness Readiness
 Gate, and the implementation-side full-contract review re-verifies intent at the
@@ -66,7 +70,7 @@ status: "draft | ready"
 human_approval: "pending | approved"
 review_profile: "trivial | standard | high-risk"
 review_rationale: "<one-sentence semantic risk rationale>"
-source_intake: "agents/interview/<topic-slug>/qa-log.md | current conversation"
+source_intake: "agents/interview/<topic-slug>/qa-log.md"
 created_at: "YYYY-MM-DD"
 updated_at: "YYYY-MM-DD"
 ---

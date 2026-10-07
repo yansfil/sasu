@@ -14,10 +14,11 @@ import { effectiveVerdict, identicalInputFailures } from "./verdict";
 import { isIssuedCommand, recordVerb, resolveIssuer, VerbRejected } from "./verbs";
 import { recordEvent } from "./events";
 import { AmendmentRejected, applyAmendment } from "./amend";
-import { assertNoActiveVerification, recoverVerification, cancelVerificationExecution, completeVerificationExecution, beginVerification, progressVerification, prepareVerificationExecution, recordVerificationExecution, finishVerification } from "./verification-activity";
+import { assertNoActiveVerification, recoverVerification, beginVerification, progressVerification, finishVerification, verificationExecutionHooks } from "./verification-activity";
+import { runVerifyPreview } from "./preview";
 import { assertNotImplementor, assertObserverForRun } from "./hide";
 import { DispatchRejected, assertDispatchablePrd, assertHandoff, buildImplementorPrompt, buildSpawnInstruction } from "./dispatch";
-import { intentSource } from "./intent";
+import { intentSource, resolveIntakePath } from "./intent";
 import { pinnedPrd, PrdDriftError, prdSnapshotPath, requirePinnedPrd, writePrdSnapshot } from "./prd-snapshot";
 import { artifactIntegrityProblems, captureBaselineSnapshot, captureSourceSnapshot, changedPathsSince, dirtySourcePaths, loadState, normalizeProjectPath, nowIso, persistState, persistClose, jsonText, repositoryHead, requireWorkRoot, sha256, statePathFor, runRoleInputs, changedPathsFromGit, requireRunContext, recordContext, resolveStatePath, writeTextAtomic, StateConflictError } from "./store";
 import { IMPLEMENT_SCHEMA, type DirtyAttribution, type PrdJudgeRecord, type ImplementCommandResult, type ImplementState, type MechanicalRunRecord, type RegisteredArtifact, type UnifiedVerificationAttempt, type IssuedCommand, type EvidenceReplacement, type IssuerLabel, type SpawnIntent, type EscalationRecord, ESCALATE_LIMIT_PER_RUN } from "./types";
@@ -183,6 +184,7 @@ function start(projectRoot: string, args: ImplementArgs): ImplementCommandResult
     throw new Error("PRD human_approval is pending; pass --allow-unapproved-prd with the user's verbatim approval");
   }
   const slug = slugFromPrd(prd.absolute);
+  resolveIntakePath(projectRoot, contract);
   const sourceIntake = contract.frontmatter["source_intake"] ?? "";
   const gateViews = readGateStatus(projectRoot, config, slug);
   const activePrdGates = (["gap-audit", "spec"] as const).filter((gate) => gateViews[gate].inFlight);
@@ -506,7 +508,7 @@ export function recordEvidenceReplacement(
 function assertEvidencePathInsideProject(projectRoot: string, target: { absolute: string; relative: string }): void {
   const realRoot = fs.realpathSync(projectRoot);
   let existingAncestor = target.absolute;
-  while (!fs.existsSync(existingAncestor)) {
+  while (fs.lstatSync(existingAncestor, { throwIfNoEntry: false }) === undefined) {
     const parent = path.dirname(existingAncestor);
     if (parent === existingAncestor) break;
     existingAncestor = parent;
@@ -649,9 +651,9 @@ function inputIdentity(state: ImplementState, sourceDigest: string, intentInput:
   const artifacts = state.artifacts.filter((entry) => entry.command === undefined)
     .map(({ path, sha256, description, provenance, observedAt, target, environment, requirementRefs }) => ({ path, sha256, description, provenance, observedAt, target, environment, requirementRefs }))
     .sort((a, b) => a.path.localeCompare(b.path));
-  const sourcePath = state.prd.sourceIntake && state.prd.sourceIntake != "current conversation" ? normalizeProjectPath(requireWorkRoot(state), state.prd.sourceIntake).absolute : null;
-  const sourceIntake = sourcePath === null ? null : sha256(fs.readFileSync(sourcePath));
-  return sha256(JSON.stringify({ schema: state.schema, prd: state.prd.sha256, sourceDigest, git, artifacts, intentInput, sourceIntake, suite: { commands: state.suite.commands, exclusions: state.suite.exclusions }, amendments: state.amendments }));
+  const sourcePath = normalizeProjectPath(requireWorkRoot(state), state.prd.sourceIntake).absolute;
+  const sourceIntake = sha256(fs.readFileSync(sourcePath));
+  return sha256(JSON.stringify({ schema: state.schema, prd: state.prd.sha256, sourceDigest, git, artifacts, intentInput, sourceIntake, suite: { commands: state.suite.commands, exclusions: state.suite.exclusions }, amendments: state.amendments, evidenceReplacements: state.evidenceReplacements }));
 }
 
 function attemptSummary(attempt: UnifiedVerificationAttempt): Record<string, unknown> {
@@ -821,7 +823,7 @@ function status(projectRoot: string, args: ImplementArgs): ImplementCommandResul
       `escalations: ${state.escalations.length} of ${ESCALATE_LIMIT_PER_RUN} used${state.escalations.length >= ESCALATE_LIMIT_PER_RUN ? "; bound spent" : ""}`,
       ...(state.dispatchIntent === null ? [] : [`Dispatch intent: ${state.dispatchIntent.intent}; runtime status and letters: hide agent list / hide inbox`]),
       ...currentDelivery.reasons.map((reason) => `Delivery: ${reason}`),
-      ...(state.activeVerification ? [`Verification in progress: ${state.activeVerification.attemptId}`] : []),
+      ...(state.activeVerification ? [state.activeVerification.mode === "preview" ? "Suite preview in progress" : `Verification in progress: ${state.activeVerification.attemptId}`] : []),
       `Next: ${statusNextStep(state, verificationVerdict, currentDelivery.eligible, problems)}`,
     ]);
 }
@@ -838,9 +840,44 @@ function amend(projectRoot: string, args: ImplementArgs): ImplementCommandResult
   return result("amend", true, `amendment ${outcome.record.id} sealed; full review freshness invalidated`, { amendment: outcome.record });
 }
 
+/** Remove only a missing generated log registration, retaining its real history. */
+function recoverCommandLog(statePath: string, state: ImplementState, args: ImplementArgs): ImplementCommandResult {
+  const workRoot = requireWorkRoot(state);
+  const target = normalizeProjectPath(workRoot, requiredFlag(args, "recover"));
+  const reason = requiredFlag(args, "reason").trim();
+  if (["manifest", "kind", "path", "description"].some((name) => args.flags.has(name))) throw new Error("artifact --recover cannot be combined with evidence registration flags");
+  assertEvidencePathInsideProject(workRoot, target);
+  if (fs.lstatSync(target.absolute, { throwIfNoEntry: false }) !== undefined) throw new Error("artifact recovery only accepts missing command logs; an existing or changed file must be inspected and restored");
+  const next = `regenerate through verify: ${target.relative}`;
+  const registered = state.artifacts.find((entry) => entry.path === target.relative);
+  if (registered === undefined) {
+    if (state.evidenceReplacements.some((entry) => entry.next === next)) {
+      return result("artifact", true, "missing command log was already invalidated; run verify for current evidence", { path: target.relative, recovered: true, reused: true });
+    }
+    throw new Error(`artifact recovery requires a registered command log: ${target.relative}`);
+  }
+  if (registered.kind !== "command-log" || registered.command === undefined || registered.cwd === undefined
+    || !state.suite.commands.some((entry) => entry.command === registered.command && entry.cwd === registered.cwd)
+    || !target.relative.startsWith(`${state.runDir}/artifacts/logs/`)) {
+    throw new Error("artifact recovery only invalidates harness-generated sealed-suite command logs; recollect other missing evidence explicitly");
+  }
+  recordEvidenceReplacement(state, {
+    kind: "artifact", previous: `${registered.path}@${registered.sha256} observed ${registered.observedAt}`,
+    next, priorDisposition: "invalidated",
+  });
+  state.artifacts = state.artifacts.filter((entry) => entry.path !== registered.path);
+  state.verificationReport = null;
+  const issuer = resolveIssuer(flag(args, "issuer"));
+  recordVerb(state, { verb: "artifact", issuer, target: registered.path, reason, at: nowIso(), outcome: "accepted" });
+  recordEvent(state, { kind: "artifact", actor: issuer, subject: registered.path, summary: "missing command log invalidated; prior execution history retained; verify required", at: nowIso() });
+  persistState(statePath, state);
+  return result("artifact", true, "missing command log invalidated; prior attempts remain unchanged; run verify to produce fresh evidence", { path: registered.path, recovered: true, reused: false });
+}
+
 function artifact(projectRoot: string, args: ImplementArgs): ImplementCommandResult {
   const { statePath, state } = loadState(projectRoot, stateOptions(args));
   assertMutableRun(statePath, state);
+  if (args.flags.has("recover")) return recoverCommandLog(statePath, state, args);
   if (args.flags.has("row")) throw new Error("artifact --row is retired; register evidence for the run");
   let inputs: Array<Record<string, unknown>>;
   if (args.flags.has("manifest")) {
@@ -1008,18 +1045,6 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
   const update = (apply: (fresh: ImplementState, current: UnifiedVerificationAttempt) => void) => {
     state = progressVerification(statePath, state, (fresh) => apply(fresh, fresh.verificationAttempts.find((entry) => entry.id === attempt.id)!));
   };
-  const executionHooks = () => {
-    let pending = false;
-    let childPid: number | null = null;
-    return {
-      prepare: () => { prepareVerificationExecution(statePath, state); pending = true; },
-      spawned: (pid: number) => { recordVerificationExecution(statePath, state, pid); childPid = pid; pending = false; },
-      settled: () => {
-        if (pending) { cancelVerificationExecution(statePath, state); pending = false; }
-        if (childPid !== null) { completeVerificationExecution(statePath, state, childPid); childPid = null; }
-      },
-    };
-  };
   let phase: UnifiedVerificationAttempt["phase"] = "preflight";
   try {
     if (preflightError) throw preflightError;
@@ -1055,7 +1080,7 @@ async function verify(projectRoot: string, args: ImplementArgs): Promise<Impleme
         attributeToSuite(fresh, completed, attempt.id, logPath);
       });
       progress(`${base.status}: ${base.command} (${(base.durationMs / 1000).toFixed(1)}s)`);
-    }, executionHooks());
+    }, verificationExecutionHooks(statePath, state));
     if (batch.treeMoved !== null || batch.results.some((entry) => entry.outcome !== "green")) {
       update((_fresh, held) => {
         held.verdict = "FAIL";
@@ -1120,6 +1145,8 @@ function recordRefusal(projectRoot: string, args: ImplementArgs, subject: Issued
 
 export async function runImplementCommand(projectRoot: string, args: ImplementArgs): Promise<ImplementCommandResult> {
   const subcommand = args.positional[1];
+  // Preview owns no refusal/history writes, including argument and lease errors.
+  if (subcommand === "verify" && args.flags.has("preview")) return runVerifyPreview(projectRoot, args);
   const subject = subcommand === "risk" && args.flags.get("non-convergent") === true ? "risk-non-convergent" : subcommand;
   const issuer = resolveIssuer(flag(args, "issuer"));
   try {

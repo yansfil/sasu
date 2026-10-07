@@ -363,13 +363,20 @@ export function parseImplementState(text: string): ImplementState {
   if (candidate.activeVerification !== undefined) {
     const active = candidate.activeVerification;
     assertRecord(active, "activeVerification");
-    for (const field of ["token", "attemptId", "hostname"] as const) assertString(active[field], `activeVerification.${field}`);
+    for (const field of ["token", "hostname"] as const) assertString(active[field], `activeVerification.${field}`);
+    if (active.mode !== undefined) enumValue(active.mode, ["verify", "preview"], "activeVerification.mode");
     for (const field of ["inputFingerprint", "prdSha256"] as const) assertSha256(active[field], `activeVerification.${field}`);
     positiveInteger(active.pid, "activeVerification.pid");
     positiveInteger(active.pendingSpawns, "activeVerification.pendingSpawns", 0);
     array(active.executionPids, "activeVerification.executionPids").forEach((pid) => positiveInteger(pid, "activeVerification.executionPids[]"));
     assertIsoTimestamp(active.startedAt, "activeVerification.startedAt");
-    if (!attemptIds.has(active.attemptId) || candidate.status !== "active") throw new Error("malformed implement state: active verification identity is invalid");
+    if (active.mode === "preview") {
+      if (active.attemptId !== undefined) throw new Error("malformed implement state: preview cannot name a verification attempt");
+    } else {
+      assertString(active.attemptId, "activeVerification.attemptId");
+      if (!attemptIds.has(active.attemptId)) throw new Error("malformed implement state: active verification identity is invalid");
+    }
+    if (candidate.status !== "active") throw new Error("malformed implement state: active verification identity is invalid");
   }
   if (candidate.retirement === undefined) throw new Error("malformed implement state: retirement must be null or an object");
   if (candidate.retirement !== null) {
@@ -441,7 +448,12 @@ export function loadState(projectRoot: string, options: { slug?: string; state?:
 
 export class StateConflictError extends Error {}
 
-export interface StateWriteOptions { verificationToken?: string; refusalOnly?: boolean }
+export interface StateWriteOptions {
+  verificationToken?: string;
+  refusalOnly?: boolean;
+  /** Lease bookkeeping only; preserve domain fields and the original timestamp. */
+  preview?: { restoreText?: string };
+}
 
 function assertVerificationHistory(held: ImplementState, next: ImplementState): void {
   // Execution history is factual and append-only. A new source gets a new
@@ -480,8 +492,8 @@ export function persistState(statePath: string, state: ImplementState, options: 
       `implement state appeared at ${path.basename(statePath)} while this run was being created; nothing was written.`,
     );
   }
-  if (onDisk !== null) {
-    const held = parseImplementState(fs.readFileSync(statePath, "utf8"));
+  const held = onDisk === null ? null : parseImplementState(fs.readFileSync(statePath, "utf8"));
+  if (held !== null) {
     const lease = held.activeVerification;
     if (lease !== undefined && options.verificationToken !== lease.token) {
       // Compare the whole domain state, not a list of commands. A new mutation
@@ -493,14 +505,25 @@ export function persistState(statePath: string, state: ImplementState, options: 
         && withoutRefusals(state) === withoutRefusals(held)
         && JSON.stringify(priorVerbs) === JSON.stringify(held.verbs)
         && appended.length > 0 && appended.every((verb) => verb.outcome === "rejected");
-      if (!safeRefusal) throw new Error(`verification still active: ${lease.attemptId}; other domain mutations are refused until its execution lease closes`);
+      if (!safeRefusal) throw new Error(`verification still active: ${lease.mode === "preview" ? "preview" : lease.attemptId}; other domain mutations are refused until its execution lease closes`);
     }
     assertVerificationHistory(held, state);
   }
-  state.updatedAt = nowIso();
+  if (options.preview !== undefined) {
+    const domain = (value: ImplementState): string => JSON.stringify({ ...value, activeVerification: undefined });
+    if (held === null || (held.activeVerification !== undefined && held.activeVerification.mode !== "preview")
+      || (state.activeVerification !== undefined && state.activeVerification.mode !== "preview")
+      || (held.activeVerification === undefined && state.activeVerification === undefined)
+      || domain(held) !== domain(state)) throw new Error("preview may only change its transient execution lease");
+    if (options.preview.restoreText !== undefined && state.activeVerification !== undefined) throw new Error("preview state restoration requires a closed lease");
+  } else state.updatedAt = nowIso();
   // Serialized once and written, so the baseline is the exact bytes on disk
   // rather than a second serialization that could drift from them.
-  const text = `${JSON.stringify(state, null, 2)}\n`;
+  let text = `${JSON.stringify(state, null, 2)}\n`;
+  // Restore exact original bytes only if no independent refusal was appended.
+  // Otherwise retain the latest record, never rewind another command's history.
+  const restoreText = options.preview?.restoreText;
+  if (restoreText !== undefined && JSON.stringify(parseImplementState(restoreText)) === JSON.stringify(state)) text = restoreText;
   // The reader runs over the exact bytes before they land. A writer and the
   // reader disagreeing about one field has bricked a run three times (verb
   // vocabulary, observer park approval, attempt outcome); refusing here
@@ -529,6 +552,7 @@ function assertVerificationPublicationCurrent(statePath: string, state: Implemen
     );
   }
   const held = parseImplementState(fs.readFileSync(statePath, "utf8"));
+  if (held.activeVerification?.mode === "preview") throw new Error("preview cannot publish verification reports");
   if (held.activeVerification?.token !== token) {
     throw new Error("verification execution lease was replaced or cleared before report publication");
   }

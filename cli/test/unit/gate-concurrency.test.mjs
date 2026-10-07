@@ -93,7 +93,9 @@ test("implement start refuses while a PRD gate is in flight", async () => {
   const root = makeProject();
   const prdDir = path.join(root, "agents", "prd", "topic-a");
   fs.mkdirSync(prdDir, { recursive: true });
-  fs.copyFileSync(PRD_FIXTURE, path.join(prdDir, "prd.md"));
+  fs.writeFileSync(path.join(prdDir, "source.md"), "Approved widget requirements.\n");
+  const prdText = fs.readFileSync(PRD_FIXTURE, "utf8").replace("---\n", '---\nsource_intake: "agents/prd/topic-a/source.md"\n');
+  fs.writeFileSync(path.join(prdDir, "prd.md"), prdText);
   const store = new GateStore(root, "topic-a");
   const release = store.tryAcquireRunLock("spec");
   assert.ok(release);

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { parseImplementContract, reviewProfile, type BehaviorRowContract, type ImplementContract } from "./contract";
 import { normalizeProjectPath, sha256 } from "./store";
+import { resolveIntakePath } from "./intent";
 import { excludeSuiteCommand, suiteCommandNamed } from "./suite";
 import type { AmendmentRecord, BehaviorRequirement, ImplementState, IssuerLabel } from "./types";
 
@@ -46,6 +47,7 @@ export function applyAmendment(recordRoot: string, state: ImplementState, input:
   const oldText = fs.readFileSync(pinned.absolute, "utf8");
   const current = parseImplementContract(oldText);
   const next = parseImplementContract(input.text);
+  resolveIntakePath(recordRoot, next);
   const plan = planAmendment(state, current, next);
   const exclusions = (input.excludeSuite ?? []).map((entry) => entry.trim().toUpperCase());
   if (oldText === input.text && exclusions.length === 0) throw new AmendmentRejected("arguments", "amended PRD and suite are unchanged; nothing to amend");
