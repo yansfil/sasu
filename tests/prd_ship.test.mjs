@@ -33,6 +33,8 @@ function fixture(baselineFiles = {}) {
   for (const [relative, text] of Object.entries(baselineFiles)) write(path.join(root, relative), text);
   run("git", ["add", ".gitignore", "src/feature.js", ...Object.keys(baselineFiles)], { cwd: root });
   run("git", ["commit", "-q", "-m", "baseline"], { cwd: root });
+  run("git", ["branch", "-M", "main"], { cwd: root });
+  run("git", ["checkout", "-qb", "feature/current"], { cwd: root });
   const head = run("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.trim();
   write(path.join(root, "src", "feature.js"), "export const ready = true;\n");
   run("git", ["add", "src/feature.js"], { cwd: root });
@@ -77,14 +79,11 @@ function fixture(baselineFiles = {}) {
   const reportText = `${JSON.stringify(report, null, 2)}\n`;
   identity.reportSha256 = crypto.createHash("sha256").update(reportText).digest("hex");
   const state = {
-    schema: "sasu.implement.state.v13.contract-only",
+    schema: "sasu.implement.state.v14.current-git",
     status: "active",
     topicSlug: "fixture",
-    projectRoot: root,
-    worktree: null,
     runDir,
     prdPath: "agents/prd/fixture/prd.md",
-    delivery: { mode: "local" },
     initialSource: { head },
     baselineAttribution: { head },
     verificationAttempts: [latest],
@@ -103,10 +102,21 @@ if (args[0] === "rules") {
   process.stdout.write(JSON.stringify({ok:true,results:[],failures:[],manualConfirmations:[],pending:{count:0,items:[]}}));
   process.exit(0);
 }
-const statePath = args[args.indexOf("--state") + 1];
+let statePath = args.includes("--state") ? args[args.indexOf("--state") + 1] : null;
+if (!statePath) {
+  const {execFileSync} = require("node:child_process");
+  const trees = execFileSync("git",["worktree","list","--porcelain","-z"],{encoding:"utf8"}).split(String.fromCharCode(0)).filter(x=>x.startsWith("worktree ")).map(x=>x.slice(9));
+  const found = trees.flatMap(tree=> {
+    const runs=path.join(tree,"agents/runs");
+    return fs.existsSync(runs) ? fs.readdirSync(runs).map(x=>path.join(runs,x,"state.json")).filter(x=>fs.existsSync(x)&&JSON.parse(fs.readFileSync(x,"utf8")).status==="active") : [];
+  });
+  if(found.length!==1) { console.log(JSON.stringify({ok:false,message:"Expected one active run, found "+found.length})); process.exit(1); }
+  statePath=found[0];
+}
+const recordRoot=fs.realpathSync(path.resolve(path.dirname(statePath),"../../.."));
 const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
 const latest = state.verificationAttempts.at(-1);
-process.stdout.write(JSON.stringify({ok:true,detail:{status:state.status,verification:{verdict:"PASS",latest},verificationReport:state.verificationReport,delivery:{eligible:true,reasons:[]},artifactProblems:[]}}));
+process.stdout.write(JSON.stringify({ok:true,detail:{statePath:fs.realpathSync(statePath),recordRoot,workingRoot:recordRoot,status:state.status,verification:{verdict:"PASS",latest},verificationReport:state.verificationReport,delivery:{eligible:true,reasons:[]},artifactProblems:[]}}));
 `, 0o755);
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
   return { root, statePath, state, report, env };
@@ -130,7 +140,7 @@ test("delivery discovers the unique active record across checkouts without a ses
   run("git", ["worktree", "add", "-qb", "fixture-sibling", sibling], { cwd: current.root });
   const result = run(process.execPath, [shipScript, "local", "--no-gpg-sign"], { cwd: sibling, env: { ...current.env, CODEX_THREAD_ID: "new-session" } });
   assert.equal(JSON.parse(result.stdout).ok, true);
-  write(path.join(sibling, current.state.runDir, "state.json"), JSON.stringify({ ...current.state, projectRoot: sibling }));
+  write(path.join(sibling, current.state.runDir, "state.json"), JSON.stringify(current.state));
   const ambiguous = run(process.execPath, [shipScript, "local"], { cwd: sibling, env: current.env, allowFailure: true });
   assert.notEqual(ambiguous.status, 0);
   assert.match(ambiguous.stderr, /Expected one active run, found 2/);
@@ -506,7 +516,7 @@ test("old receipt-era state is rejected explicitly", () => {
     allowFailure: true,
   });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /expected sasu\.implement\.state\.v13\.contract-only/);
+  assert.match(result.stderr, /expected sasu\.implement\.state\.v14\.current-git/);
   assert.match(result.stderr, /last supported commit/);
 });
 

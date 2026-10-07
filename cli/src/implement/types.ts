@@ -1,10 +1,12 @@
 // Implementation state records the sealed contract and deterministic execution facts.
-export const IMPLEMENT_SCHEMA = "sasu.implement.state.v13.contract-only" as const;
+export const IMPLEMENT_SCHEMA = "sasu.implement.state.v14.current-git" as const;
 export const RETIRED_IMPLEMENT_SUPPORT_COMMIT = "9149d9826fad2af3ba7200761e674b5228ef9b7d";
 export const RETIRED_PARALLEL_REVIEW_SUPPORT_COMMIT = "2b1f638dd587261be7e7b0e600db16657421971d";
 export const RETIRED_COORDINATION_SUPPORT_COMMIT = "fbdf62913b4fbe5fde1ebce26c3e290c8eac0e92";
 export const RETIRED_RUNTIME_SUPPORT_COMMIT = "6f75d9352e3b5b93aa7df8b81b93476246c68aaf";
+export const RETIRED_CONTRACT_SUPPORT_COMMIT = "496ea02ac25064bd795cbf833c92749544fb5bcf";
 export function retiredImplementSupportCommit(schema: unknown): string {
+  if (schema === "sasu.implement.state.v13.contract-only") return RETIRED_CONTRACT_SUPPORT_COMMIT;
   if (schema === "sasu.implement.state.v12.hide") return RETIRED_RUNTIME_SUPPORT_COMMIT;
   if (schema === "sasu.implement.state.v11.stateless-verification") return RETIRED_COORDINATION_SUPPORT_COMMIT;
   return schema === "sasu.implement.state.v9.parallel-review" || schema === "sasu.implement.receipt.v5.parallel-review"
@@ -223,8 +225,6 @@ export interface ImplementState {
   schema: typeof IMPLEMENT_SCHEMA;
   status: "active" | "retired";
   topicSlug: string;
-  projectRoot: string;
-  worktree?: { path: string; branch: string } | null;
   runDir: string;
   prdPath: string;
   prd: {

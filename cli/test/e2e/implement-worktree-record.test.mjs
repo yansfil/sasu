@@ -17,7 +17,7 @@ test("a --slug run record is found from any worktree of the same repository", (t
   const started = run(root, ["implement", "start", "--prd", PRD_PATH, "--dirty-attribution", "run-owned"]);
   assert.equal(started.status, 0, started.stdout + started.stderr);
   const state = JSON.parse(fs.readFileSync(path.join(root, STATE_PATH), "utf8"));
-  assert.equal(state.worktree ?? null, null, "start seals the checkout selected before the run");
+  assert.equal("worktree" in state, false, "record location selects the checkout without persisting a second authority");
   const worktree = `${root}-sibling`;
   const created = spawnSync("git", ["worktree", "add", "-q", "-b", "sibling", worktree], { cwd: root, encoding: "utf8" });
   assert.equal(created.status, 0, created.stderr);

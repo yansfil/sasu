@@ -41,7 +41,8 @@ test("linked checkout instructions use the main repository and the actual run br
   assert.equal(detail.argv[detail.argv.indexOf("--repo") + 1], f.mainRoot);
   assert.equal(detail.argv[detail.argv.indexOf("--path") + 1], f.root);
   assert.equal(detail.argv[detail.argv.indexOf("--branch") + 1], "work/linked");
-  assert.equal(f.state().projectRoot, f.root);
+  assert.equal("projectRoot" in f.state(), false);
+  assert.equal("worktree" in f.state(), false);
   assert.ok(f.state().suite.commands.every((command) => path.resolve(f.root, command.cwd) === f.root));
   assert.equal(ok(f.dispatch([], { input: "" })).command, detail.command);
 });

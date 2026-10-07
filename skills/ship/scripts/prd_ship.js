@@ -11,8 +11,6 @@ const { isDeepStrictEqual } = require("node:util");
 // Current CLI run paths are fixed under agents/runs. Keeping a configurable
 // reader here would select a different completion authority from implement.
 const NAMESPACE_ROOT = "agents";
-// Gate and implement records share the current run namespace.
-const RUNS_ROOT_REL = path.join(NAMESPACE_ROOT, "runs");
 const AGENT_FILL_PATTERN = /<!--\s*AGENT-FILL/i;
 const ATTRIBUTION_PATTERNS = [
   /co-authored-by:.*\b(claude|codex|copilot|cursor|chatgpt|gpt|openai|anthropic|gemini)\b/i,
@@ -160,44 +158,22 @@ function currentHead(repoRoot) {
   return run("git", ["rev-parse", "HEAD"], { cwd: repoRoot }).stdout.trim();
 }
 
-function branchExists(repoRoot, branch) {
-  return run("git", ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
-    cwd: repoRoot,
-    allowFailure: true,
-  }).status === 0;
-}
-
 function gitStatus(repoRoot) {
   return run("git", ["status", "--short"], { cwd: repoRoot }).stdout.trim();
 }
 
 function baseFreshness(repoRoot, baseBranch) {
   const base = baseBranch || "main";
-  const fetch = run("git", ["fetch", "origin", base], { cwd: repoRoot, allowFailure: true });
-  const counts = run("git", ["rev-list", "--left-right", "--count", `origin/${base}...HEAD`], {
-    cwd: repoRoot,
-    allowFailure: true,
-  });
-  let behindBy = null;
-  let aheadBy = null;
-  if (counts.status === 0) {
-    const parts = counts.stdout.trim().split(/\s+/);
-    behindBy = Number.parseInt(parts[0], 10);
-    aheadBy = Number.parseInt(parts[1], 10);
-    if (!Number.isFinite(behindBy)) behindBy = null;
-    if (!Number.isFinite(aheadBy)) aheadBy = null;
-  }
+  const remotes = run("git", ["remote"], { cwd: repoRoot }).stdout.trim().split("\n");
+  const origin = remotes.includes("origin");
+  const baseRef = origin ? `refs/remotes/origin/${base}` : `refs/heads/${base}`;
+  if (origin) run("git", ["fetch", "origin", base], { cwd: repoRoot });
+  const counts = run("git", ["rev-list", "--left-right", "--count", `${baseRef}...HEAD`], { cwd: repoRoot });
+  const [behindBy, aheadBy] = counts.stdout.trim().split(/\s+/).map(Number);
+  if (!Number.isInteger(behindBy) || !Number.isInteger(aheadBy)) throw new Error(`Cannot compare the current delivery base ${baseRef}`);
   return {
-    base,
-    fetched: fetch.status === 0,
-    behindBy,
-    aheadBy,
-    fresh: behindBy === null ? null : behindBy === 0,
-    note: behindBy === null
-      ? "Could not compare against origin base (offline, missing remote, or unknown base branch); verify base freshness manually."
-      : behindBy === 0
-        ? "Branch is up to date with origin base."
-        : `Branch is ${behindBy} commit(s) behind origin/${base}; rebase before opening the PR to avoid a DIRTY merge state and a wasted CI round.`,
+    base, baseRef, fetched: origin, behindBy, aheadBy, fresh: behindBy === 0,
+    note: behindBy === 0 ? `Branch includes the current delivery base ${baseRef}.` : `Branch is ${behindBy} commit(s) behind ${baseRef}; rebase and rerun verification before delivery.`,
   };
 }
 
@@ -228,29 +204,18 @@ function gitStatusPaths(repoRoot) {
 
 function resolveState(options) {
   const repoRoot = findGitRoot(process.cwd());
-  let statePath = options.state ? resolveInput(options.state, repoRoot) : null;
-  if (!statePath) {
-    const trees = run("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot }).stdout
-      .split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice(9));
-    const candidates = [];
-    for (const tree of trees) {
-      const directory = path.join(tree, RUNS_ROOT_REL);
-      if (!fs.existsSync(directory)) continue;
-      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-        const file = path.join(directory, entry.name, "state.json");
-        if (entry.isDirectory() && fs.existsSync(file)) {
-          const candidate = readJson(file);
-          if (candidate.schema === "sasu.implement.state.v13.contract-only" && candidate.status === "active") candidates.push(fs.realpathSync(file));
-        }
-      }
-    }
-    const unique = [...new Set(candidates)];
-    if (unique.length !== 1) throw new Error(`Expected one active run, found ${unique.length}; pass --state <path>`);
-    statePath = unique[0];
-  }
-  if (!fs.existsSync(statePath)) throw new Error(`State file not found: ${statePath}`);
+  const statusArgs = ["implement", "status", ...(options.state ? ["--state", resolveInput(options.state, repoRoot)] : []), "--json"];
+  const status = run("sasu", statusArgs, { cwd: repoRoot, allowFailure: true });
+  let parsed;
+  try { parsed = JSON.parse(status.stdout); } catch { throw new Error(`sasu implement status did not return JSON: ${(status.stderr || status.stdout).trim()}`); }
+  if (status.status !== 0 || parsed.ok !== true) throw new Error(parsed.message || status.stderr || "Cannot resolve the current run");
+  const detail = parsed.detail || {};
+  if (typeof detail.statePath !== "string" || typeof detail.recordRoot !== "string") throw new Error("sasu implement status did not return validated run context; use the matching current CLI");
+  const statePath = canonical(detail.statePath);
+  const recordRoot = canonical(detail.recordRoot);
+  if (path.resolve(recordRoot, "agents", "runs", path.basename(path.dirname(statePath)), "state.json") !== statePath) throw new Error("run record path disagrees with validated record checkout");
   const state = readJson(statePath);
-  assertSchema(state, "sasu.implement.state.v13.contract-only", "state");
+  assertSchema(state, "sasu.implement.state.v14.current-git", "state");
   const stateDir = path.dirname(statePath);
   const reportPath = path.join(stateDir, "verification-report.json");
   const resultPath = path.join(stateDir, "verification-report.md");
@@ -259,14 +224,8 @@ function resolveState(options) {
   const report = JSON.parse(reportText);
   assertSchema(report, "sasu.verification-report.v1", "verification report");
   return {
-    // Git delivery operations happen in the JUDGED tree: the
-    // run's worktree when isolated, else the record tree. Records (state,
-    // verification reports are always read from the record tree via statePath.
-    repoRoot: state.worktree && state.worktree.path
-      ? resolveInput(state.worktree.path, repoRoot)
-      : state.projectRoot
-        ? resolveInput(state.projectRoot, repoRoot)
-        : repoRoot,
+    repoRoot: recordRoot,
+    git: detail.currentGit,
     statePath,
     stateDir,
     state,
@@ -281,7 +240,8 @@ const LAST_SUPPORTED_COMMIT = "9149d982";
 
 function assertSchema(value, expected, label) {
   if (value?.schema !== expected) {
-    const supported = value?.schema === "sasu.implement.state.v12.hide" ? "6f75d9352e3b5b93aa7df8b81b93476246c68aaf"
+    const supported = value?.schema === "sasu.implement.state.v13.contract-only" ? "496ea02ac25064bd795cbf833c92749544fb5bcf"
+      : value?.schema === "sasu.implement.state.v12.hide" ? "6f75d9352e3b5b93aa7df8b81b93476246c68aaf"
       : value?.schema === "sasu.implement.state.v11.stateless-verification" ? "fbdf62913b4fbe5fde1ebce26c3e290c8eac0e92" : LAST_SUPPORTED_COMMIT;
     throw new Error(`${label} received schema ${value?.schema ?? "missing"}; expected ${expected}; last supported commit ${supported}. Finish the old run with that CLI using sasu implement status --state <old-state> and its supported delivery commands, or start a separate run with sasu implement start --prd <path> --slug <new-slug>. No automatic migration is available.`);
   }
@@ -299,9 +259,7 @@ function verificationIdentity(report, reportSha256) {
 }
 
 function projectDeliveryConfig(context) {
-  const projectRoot = context.state && typeof context.state.projectRoot === "string"
-    ? context.state.projectRoot
-    : context.repoRoot;
+  const projectRoot = context.repoRoot;
   const configPath = path.join(projectRoot, "agents", "config.json");
   if (!fs.existsSync(configPath)) return {};
   let parsed;
@@ -321,9 +279,7 @@ function deliveryConfig(context, options = {}) {
   // The project config is the delivery contract. Verification reports contain
   // execution facts and do not silently override delivery policy.
   const project = projectDeliveryConfig(context);
-  const stateDelivery = context.state.delivery && typeof context.state.delivery === "object"
-    ? context.state.delivery
-    : {};
+  const stateDelivery = {};
   const delivery = { ...project, ...stateDelivery };
   const staging = {
     ...(project.staging && typeof project.staging === "object" ? project.staging : {}),
@@ -337,10 +293,16 @@ function deliveryConfig(context, options = {}) {
   if (!["local", "pr"].includes(mode)) {
     throw new Error(`Unsupported delivery mode '${mode}'. Expected local or pr.`);
   }
+  const branch = currentBranch(context.repoRoot);
+  if (!branch) throw new Error("Delivery requires an attached branch in the record checkout");
+  const requestedBranch = options.branch || delivery.branch;
+  if (requestedBranch && requestedBranch !== branch) throw new Error(`Current branch '${branch}' does not match delivery branch '${requestedBranch}'`);
+  const baseBranch = String(delivery.baseBranch || "main");
+  if (options.base && options.base !== baseBranch) throw new Error("--base differs from configured delivery.baseBranch; update the policy and rerun verification");
   return {
     mode,
-    branch: String(options.branch || delivery.branch || `${String(delivery.branchPrefix || "prd").replace(/\/+$/, "")}/${context.state.topicSlug || "work"}`),
-    baseBranch: String(options.base || delivery.baseBranch || "main"),
+    branch,
+    baseBranch,
     ci: {
       watch: ci.watch !== undefined ? Boolean(ci.watch) : true,
       maxFixAttempts: Number.isFinite(Number(ci.maxFixAttempts)) ? Number(ci.maxFixAttempts) : 2,
@@ -357,7 +319,7 @@ function verifyDelivery(context) {
   // record tree, so status runs there even when the judged tree is a linked
   // worktree; sasu finds that worktree from the state itself.
   const result = run("sasu", ["implement", "status", "--state", context.statePath, "--json"], {
-    cwd: context.state.projectRoot || context.repoRoot,
+    cwd: context.repoRoot,
     allowFailure: true,
   });
   let parsed = null;
@@ -467,7 +429,7 @@ function short(sha) {
 // run is isolated; relative to that tree the path is portable, absolute it
 // names the workstation.
 function recordRelative(absPath, context) {
-  const roots = [context.repoRoot, context.state.projectRoot, path.dirname(path.dirname(path.dirname(context.statePath)))].filter(Boolean);
+  const roots = [context.repoRoot];
   for (const root of roots) {
     const rel = toRepoRelative(absPath, root);
     if (rel !== absPath) return rel;
@@ -824,7 +786,6 @@ function defaultAllowedPaths(context, config, options = {}) {
   const paths = [
     context.state.prdPath ? path.dirname(context.state.prdPath) : null,
     runDir,
-    context.state.delivery && context.state.delivery.configPath,
     ...runOwnedPaths(context),
     ...optionList(config.staging && config.staging.include),
     ...optionList(options.include),
@@ -873,11 +834,7 @@ function verifiedPathPlan(context, config, options = {}) {
 }
 
 function baselineHead(context) {
-  const candidates = [
-    context.state.initialSource && context.state.initialSource.head,
-    context.state.baselineAttribution && context.state.baselineAttribution.head,
-  ];
-  return candidates.find(item => typeof item === "string" && item.trim() !== "") || null;
+  return context.report.baseSha || null;
 }
 
 function isAncestor(repoRoot, ancestor, descendant) {
@@ -972,24 +929,15 @@ function verifiedCommit(context, options, localOnly = false) {
   const config = deliveryConfig(context, options);
   const existing = existingVerifiedCommit(context, config, options, localOnly);
   if (existing) return existing;
-  throw new Error("Delivery requires an implementation commit after the recorded baseline. Commit the final source and evidence, then rerun deterministic verification.");
+  throw new Error("Delivery requires an implementation commit relative to the current delivery base. Commit the final source and evidence, then rerun deterministic verification.");
 }
 
 // --- branch / PR / CI ---------------------------------------------------
 
 function ensureBranch(context, config) {
-  const repoRoot = context.repoRoot;
-  const current = currentBranch(repoRoot);
-  if (current === config.branch) return current;
-  if (current === config.baseBranch || current === "main" || current === "master") {
-    if (branchExists(repoRoot, config.branch)) {
-      run("git", ["checkout", config.branch], { cwd: repoRoot });
-    } else {
-      run("git", ["checkout", "-b", config.branch], { cwd: repoRoot });
-    }
-    return config.branch;
-  }
-  throw new Error(`Current branch '${current}' does not match delivery branch '${config.branch}'. Checkout the intended branch or pass --branch.`);
+  const current = currentBranch(context.repoRoot);
+  if (!current || current !== config.branch) throw new Error(`Current branch '${current}' does not match delivery branch '${config.branch}'`);
+  return current;
 }
 
 function existingPrUrl(repoRoot, branch) {
@@ -1130,6 +1078,8 @@ function cmdPreflight(options) {
   }
   const freshness = verifyDelivery(context);
   const base = baseFreshness(context.repoRoot, config.baseBranch);
+  delete context.verifiedDelivery;
+  assertCurrentVerification(context);
   process.stdout.write(JSON.stringify({
     ok: true,
     repoRoot: context.repoRoot,
@@ -1292,6 +1242,8 @@ function cmdShip(options) {
   }
 
   const base = baseFreshness(context.repoRoot, config.baseBranch);
+  delete context.verifiedDelivery;
+  assertCurrentVerification(context);
   if (base.fresh === false) {
     if (!options["allow-stale-base"]) {
       throw new Error([
@@ -1457,6 +1409,8 @@ function cmdMerge(options) {
     ].join("\n"));
   }
   const base = baseFreshness(context.repoRoot, config.baseBranch);
+  delete context.verifiedDelivery;
+  assertCurrentVerification(context);
   if (base.fresh !== true) {
     throw new Error(base.fresh === false
       ? `Branch is ${base.behindBy} commit(s) behind origin/${base.base}; rebase, refresh deterministic verification, and re-ship before merge.`

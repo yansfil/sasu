@@ -58,7 +58,7 @@ async function main() {
   const payload = JSON.parse(readStdin());
   if (payload?.hook_event_name !== "PostToolUse" || !TOOLS.has(payload.tool_name)
     || typeof payload.cwd !== "string" || typeof payload.session_id !== "string") return;
-  const [{ parseImplementState, requireWorkRoot, resolveStatePath }, { currentSessionId }] = await Promise.all([
+  const [{ loadState, requireWorkRoot, resolveStatePath }, { currentSessionId }] = await Promise.all([
     import("../cli/dist/implement/store.js"), import("../cli/dist/runs/session.js"),
   ]);
   const session = currentSessionId({ CODEX_SESSION_ID: payload.session_id });
@@ -67,9 +67,9 @@ async function main() {
   const root = projectRoot(payload.cwd);
   const statePath = resolveStatePath(root);
   const stateBytes = read(statePath);
-  const state = parseImplementState(stateBytes.toString());
+  const { state } = loadState(root, { state: statePath });
   if (state.status !== "active" || state.activeVerification) return;
-  const recordRoot = fs.realpathSync(state.projectRoot);
+  const recordRoot = fs.realpathSync(requireWorkRoot(state));
   if (!statePath.startsWith(path.join(recordRoot, "agents", "runs") + path.sep)) return;
   const workRoot = fs.realpathSync(requireWorkRoot(state));
   // Advice follows a unique active contract in this checkout. Native session

@@ -28,8 +28,13 @@ agents/runs/<topic-slug>/verification-report.json
 agents/runs/<topic-slug>/verification-report.md
 ```
 
-The run may keep product code in an isolated worktree while records stay in the record tree.
-The script resolves that boundary from `state.json`.
+The checkout containing the record is the checkout that verification and delivery use.
+Invoking from a sibling checkout only navigates to that record through `sasu implement status`.
+The current attached branch is the delivery default; an explicit branch must match it.
+The delivery baseline is the current merge-base with `origin/<delivery.baseBranch>` when origin is configured, otherwise the local configured base branch.
+A missing base ref or ambiguous record is refused explicitly.
+Rebase or merge, commit, and rerun verification to produce a report for the new Git identity.
+The start-time source snapshot is provenance and does not constrain delivery ancestry.
 
 ## Flow
 

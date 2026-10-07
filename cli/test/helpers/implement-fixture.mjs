@@ -59,6 +59,8 @@ export function makeProject(options = {}) {
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: "node suite.cjs" } }));
   fs.writeFileSync(path.join(root, "suite.cjs"), options.suiteSource ?? `const fs = require('node:fs'); fs.mkdirSync('agents', { recursive: true }); fs.appendFileSync('agents/suite-count.log', 'ran\\n'); console.log('REAL-SUITE-OUTPUT'); process.exit(${options.testExit ?? 0});\n`);
   for (const args of [["init", "-q"], ["add", ".gitignore", "package.json", "suite.cjs"], ["-c", "user.name=test", "-c", "user.email=test@example.test", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "baseline"]]) git(root, args);
+  git(root, ["branch", "-M", "main"]);
+  git(root, ["checkout", "-qb", "work/fixture"]);
   return root;
 }
 

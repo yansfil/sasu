@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import os from "node:os";
-import { loadState, nowIso, persistClose, persistState, StateConflictError } from "./store";
+import { requireWorkRoot, loadState, nowIso, persistClose, persistState, StateConflictError } from "./store";
 import type { ImplementState, UnifiedVerificationAttempt } from "./types";
 
 /**
@@ -91,7 +91,7 @@ export function progressVerification(
   const active = state.activeVerification;
   if (active === undefined) throw new Error("this command holds no verification execution lease");
   for (let retry = 0; retry < 3; retry += 1) {
-    const fresh = loadState(state.projectRoot, { state: statePath }).state;
+    const fresh = loadState(requireWorkRoot(state), { state: statePath }).state;
     if (fresh.activeVerification?.token !== active.token) throw new Error("verification execution lease was replaced or cleared");
     if (fresh.status !== "active" || fresh.prd.sha256 !== active.prdSha256
       || fresh.activeVerification.inputFingerprint !== active.inputFingerprint) throw new Error("verification pinned input changed during execution");
