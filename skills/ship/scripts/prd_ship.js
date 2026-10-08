@@ -306,11 +306,12 @@ function deliveryConfig(context, options = {}) {
   };
 }
 
-// A repository may let a green pull request that is behind its base merge
-// without being brought up to date: requiring the latest base sent every other
-// green pull request back through CI on each merge. The repository names the
-// command that decides, as an argument array; it receives the pull request
-// number and exits 0 only when the merge result is safe to land now.
+// The repository's own check before every merge. It may let a green pull
+// request that is behind its base merge without being brought up to date:
+// requiring the latest base sent every other green pull request back through
+// CI on each merge. The repository names the command, as an argument array; it
+// receives the pull request number, exits 0 only when the merge may land now,
+// and what it prints (notes such as a missing issue link) reaches the caller.
 function premergeCheckCommand(value) {
   if (value === undefined || value === null) return null;
   if (!Array.isArray(value) || value.length === 0 || !value.every(part => typeof part === "string" && part.length > 0)) {
@@ -324,12 +325,14 @@ function runPremergeCheck(context, command, prNumber, base) {
   const result = run(command[0], args, { cwd: context.repoRoot, allowFailure: true });
   const tail = text => String(text || "").trim().split("\n").slice(-40).join("\n");
   if (result.status !== 0) {
+    const position = base.behindBy > 0 ? `Branch is ${base.behindBy} commit(s) behind origin/${base.base}, and ` : "";
     throw new Error([
-      `Branch is ${base.behindBy} commit(s) behind origin/${base.base}, and delivery.premergeCheck refused the merge (exit ${typeof result.status === "number" ? result.status : "unknown"}):`,
+      `${position}delivery.premergeCheck refused the merge (exit ${typeof result.status === "number" ? result.status : "unknown"}):`,
       tail(result.stdout),
       tail(result.stderr),
     ].filter(Boolean).join("\n"));
   }
+  process.stderr.write(result.stdout);
   return { command: [command[0], ...args], exitCode: 0, behindBy: base.behindBy, output: tail(result.stdout) };
 }
 
@@ -1466,7 +1469,7 @@ function cmdMerge(options) {
   // The tree is clean by merge time; examine the PR's actual change set.
   const rules = runRulesGate(context, { base: `origin/${deliveryConfig(context, options).baseBranch}` }, []);
   // Last before the merge, so the check answers for the base as it is now.
-  const premerge = base.fresh === false ? runPremergeCheck(context, config.premergeCheck, pr.number, base) : null;
+  const premerge = config.premergeCheck ? runPremergeCheck(context, config.premergeCheck, pr.number, base) : null;
   const method = mergeMethod(options);
   const mergeArgs = ["pr", "merge", pr.url || prRef, `--${method}`, "--match-head-commit", headSha];
   if (options["delete-branch"]) mergeArgs.push("--delete-branch");

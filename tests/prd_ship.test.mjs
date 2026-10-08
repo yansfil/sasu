@@ -468,11 +468,28 @@ for (const exit of [1, 2]) {
   });
 }
 
-test("merge skips the premerge check when the branch already contains its base", t => {
-  const current = ciFixture(t, [passedChecks], { merge: true, premergeExit: 1 });
+test("merge runs the premerge check when the branch contains its base too, and shows what it printed", t => {
+  const current = ciFixture(t, [passedChecks], { merge: true, premergeExit: 0 });
   const result = merge(current);
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(current.premergeCalls(), []);
+  assert.deepEqual(current.premergeCalls(), [["21"]]);
+  assert.match(result.stderr, /checked the merge result/);
+  assert.equal(JSON.parse(result.stdout).premerge.behindBy, 0);
+});
+
+test("a premerge check that refuses a branch containing its base stops the merge", t => {
+  const current = ciFixture(t, [passedChecks], { merge: true, premergeExit: 1 });
+  const result = merge(current);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /delivery\.premergeCheck refused the merge \(exit 1\):\nchecked the merge result/);
+  assert.doesNotMatch(result.stderr, /behind origin/);
+  assert.ok(current.calls().every(args => args[1] !== "merge"));
+});
+
+test("merge without a premerge check runs none", t => {
+  const current = ciFixture(t, [passedChecks], { merge: true });
+  const result = merge(current);
+  assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).premerge, null);
 });
 
