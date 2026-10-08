@@ -103,9 +103,9 @@ The `no-checks` verdict never authorizes merge; confirm the workflow is enabled,
 `merge` is separately authorized.
 Pass the user's merge instruction verbatim through `--approval`.
 The command checks the local head, PR head, base freshness, mergeability, CI, and learned rules before using GitHub's head-pinned merge.
-A branch behind its base merges only when the repository names a premerge check: `delivery.premergeCheck` in `agents/config.json`, a command as an argument array that receives the pull request number.
-`merge` runs it last, after CI and the learned rules, and refuses with its output when it exits non-zero; the delivery result records it under `premerge`.
-The repository's check decides whether the merge result is safe to land without bringing the branch up to date, so CI does not run again for every merge ahead of it.
+When the repository names a premerge check (`delivery.premergeCheck` in `agents/config.json`, a command as an argument array that receives the pull request number), `merge` runs it before every merge, last, after CI and the learned rules.
+It refuses with the check's output when the check exits non-zero, shows what the check printed when it passes (such as a note that the pull request closes no issue), and records it under `premerge`.
+A branch behind its base merges only through that check: the repository decides whether the merge result is safe to land without bringing the branch up to date, so CI does not run again for every merge ahead of it.
 
 ## PR Body
 
