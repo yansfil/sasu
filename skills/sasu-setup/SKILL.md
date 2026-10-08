@@ -69,6 +69,7 @@ Then interview:
    Prepare the intended branch before sealing the run.
    Verification and delivery use the checkout containing the run record and its current attached branch.
    The baseline is the current merge-base with `origin/<delivery.baseBranch>` when origin is configured, otherwise the local configured base branch.
+   Optionally `delivery.premergeCheck`: the repository's command, as an argument array, that decides whether a green pull request behind the base may merge without being brought up to date; `ship merge` passes it the pull request number and merges only on exit 0.
 3. Checkout preparation: use Hide to create or reuse the intended branch and checkout before sealing the run.
    Prepare required local configuration and dependencies there under the existing project policy.
    The retired `worktree.enabled`, `worktree.root`, `worktree.link`, `worktree.copy` and `worktree.setup` keys no longer provision anything.
@@ -144,6 +145,7 @@ Reference shape:
   "delivery": {
     "mode": "pr",
     "baseBranch": "main",
+    "premergeCheck": ["python3", "scripts/premerge-check.py"],
     "staging": { "include": [], "exclude": [] },
     "ci": { "timeoutSeconds": 240 }
   },

@@ -122,7 +122,7 @@ Registered evidence preserves path, hash, observation time, source identity, col
 Changed or missing evidence invalidates delivery until verification runs again.
 `artifact --recover <path> --reason <reason>` invalidates a missing generated command-log registration and the current report while preserving historical attempts and log identity in the existing replacement history.
 It cannot clear changed files or unrelated missing evidence.
-Ship validates the current deterministic PASS report, exact committed Git head, delivery path boundary, base freshness, CI, mergeability, and explicit merge approval.
+Ship validates the current deterministic PASS report, exact committed Git head, delivery path boundary, base freshness, CI, mergeability, and explicit merge approval; a branch behind its base merges only through the repository's `delivery.premergeCheck`.
 The pull request carries review notes and reviewer-visible evidence.
 GitHub Actions and human review are the final delivery authority.
 

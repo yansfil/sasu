@@ -57,7 +57,7 @@ The script blocks when:
 - the state or verification-report schema is retired or malformed;
 - deterministic verification is not PASS or is stale for the current source, PRD, suite, or evidence;
 - the report HEAD differs from the current Git HEAD or Git-visible changes remain uncommitted;
-- the branch is behind the configured base without an explicit approved exception;
+- the branch is behind the configured base without an explicit approved exception (`merge` instead runs `delivery.premergeCheck` when the repository names one, below);
 - the verified commit includes paths outside the delivery allowlist;
 - the PR body still contains placeholders, template comments, or agent attribution, or lacks the folded verification record;
 - required learned-rule checks fail;
@@ -103,6 +103,9 @@ The `no-checks` verdict never authorizes merge; confirm the workflow is enabled,
 `merge` is separately authorized.
 Pass the user's merge instruction verbatim through `--approval`.
 The command checks the local head, PR head, base freshness, mergeability, CI, and learned rules before using GitHub's head-pinned merge.
+A branch behind its base merges only when the repository names a premerge check: `delivery.premergeCheck` in `agents/config.json`, a command as an argument array that receives the pull request number.
+`merge` runs it last, after CI and the learned rules, and refuses with its output when it exits non-zero; the delivery result records it under `premerge`.
+The repository's check decides whether the merge result is safe to land without bringing the branch up to date, so CI does not run again for every merge ahead of it.
 
 ## PR Body
 

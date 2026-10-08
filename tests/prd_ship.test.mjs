@@ -252,14 +252,23 @@ process.stderr.write("HTTP 404: Not Found"); process.exit(1);
   return { bin, store };
 }
 
-function ciFixture(t, responses, { ci = {}, merge = false } = {}) {
+function ciFixture(t, responses, { ci = {}, merge = false, behind = false, premergeExit = null } = {}) {
   const current = fixture();
   t.after(() => fs.rmSync(current.root, { recursive: true, force: true }));
   const store = path.join(current.root, "agents", "fake-gh");
   const callsPath = path.join(store, "calls.jsonl");
   write(path.join(store, "responses.json"), JSON.stringify(responses));
+  // The repository's premerge check, faked: it records its arguments and exits as told.
+  const premergeCalls = path.join(store, "premerge-calls.jsonl");
+  if (premergeExit !== null) {
+    write(path.join(store, "premerge.js"), `require("node:fs").appendFileSync(${JSON.stringify(premergeCalls)}, JSON.stringify(process.argv.slice(2)) + "\\n");
+process.stdout.write("checked the merge result\\n");
+process.exit(${premergeExit});
+`);
+  }
   write(path.join(current.root, "agents", "config.json"), JSON.stringify({ delivery: {
     ci, ...(merge ? { mode: "pr", branch: "prd/fixture", baseBranch: "main" } : {}),
+    ...(premergeExit !== null ? { premergeCheck: [process.execPath, path.join(store, "premerge.js")] } : {}),
   } }));
   const pr = {
     number: 21, url: "https://github.com/example/product/pull/21", state: "OPEN",
@@ -306,10 +315,17 @@ process.exit(99);
     run("git", ["update-ref", "refs/heads/main", current.state.initialSource.head], { cwd: current.root });
     run("git", ["remote", "add", "origin", remote], { cwd: current.root });
     run("git", ["push", "-q", "origin", "main"], { cwd: current.root });
+    if (behind) {
+      // Another pull request lands on the base after this one's CI ran.
+      const tree = run("git", ["rev-parse", "main^{tree}"], { cwd: current.root }).stdout.trim();
+      const later = run("git", ["commit-tree", tree, "-p", "main", "-m", "another merge"], { cwd: current.root }).stdout.trim();
+      run("git", ["push", "-q", "origin", `${later}:refs/heads/main`], { cwd: current.root });
+    }
   }
   return {
     ...current,
-    calls: () => fs.readFileSync(callsPath, "utf8").trim().split("\n").map(line => JSON.parse(line)),
+    calls: () => fs.existsSync(callsPath) ? fs.readFileSync(callsPath, "utf8").trim().split("\n").map(line => JSON.parse(line)) : [],
+    premergeCalls: () => fs.existsSync(premergeCalls) ? fs.readFileSync(premergeCalls, "utf8").trim().split("\n").map(line => JSON.parse(line)) : [],
   };
 }
 
@@ -416,6 +432,49 @@ for (const [label, response, canMerge] of [
     else assert.match(result.stderr, /Required CI|Could not inspect CI checks/);
   });
 }
+
+function merge(current) {
+  return run(process.execPath, [shipScript, "merge", "--state", current.statePath, "--pr", "21", "--approval", "merge this fixture"], {
+    cwd: current.root, env: current.env, allowFailure: true,
+  });
+}
+
+test("merge refuses a branch behind its base when the repository names no premerge check", t => {
+  const current = ciFixture(t, [passedChecks], { merge: true, behind: true });
+  const result = merge(current);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /1 commit\(s\) behind origin\/main.*configure delivery\.premergeCheck/);
+  assert.ok(current.calls().every(args => args[1] !== "merge"));
+});
+
+test("merge lands a green branch behind its base when the premerge check passes on the pull request", t => {
+  const current = ciFixture(t, [passedChecks], { merge: true, behind: true, premergeExit: 0 });
+  const result = merge(current);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(current.premergeCalls(), [["21"]]);
+  assert.ok(current.calls().some(args => args[1] === "merge"));
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.premerge.behindBy, 1);
+  assert.equal(output.premerge.exitCode, 0);
+});
+
+for (const exit of [1, 2]) {
+  test(`merge refuses when the premerge check exits ${exit}, with its output, and merges nothing`, t => {
+    const current = ciFixture(t, [passedChecks], { merge: true, behind: true, premergeExit: exit });
+    const result = merge(current);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, new RegExp(`premergeCheck refused the merge \\(exit ${exit}\\):\\nchecked the merge result`));
+    assert.ok(current.calls().every(args => args[1] !== "merge"));
+  });
+}
+
+test("merge skips the premerge check when the branch already contains its base", t => {
+  const current = ciFixture(t, [passedChecks], { merge: true, premergeExit: 1 });
+  const result = merge(current);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(current.premergeCalls(), []);
+  assert.equal(JSON.parse(result.stdout).premerge, null);
+});
 
 test("screenshots upload once per head into the assets repo and land under Summary", () => {
   const current = fixture();
