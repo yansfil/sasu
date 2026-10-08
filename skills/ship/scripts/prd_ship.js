@@ -302,7 +302,35 @@ function deliveryConfig(context, options = {}) {
       intervalSeconds: Number.isFinite(Number(ci.intervalSeconds)) ? Number(ci.intervalSeconds) : DEFAULT_CI_INTERVAL_SECONDS,
     },
     staging,
+    premergeCheck: premergeCheckCommand(delivery.premergeCheck),
   };
+}
+
+// A repository may let a green pull request that is behind its base merge
+// without being brought up to date: requiring the latest base sent every other
+// green pull request back through CI on each merge. The repository names the
+// command that decides, as an argument array; it receives the pull request
+// number and exits 0 only when the merge result is safe to land now.
+function premergeCheckCommand(value) {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length === 0 || !value.every(part => typeof part === "string" && part.length > 0)) {
+    throw new Error("delivery.premergeCheck must be a command as a non-empty array of arguments, such as [\"python3\", \"scripts/premerge-check.py\"]");
+  }
+  return value;
+}
+
+function runPremergeCheck(context, command, prNumber, base) {
+  const args = [...command.slice(1), String(prNumber)];
+  const result = run(command[0], args, { cwd: context.repoRoot, allowFailure: true });
+  const tail = text => String(text || "").trim().split("\n").slice(-40).join("\n");
+  if (result.status !== 0) {
+    throw new Error([
+      `Branch is ${base.behindBy} commit(s) behind origin/${base.base}, and delivery.premergeCheck refused the merge (exit ${typeof result.status === "number" ? result.status : "unknown"}):`,
+      tail(result.stdout),
+      tail(result.stderr),
+    ].filter(Boolean).join("\n"));
+  }
+  return { command: [command[0], ...args], exitCode: 0, behindBy: base.behindBy, output: tail(result.stdout) };
 }
 
 function verifyDelivery(context) {
@@ -1402,10 +1430,11 @@ function cmdMerge(options) {
   const base = baseFreshness(context.repoRoot, config.baseBranch);
   delete context.verifiedDelivery;
   assertCurrentVerification(context);
-  if (base.fresh !== true) {
-    throw new Error(base.fresh === false
-      ? `Branch is ${base.behindBy} commit(s) behind origin/${base.base}; rebase, refresh deterministic verification, and re-ship before merge.`
-      : `Could not prove freshness against origin/${base.base}; merge fails closed until the base comparison succeeds.`);
+  if (base.fresh !== true && base.fresh !== false) {
+    throw new Error(`Could not prove freshness against origin/${base.base}; merge fails closed until the base comparison succeeds.`);
+  }
+  if (base.fresh === false && !config.premergeCheck) {
+    throw new Error(`Branch is ${base.behindBy} commit(s) behind origin/${base.base}; rebase, refresh deterministic verification, and re-ship before merge, or configure delivery.premergeCheck.`);
   }
   if (currentBranch(context.repoRoot) !== config.branch) {
     throw new Error(`Current branch '${currentBranch(context.repoRoot)}' does not match delivery branch '${config.branch}'.`);
@@ -1436,6 +1465,8 @@ function cmdMerge(options) {
   }
   // The tree is clean by merge time; examine the PR's actual change set.
   const rules = runRulesGate(context, { base: `origin/${deliveryConfig(context, options).baseBranch}` }, []);
+  // Last before the merge, so the check answers for the base as it is now.
+  const premerge = base.fresh === false ? runPremergeCheck(context, config.premergeCheck, pr.number, base) : null;
   const method = mergeMethod(options);
   const mergeArgs = ["pr", "merge", pr.url || prRef, `--${method}`, "--match-head-commit", headSha];
   if (options["delete-branch"]) mergeArgs.push("--delete-branch");
@@ -1469,6 +1500,7 @@ function cmdMerge(options) {
     },
     rules,
     overrides,
+    premerge,
     merge: {
       method,
       commit: mergedPr.mergeCommit && mergedPr.mergeCommit.oid ? mergedPr.mergeCommit.oid : null,
@@ -1486,6 +1518,7 @@ function cmdMerge(options) {
     mergeCommit: result.merge.commit,
     approval,
     overrides,
+    premerge,
   });
   const output = {
     ok: true,
