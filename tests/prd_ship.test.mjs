@@ -537,6 +537,35 @@ test("screenshots upload once per head into the assets repo and land under Summa
   assert.match(uneven.stderr, /one --caption per --file/);
 });
 
+test("screenshots --no-run upload for the branch and HEAD of a checkout with no run record", () => {
+  const current = fixture();
+  run("git", ["remote", "add", "origin", "https://github.com/example/product.git"], { cwd: current.root });
+  run("git", ["checkout", "-q", "-b", "fix/task-lens", current.report.headSha], { cwd: current.root });
+  const gh = fakeGh(current.root);
+  const env = { ...current.env, PATH: `${gh.bin}:${current.env.PATH}` };
+  const png = Buffer.from("89504e470d0a1a0a", "hex");
+  write(path.join(current.root, "agents", "runs", "shots", "after.png"), png);
+  const head = run("git", ["rev-parse", "HEAD"], { cwd: current.root }).stdout.trim().slice(0, 7);
+  const args = [shipScript, "screenshots", "--no-run", "--assets-repo", "someone/pr-assets", "--file", "agents/runs/shots/after.png", "--caption", "After"];
+  const output = JSON.parse(run(process.execPath, args, { cwd: current.root, env }).stdout);
+  assert.equal(output.screenshots.length, 1);
+  assert.equal(output.screenshots[0].path, `product/fix-task-lens/${head}/after.png`);
+  assert.equal(output.screenshots[0].markdown, `![After](https://github.com/someone/pr-assets/blob/main/product/fix-task-lens/${head}/after.png?raw=true)`);
+  assert.equal(output.body, null, "no run, no body draft to write");
+  assert.match(output.next, /gh pr edit/);
+  assert.ok(!fs.existsSync(path.join(current.root, "agents", "runs", "fixture", "delivery", "ship-log.jsonl")), "no run, no ship log");
+
+  const bodyPath = path.join(current.root, "agents", "runs", "shots", "body.md");
+  write(bodyPath, "## Summary\n\n- one\n\n## Review\n\n- judge\n");
+  const placed = JSON.parse(run(process.execPath, [...args, "--body", bodyPath], { cwd: current.root, env }).stdout);
+  assert.equal(placed.body.updated, true);
+  assert.match(fs.readFileSync(bodyPath, "utf8"), /- one\n\n!\[After\]\(.*\)\n\n## Review/);
+
+  const both = run(process.execPath, [...args, "--state", current.statePath], { cwd: current.root, env, allowFailure: true });
+  assert.notEqual(both.status, 0);
+  assert.match(both.stderr, /--no-run takes no --state/);
+});
+
 test("ship refuses a body that still carries template comments or lacks the record", () => {
   const current = fixture();
   const bodyPath = path.join(current.root, "agents", "runs", "fixture", "delivery", "pr-body.md");
