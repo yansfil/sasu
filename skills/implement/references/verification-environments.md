@@ -12,9 +12,9 @@ The harness records suites and shared evidence; it does not prescribe one driver
 | Mobile | Existing simulator/device driver | Exercise the target platform and record device/build identity. |
 | Native desktop | Available native automation and screenshots | Inspect the actual running application and its build/instance identity. |
 
-Manual browser QA uses the current project/browser tooling, including chromux when available.
+Manual browser QA uses the current project/browser tooling, including the `aside` CLI when available.
 Committed repeatable tests create and tear down their own server, browser, simulator, or terminal sessions.
-Never put chromux or a shared daemon inside automated test commands: killed runs leaked roughly 180 headless tabs in the 2026-08-11 incident and concurrent invocations raced.
+Never put a shared browser daemon such as `aside` inside automated test commands: in the 2026-08-11 incident killed runs left roughly 180 headless tabs behind and concurrent invocations raced.
 A zero-dependency product constraint covers runtime dependencies, not necessary test tooling.
 Nondeterministic computer-use observations are evidence with a stated collector and method, not deterministic test results.
 The independent reviewer assesses their sufficiency without automatically handing unreadable evidence to the human.
