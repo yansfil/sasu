@@ -44,7 +44,7 @@ function usage(exitCode) {
   process.stderr.write(`Usage:
   node prd_ship.js preflight [--state <state.json>]
   node prd_ship.js body [--state <state.json>] [--output <file>] [--force]
-  node prd_ship.js screenshots [--state <state.json>] --file <image> [--caption <text>] ... [--assets-repo <owner/name>] [--body <file>]
+  node prd_ship.js screenshots [--state <state.json> | --no-run] --file <image> [--caption <text>] ... [--assets-repo <owner/name>] [--body <file>]
   node prd_ship.js local [--state <state.json>] [--commit-message <message>] [--no-gpg-sign] [--include <path>] [--skip-rules --reason <why>]
   node prd_ship.js ship [--state <state.json>] [--title <title>] [--body <file>] [--branch <branch>] [--base <base>] [--draft] [--no-watch] [--no-gpg-sign] [--include <path>] [--override-mode --reason <why>] [--allow-stale-base --reason <why>] [--skip-rules --reason <why>]
   node prd_ship.js watch-ci [--state <state.json>] [--pr <number-or-url>] [--timeout <seconds>] [--interval <seconds>]
@@ -668,9 +668,24 @@ function insertScreenshots(text, lines) {
   return bodyLines.join("\n").replace(/\n{3,}/g, "\n\n");
 }
 
+// A pull request opened by hand has no run record: `--no-run` uploads for the
+// branch and commit the checkout is on, and the images are named by that
+// commit as a run's are. Nothing is verified here; the pull request's own
+// checks do that, and the screenshot gate reads the body the lines go into.
+function headOnlyContext(options) {
+  if (options.state) throw new Error("--no-run takes no --state; drop one of them");
+  const repoRoot = findGitRoot(process.cwd());
+  const headSha = run("git", ["rev-parse", "HEAD"], { cwd: repoRoot }).stdout.trim();
+  const branch = currentBranch(repoRoot);
+  if (!branch) throw new Error("--no-run needs a branch checked out; the images are filed under its name");
+  const topicSlug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "work";
+  return { repoRoot, report: { headSha }, state: { topicSlug }, stateDir: null };
+}
+
 function cmdScreenshots(options) {
-  const context = resolveState(options);
-  assertCurrentVerification(context);
+  const headOnly = options["no-run"] === true;
+  const context = headOnly ? headOnlyContext(options) : resolveState(options);
+  if (!headOnly) assertCurrentVerification(context);
   const repo = assetsRepo(context, options);
   const entries = screenshotEntries(context, options);
   const head = short(context.report.headSha);
@@ -682,9 +697,9 @@ function cmdScreenshots(options) {
     const url = assetUrl(repo, assetPath);
     return { file: entry.local, path: assetPath, url, caption: entry.caption, uploaded: !existed, markdown: `![${entry.caption}](${url})` };
   });
-  const bodyPath = options.body ? resolveInput(options.body, context.repoRoot) : defaultBodyPath(context);
+  const bodyPath = options.body ? resolveInput(options.body, context.repoRoot) : headOnly ? null : defaultBodyPath(context);
   let bodyUpdated = false;
-  if (fs.existsSync(bodyPath)) {
+  if (bodyPath && fs.existsSync(bodyPath)) {
     const before = fs.readFileSync(bodyPath, "utf8");
     const after = insertScreenshots(before, results.map(result => result.markdown));
     if (after !== before) {
@@ -692,21 +707,24 @@ function cmdScreenshots(options) {
       bodyUpdated = true;
     }
   }
-  appendJsonl(shipLogPath(context), {
-    ts: new Date().toISOString(),
-    event: "screenshots",
-    repo,
-    head: context.report.headSha,
-    uploaded: results.filter(result => result.uploaded).map(result => result.path),
-  });
+  if (!headOnly) {
+    appendJsonl(shipLogPath(context), {
+      ts: new Date().toISOString(),
+      event: "screenshots",
+      repo,
+      head: context.report.headSha,
+      uploaded: results.filter(result => result.uploaded).map(result => result.path),
+    });
+  }
   process.stdout.write(JSON.stringify({
     ok: true,
     repo,
+    head: context.report.headSha,
     screenshots: results,
-    body: { path: toRepoRelative(bodyPath, context.repoRoot), updated: bodyUpdated, exists: fs.existsSync(bodyPath) },
+    body: bodyPath ? { path: toRepoRelative(bodyPath, context.repoRoot), updated: bodyUpdated, exists: fs.existsSync(bodyPath) } : null,
     next: bodyUpdated
-      ? "The image lines sit under Summary; give each its one-line caption if the file name was not enough, then run ship."
-      : "Paste the markdown lines under Summary in the PR body, then run ship.",
+      ? (headOnly ? "The image lines sit under Summary; give each its one-line caption if the file name was not enough, then open or edit the PR with that body." : "The image lines sit under Summary; give each its one-line caption if the file name was not enough, then run ship.")
+      : (headOnly ? "Paste the markdown lines under Summary in the PR body (`gh pr edit <number> --body-file`)." : "Paste the markdown lines under Summary in the PR body, then run ship."),
   }, null, 2) + "\n");
 }
 

@@ -72,7 +72,7 @@ For high-risk work, repository review rules and explicit human approval require 
 ```sh
 node ~/.codex/skills/ship/scripts/prd_ship.js preflight --state agents/runs/<topic-slug>/state.json
 node ~/.codex/skills/ship/scripts/prd_ship.js body --state agents/runs/<topic-slug>/state.json
-node ~/.codex/skills/ship/scripts/prd_ship.js screenshots --state agents/runs/<topic-slug>/state.json --file <image> --caption "<one line>" [--file ... --caption ...] [--assets-repo <owner/name>]
+node ~/.codex/skills/ship/scripts/prd_ship.js screenshots --state agents/runs/<topic-slug>/state.json | --no-run --file <image> --caption "<one line>" [--file ... --caption ...] [--assets-repo <owner/name>]
 node ~/.codex/skills/ship/scripts/prd_ship.js local --state agents/runs/<topic-slug>/state.json
 node ~/.codex/skills/ship/scripts/prd_ship.js ship --state agents/runs/<topic-slug>/state.json --title "<title>"
 node ~/.codex/skills/ship/scripts/prd_ship.js watch-ci --state agents/runs/<topic-slug>/state.json [--timeout <seconds>]
@@ -88,6 +88,7 @@ Fill every `AGENT-FILL` marker and delete every template comment, working from t
 It refuses to overwrite existing prose without `--force`.
 
 `screenshots` uploads two or three cropped images to the public assets repository (`--assets-repo`, or `delivery.assetsRepo` in `agents/config.json`) under `<repository>/<topic-slug>/<head-sha7>/`, then writes `![caption](url)` lines under `Summary` in the body draft.
+A pull request opened by hand, with no run record, uploads with `--no-run` in place of `--state`: the images are filed under the branch name and the checkout's HEAD, nothing is verified, and the printed `markdown` lines go under `Summary` by hand (`--body <file>` inserts them into a body file).
 A path that already exists is left alone, so rerunning it for the same head is free, and nothing in that repository is ever deleted.
 Crop every image to the product surface it shows: the repository is public, and a whole-screen capture carries the user name, host name, or another project.
 
