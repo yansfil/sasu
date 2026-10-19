@@ -1,10 +1,10 @@
 {
   "repository": "with-hide/hide",
-  "sourceCommit": "7bbea914df594f39db7a9275a06ca6ec1196e4bb",
+  "sourceCommit": "a76128bc24c43dec3877a8077050234e2497d8b9",
   "sourcePath": "contracts/hide-cli.json",
-  "sourceFileSha256": "3a2f1a05684a9b6733f3c8248a71b344bc1587e9cc0638374a04c20852738c2c",
-  "contractDigest": "sha256:ffc2390f5af05bb96111f048892ca29b40533f8fe9a126ab1fa39376853725bf",
+  "sourceFileSha256": "29b001bf4efe709cbb81f502c7a5e5b389af957b147ae6e6def978ee86d0c2c9",
+  "contractDigest": "sha256:65ea7e80d8fcca0290c77a60d91babcc6603a89ee84380c341b1af7706c0519a",
   "projection": "published-observer-review.json",
-  "projectionSha256": "f53713ca2533cd18cb1b33fe1e1456f97be7af8a7fbd0c36cdd5bbe671e9e7f5",
+  "projectionSha256": "2b57a8a9be599028d6bbf292c1f2f4c8301bc6c32820382088e19dc2e2dbcbd6",
   "projectionNotes": "Consumed commands, envelopes and answer schemas are copied from the public export; unrelated surface is omitted and the original contract digest is retained."
 }

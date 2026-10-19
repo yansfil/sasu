@@ -102,6 +102,11 @@
             },
             "policy": {
               "$ref": "#/definitions/ReviewPolicy"
+            },
+            "request_failed": {
+              "default": false,
+              "description": "Always serialized: false -> true shrinks by one byte, so even an exactly full ledger can retain the failed admission without a letter.",
+              "type": "boolean"
             }
           },
           "required": [
@@ -110,7 +115,8 @@
             "pending_letter",
             "completed_at_unix_ms",
             "assessment",
-            "cycle"
+            "cycle",
+            "request_failed"
           ],
           "type": "object"
         },
@@ -508,6 +514,11 @@
             },
             "policy": {
               "$ref": "#/definitions/ReviewPolicy"
+            },
+            "request_failed": {
+              "default": false,
+              "description": "Always serialized: false -> true shrinks by one byte, so even an exactly full ledger can retain the failed admission without a letter.",
+              "type": "boolean"
             }
           },
           "required": [
@@ -516,7 +527,8 @@
             "pending_letter",
             "completed_at_unix_ms",
             "assessment",
-            "cycle"
+            "cycle",
+            "request_failed"
           ],
           "type": "object"
         },
@@ -1533,7 +1545,7 @@
       "rest": null
     }
   ],
-  "digest": "sha256:ffc2390f5af05bb96111f048892ca29b40533f8fe9a126ab1fa39376853725bf",
+  "digest": "sha256:65ea7e80d8fcca0290c77a60d91babcc6603a89ee84380c341b1af7706c0519a",
   "envelopes": {
     "agent": {
       "answer": "value",

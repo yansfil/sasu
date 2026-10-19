@@ -1,5 +1,5 @@
 {
   "repo": "with-hide/hide",
-  "ref": "7bbea914df594f39db7a9275a06ca6ec1196e4bb",
+  "ref": "a76128bc24c43dec3877a8077050234e2497d8b9",
   "note": "Hide candidate with observer-30m delegation policy and explicit Observer review conclusions. Native tests require a private build of this exact commit with its adjacent daemon, hooks and pinned Herdr resources."
 }
