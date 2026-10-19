@@ -12,7 +12,7 @@ Observer seals contract -> Sasu prints handoff -> Observer runs hide agent spawn
 
 Choose the product checkout and approve the PRD before `sasu implement start`.
 `start` seals the current checkout and its required suites.
-`dispatch` prints the complete `hide agent spawn --parent here` command and writes the handoff file.
+`dispatch` prints the complete `hide agent spawn --parent here --review-policy observer-30m` command and writes the handoff file.
 The Observer executes that command directly; the first native prompt references the file.
 Retry the same command and intent after an interrupted response to recover the same child.
 Sasu does not inspect startup-screen text, create panes, register participants, or run a second supervisor.
@@ -22,10 +22,39 @@ Use a request letter for plans, a block letter for a missing decision, and a rep
 Hide owns delivery confirmation and inactivity watches.
 A confirmed letter is not a verification verdict.
 
+## Periodic Observer review
+
+The Implementor's watch requests its first review after 30 minutes, independently of child input, output, commits, tests and progress letters.
+Hide delivers it to the designated Observer through the existing inbox and wake path, keeps at most one outstanding request and persists it across restart.
+The Observer uses the complete PRD and execution plan as its baseline, reusing unchanged context and the last actual review.
+Inspect new changes, results and failures first; read the full baseline only when it is missing or changed.
+Keep this periodic inspection proportional to the new work, including completed results, remaining work and actual verification history.
+It adds no full-suite or independent review stage, and final independent full-contract reviews remain required.
+Separate implementation time from build/CI waiting and rework before judging duration.
+Check whether each task serves the contract or a necessary prerequisite, whether a smaller solution meets it, and whether unrelated scope, refactoring or abstraction has accumulated.
+Repeated fixes or full-suite runs need new evidence; reproduce and diagnose a failure before repeating the same approach.
+Keep mandatory verification and necessary regression fixes.
+
+Complete the specific review letter explicitly:
+
+```sh
+hide request reply <review-letter> --review <assessment> --intent <stable-key> \
+  --body '<one-line grounds; concrete next direction when needed>'
+```
+
+Choose `scope-appropriate`, `delay-justified`, `reduce-scope` or `diagnosis-needed`.
+The designated Observer supplies the conclusion and grounds, including one concrete next action and the scope to reduce when intervention is needed.
+New product decisions or missing authority go to the user.
+Inbox receipt, ack, an ordinary reply and a progress letter do not complete a periodic review or start the next cycle.
+The explicit accepted review starts the next 30 minutes; report confirmation, target departure and explicit watch stop end the existing watch and periodic scheduling together.
+Inactivity alerts and block forwarding remain active, and advisors and other delegations do not opt into this policy.
+Sasu keeps no periodic scheduler, semantic verdict or live runtime identity.
+
 ## Identity and authority
 
 Sasu does not persist session IDs, terminal IDs, participant IDs or watch IDs.
 Run-owned launch requests record intent and requested arguments so retries converge.
+New Implementor reservations include the periodic review policy; older reservations without it replay their original arguments and retain the existing watch behavior.
 Role restrictions consult the live Hide registration and the run child's parent relationship.
 An Observer spawned by a lead remains the run child's parent.
 Terminal handoff and compaction change no Sasu ownership record.

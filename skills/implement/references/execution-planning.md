@@ -18,7 +18,7 @@ First read the code the PRD's structure section points at: the existing patterns
 
 The plan answers four questions.
 Its format is free and its length follows the work: a one-module task is ten lines, a boundary change is a page.
-Nothing validates its shape, and nothing checks conformance to it later.
+Nothing validates its shape; the Observer compares the plan with actual work during periodic review.
 
 1. **How I will build it.**
    Map the PRD's `Technical structure` onto the real code: which modules or boundaries, what talks to what, what existing code is reused, and what is new.

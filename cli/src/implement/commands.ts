@@ -372,7 +372,8 @@ function launchInstruction(state: ImplementState, reserved: SpawnIntent): Return
     throw new DispatchRejected(`reserved prompt is missing or changed: ${reserved.promptPath}; restore its original bytes before retrying intent ${reserved.intent}`);
   }
   return buildSpawnInstruction({ ...reserved.checkout, intent: reserved.intent, name: reserved.name, kind: reserved.kind,
-    ...(reserved.model === null ? {} : { model: reserved.model }), effort: reserved.effort, promptPath: prompt.absolute });
+    ...(reserved.model === null ? {} : { model: reserved.model }), effort: reserved.effort, promptPath: prompt.absolute,
+    ...(reserved.reviewPolicy === undefined ? {} : { reviewPolicy: reserved.reviewPolicy }) });
 }
 
 function reserveLaunch(state: ImplementState, args: ImplementArgs, intent: string, name: string, prompt: string, fallbackKind = "claude"): SpawnIntent {
@@ -406,7 +407,7 @@ function dispatch(projectRoot: string, args: ImplementArgs): ImplementCommandRes
   } else {
     const name = requiredFlag(args, "name").trim();
     const prompt = buildImplementorPrompt({ slug: state.topicSlug, prdPath: path.join(requireWorkRoot(state), state.prdPath), statePath, handoff: assertHandoff(handoff) });
-    reserved = reserveLaunch(state, args, `sasu-implement-${runIntentKey(state)}`, name, prompt);
+    reserved = { ...reserveLaunch(state, args, `sasu-implement-${runIntentKey(state)}`, name, prompt), reviewPolicy: "observer-30m" };
     state.dispatchIntent = reserved;
     recordEvent(state, { kind: "dispatch", actor: resolveIssuer(flag(args, "issuer")), subject: name, summary: `Hide spawn instructions reserved for ${name}`, at: reserved.at });
     persistState(statePath, state);

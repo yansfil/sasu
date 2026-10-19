@@ -47,11 +47,12 @@ const flags = {}, native = [];
 for (let i = 2; i < argv.length; i++) {
   if (argv[i] === "--") { native.push(...argv.slice(i + 1)); break; }
   const flag = argv[i];
-  if (!["--parent", "--name", "--intent", "--kind", "--repo", "--branch", "--path"].includes(flag)
+  if (!["--parent", "--name", "--intent", "--kind", "--repo", "--branch", "--path", "--review-policy"].includes(flag)
     || flag in flags || !argv[i + 1] || argv[i + 1].startsWith("--")) refuse("invalid_argument");
   flags[flag] = argv[++i];
 }
 for (const flag of ["--parent", "--name", "--intent", "--kind", "--repo", "--branch"]) if (!(flag in flags)) refuse("invalid_argument");
+if (flags["--review-policy"] !== undefined && flags["--review-policy"] !== "observer-30m") refuse("invalid_argument");
 const parent = caller();
 if (flags["--parent"] !== "here" && flags["--parent"] !== parent.id) refuse("parent_authority_required");
 state.spawns ??= {};

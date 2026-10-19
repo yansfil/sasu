@@ -40,9 +40,11 @@ export const REQUIRED_HIDE_CONTRACT = {
       "participant_ended", "participant_session_changed", "ambiguous_participant",
     ] },
     command("agent list", {}, ["agent_list"]),
-    command("agent spawn", { "--parent": text, "--name": text, "--intent": text, "--kind": text, "--repo": text, "--branch": text, "--path": text }, ["agent"], undefined, true),
+    command("agent spawn", { "--parent": text, "--name": text, "--intent": text, "--kind": text, "--repo": text, "--branch": text, "--path": text,
+      "--review-policy": { type: "one_of", values: ["observer-30m"] } }, ["agent"], undefined, true),
     command("request send", { "--intent": key, "--body": { type: "body" }, "--kind": { type: "one_of", values: ["request", "block", "report"] } }, ["letter"], "target"),
-    command("request reply", { "--intent": key, "--body": { type: "body" } }, ["letter"], "id"),
+    command("request reply", { "--intent": key, "--body": { type: "body" },
+      "--review": { type: "one_of", values: ["scope-appropriate", "delay-justified", "reduce-scope", "diagnosis-needed"] } }, ["letter"], "id"),
     command("inbox", {}, ["inbox"]),
   ],
   envelopes: {

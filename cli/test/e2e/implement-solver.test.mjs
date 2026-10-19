@@ -24,6 +24,7 @@ test("advisor reservation prints a native spawn and letter reply instructions wi
   assert.equal(detail.escalation.target, "B1");
   assert.equal(detail.effort, "high");
   assert.deepEqual(detail.argv.slice(0, 4), ["agent", "spawn", "--parent", "here"]);
+  assert.equal(detail.argv.includes("--review-policy"), false, "advisor instructions retain the existing watch policy");
   const prompt = fs.readFileSync(detail.promptPath, "utf8");
   assert.match(prompt, /Read-only advisor/);
   assert.match(prompt, /Sealed PRD:/);

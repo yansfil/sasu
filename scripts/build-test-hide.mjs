@@ -20,13 +20,14 @@ function run(binary, argv) {
 }
 if (run("git", ["rev-parse", "HEAD"]) !== pin.ref) throw new Error("Hide checkout does not match cli/test/hide-source.json");
 if (run("git", ["status", "--porcelain", "--untracked-files=no"]) !== "") throw new Error("Hide source checkout must be clean");
+env.HIDE_COMMIT = pin.ref;
 const platform = process.platform === "darwin" && process.arch === "arm64" ? "macos-aarch64" : process.platform === "linux" && process.arch === "x64" ? "linux-x86_64" : null;
 if (!platform) throw new Error("native Hide integration supports macOS arm64 and Linux x64");
 run("bash", ["scripts/verify-cargo.sh", "cli"]);
 const herdr = run("zsh", ["scripts/fetch-herdr-runtime.sh", "--platform", platform]);
 run("python3", ["scripts/check-herdr-schema.py", "--herdr-bin", herdr]);
 const resources = path.resolve(output); fs.mkdirSync(resources, { recursive: true });
-for (const [name, input] of [["hide", "hide"], ["hided", "hided"], ["hide-agent-hooks", "hide-agent-hooks"], [`hide-host-helper-${platform}`, "hide-host-helper"]]) {
+for (const [name, input] of [["hide", "hide"], ["hided", "hided"], ["hide-agent-hooks", "hide-agent-hooks"]]) {
   fs.copyFileSync(path.join(path.resolve(source), "target/debug", input), path.join(resources, name)); fs.chmodSync(path.join(resources, name), 0o755);
 }
 fs.copyFileSync(herdr, path.join(resources, "herdr")); fs.chmodSync(path.join(resources, "herdr"), 0o755);

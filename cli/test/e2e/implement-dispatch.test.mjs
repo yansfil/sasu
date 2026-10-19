@@ -20,13 +20,16 @@ test("dispatch prints a complete native command without starting or registering 
   const handoff = `${HANDOFF}\n${"full approved context\n".repeat(1000)}`;
   const detail = ok(f.dispatch(["--kind", "codex", "--model", "chosen-model"], { input: handoff }));
   assert.deepEqual(detail.argv.slice(0, 4), ["agent", "spawn", "--parent", "here"]);
+  assert.equal(detail.argv[detail.argv.indexOf("--review-policy") + 1], "observer-30m");
   assert.deepEqual(detail.argv.slice(-6), ["--model", "chosen-model", "--config", 'model_reasoning_effort="high"', "--", detail.prompt]);
   for (const flag of ["--repo", "--path"]) assert.equal(detail.argv[detail.argv.indexOf(flag) + 1], f.root);
   assert.equal(detail.dispatch.effort, "high");
+  assert.equal(detail.dispatch.reviewPolicy, "observer-30m");
   assert.equal(detail.prompt, `Read ${JSON.stringify(detail.promptPath)} and carry out the assigned work.`);
   const prompt = fs.readFileSync(detail.promptPath, "utf8");
   assert.ok(prompt.includes(handoff.trim()));
   assert.match(prompt, /sasu implement verify on the final committed head/);
+  assert.match(prompt, /observer-30m review policy/);
   assert.match(prompt, /hide request send --kind block/);
   assert.match(prompt, /hide request send --kind report/);
   assert.doesNotMatch(prompt, /sasu implement (plan|block|report)/);
@@ -63,6 +66,35 @@ test("retry reuses the immutable prompt and one intent; direct Hide retries conv
   assert.equal(launched.json.value.id, resumed.json.value.id);
   assert.equal(Object.keys(f.runtime().spawns).length, 1);
   assert.equal(ok(f.cli(["implement", "status"])).dispatch.intent, first.dispatch.intent);
+});
+
+test("a legacy reserved launch retains its original inactivity-only arguments on retry", (t) => {
+  const f = runtimeFixture(t);
+  const prepared = ok(f.dispatch());
+  const state = f.state();
+  delete state.dispatchIntent.reviewPolicy;
+  fs.writeFileSync(path.join(f.root, STATE_PATH), JSON.stringify(state));
+  const argv = [...prepared.argv];
+  argv.splice(argv.indexOf("--review-policy"), 2);
+  const legacy = ok(f.dispatch([], { input: "" }));
+  assert.deepEqual(legacy.argv, argv);
+  const original = f.execute(legacy);
+  assert.equal(original.status, 0, original.stderr);
+  const retry = ok(f.dispatch([], { input: "" }));
+  assert.deepEqual(retry.argv, argv, "an upgrade must not change the arguments bound to an existing intent");
+  const replayed = f.execute(retry);
+  assert.equal(replayed.status, 0, replayed.stderr);
+  assert.equal(replayed.json.value.id, original.json.value.id);
+  assert.equal("reviewPolicy" in f.state().dispatchIntent, false);
+});
+
+test("an unknown persisted review policy fails before returning launch instructions", (t) => {
+  const f = runtimeFixture(t);
+  ok(f.dispatch());
+  const state = f.state();
+  state.dispatchIntent.reviewPolicy = "other-policy";
+  fs.writeFileSync(path.join(f.root, STATE_PATH), JSON.stringify(state));
+  refuses(f.dispatch([], { input: "" }), /dispatchIntent.reviewPolicy/);
 });
 
 test("conflicting launch flags and handoff cannot rewrite a reserved dispatch", (t) => {

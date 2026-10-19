@@ -16,6 +16,8 @@ Compatibility checks consumed arguments, options, native argument forwarding, re
 Compatible additional commands, optional options, answer fields and refusal codes are accepted.
 A minimum version number or a match against one whole-contract digest does not establish compatibility.
 The digest connects the two installed-binary responses; the structural comparison determines compatibility.
+The consumed spawn signature includes `--review-policy observer-30m`, and `request reply` includes `--review` accepting `scope-appropriate`, `delay-justified`, `reduce-scope` and `diagnosis-needed`.
+A build missing either surface reports `HIDE_CONTRACT_UNSUPPORTED`; it cannot silently create an inactivity-only Implementor watch.
 
 The consumed caller command is `hide agent show here`, with no positional arguments and the normal `agent` response envelope.
 Its published contract guarantees the participant fields consumed by Sasu, including nullable `parent` and `project`, and the `running`/`ended` runtime enum.
@@ -24,6 +26,8 @@ Removing or renaming a required code fails compatibility.
 Hide commit `3245fec3` renamed `pane_capability_required` to `agent_pane_required` when it began refusing checkout-bound callers for delivery and agent commands, so Sasu requires the new code and builds that predate it report `HIDE_CONTRACT_UNSUPPORTED`.
 The published refusal list is not exhaustive, and Sasu rejects every failed response, so additional refusal codes remain compatible.
 
-The regression fixtures retain the older public export at commit `72c2113f29b74d60897e62c33031f32a977c6118`, which fails compatibility, and the published caller export, which passes the structural comparison.
-`cli/test/fixtures/hide-contract/published-caller.provenance.json` records the new fixture's source commit, public file hash, contract digest and projection hash.
+The regression fixtures retain the older public export at commit `72c2113f29b74d60897e62c33031f32a977c6118` and the published caller export, both of which fail the current periodic-review requirements.
+`cli/test/fixtures/hide-contract/published-caller.provenance.json` records that caller fixture's source commit, public file hash, contract digest and projection hash.
+The compatible periodic-review export and its provenance live in `published-observer-review.json` and `published-observer-review.provenance.json` in the same directory.
+`cli/test/hide-source.json` pins the exact Hide source used for native acceptance and CI; merge and deploy the compatible Hide change before updating Sasu consumers that use the new policy.
 Native runtime acceptance still requires running the actual merged candidate; a passing comparison of the exported contract alone does not establish it.

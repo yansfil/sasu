@@ -26,9 +26,12 @@ test("native Hide owns lineage, retry convergence, watches and direct letters fo
   for (const key of ["ownerSessionId", "supervision", "pendingDispatch", "dispatches"]) assert.equal(key in state(), false);
   assert.equal(success(await fixture.hide(observer, ["agent", "list"])).value.items.some((item) => item.name === "impl"), false, "preparation never starts a process");
   const child = success(await fixture.hide(observer, prepared.argv)).value;
+  assert.equal(prepared.argv[prepared.argv.indexOf("--review-policy") + 1], "observer-30m");
   assert.equal(child.parent, parent.id);
   assert.equal(child.watch.parent.pane_id, observer);
   assert.equal(child.watch.target.pane_id, child.pane);
+  assert.equal(child.watch.review.policy, "observer-30m");
+  assert.equal(child.watch.review.pending_letter, null);
   const nativeArgs = fs.readFileSync(path.join(fixture.runRoot, "commands", `${child.pane}.argv`), "utf8").split("\0").filter(Boolean);
   assert.ok(nativeArgs.includes(prepared.prompt), "first prompt is one native argument");
   assert.equal(nativeArgs[nativeArgs.indexOf("--effort") + 1], "high");
@@ -49,25 +52,28 @@ test("native Hide owns lineage, retry convergence, watches and direct letters fo
   }
 
   const block = delivered(await fixture.hide(child.pane, ["request", "send", parent.id, "--intent", "native-block", "--kind", "block", "--body", "Which approved behavior applies?"]));
-  const inbox = delivered(await fixture.hide(observer, ["inbox", "--hook", "--bell"]));
-  assert.ok(inbox.ids.includes(block.id));
+  const inbox = delivered(await fixture.hide(observer, ["inbox"]));
+  assert.ok(inbox.some((letter) => letter.id === block.id));
   delivered(await fixture.hide(observer, ["request", "reply", block.id, "--intent", "native-answer", "--body", "Use the sealed behavior"]));
   assert.equal(delivered(await fixture.hide(child.pane, ["request", "show", block.id])).waiting_answer, false);
 
   const advice = success(await fixture.sasu(observer, ["implement", "escalate", "--intent", "diagnose", "--reason", "Inspect the failed product flow"])).detail;
+  assert.equal(advice.argv.includes("--review-policy"), false, "advisors retain the existing inactivity watch");
   const advisor = success(await fixture.hide(observer, advice.argv)).value;
   assert.equal(advisor.parent, parent.id); assert.ok(advisor.watch);
+  assert.equal("review" in advisor.watch, false);
   const answer = delivered(await fixture.hide(advisor.pane, ["request", "send", parent.id, "--intent", "diagnosis-report", "--kind", "report", "--body", "Observed the boundary; retry the sealed suite"]));
-  assert.ok(delivered(await fixture.hide(observer, ["inbox", "--hook", "--bell"])).ids.includes(answer.id));
-  delivered(await fixture.hide(observer, ["inbox", "--confirm", answer.id]));
+  assert.ok(delivered(await fixture.hide(observer, ["inbox"])).some((letter) => letter.id === answer.id));
+  assert.ok(success(await fixture.hide(observer, ["agent", "show", advisor.id])).value.watch, "reading the inbox alone does not confirm intake");
+  assert.equal(delivered(await fixture.hide(observer, ["request", "ack", answer.id])).hook_confirmed, true);
   assert.equal(success(await fixture.hide(observer, ["agent", "show", advisor.id])).value.watch, null);
 
   const report = delivered(await fixture.hide(child.pane, ["request", "send", parent.id, "--intent", "native-report", "--kind", "report", "--body", "Native flow checked"]));
-  delivered(await fixture.hide(observer, ["request", "ack", report.id]));
-  assert.ok(success(await fixture.hide(observer, ["agent", "show", child.id])).value.watch, "ack alone does not claim delivery");
-  assert.ok(delivered(await fixture.hide(observer, ["inbox", "--hook", "--bell"])).ids.includes(report.id));
-  delivered(await fixture.hide(observer, ["inbox", "--confirm", report.id]));
+  assert.ok(delivered(await fixture.hide(observer, ["inbox"])).some((letter) => letter.id === report.id));
+  assert.equal(delivered(await fixture.hide(observer, ["request", "show", report.id])).hook_confirmed, false);
+  assert.ok(success(await fixture.hide(observer, ["agent", "show", child.id])).value.watch, "report creation and inbox reading do not confirm intake");
+  assert.equal(delivered(await fixture.hide(observer, ["request", "ack", report.id])).hook_confirmed, true);
   assert.equal(success(await fixture.hide(observer, ["agent", "show", child.id])).value.watch, null);
   assert.equal(state().escalations.length, 1);
-  fs.writeFileSync(path.join(fixture.runRoot, "acceptance.json"), JSON.stringify({ schema: "sasu.native-hide.acceptance.v2", printOnlyDispatch: true, nativePrompt: true, sameIntentSameChild: true, nestedObserverLineage: true, childRolesRefused: true, directBlockReply: true, visibleAdvisor: true, confirmedReportEndsWatch: true }) + "\n");
+  fs.writeFileSync(path.join(fixture.runRoot, "acceptance.json"), JSON.stringify({ schema: "sasu.native-hide.acceptance.v2", printOnlyDispatch: true, periodicReviewRequested: true, advisorsRetainExistingPolicy: true, nativePrompt: true, sameIntentSameChild: true, nestedObserverLineage: true, childRolesRefused: true, directBlockReply: true, visibleAdvisor: true, confirmedReportEndsWatch: true }) + "\n");
 });

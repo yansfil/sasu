@@ -177,6 +177,9 @@ test("dispatch only generates a stable command with a short native first prompt 
   assert.equal(first.effort, "high");
   assert.match(first.command, /^env -u HIDE_CAP_REF hide /);
   assert.deepEqual(first.argv.slice(0, 4), ["agent", "spawn", "--parent", "here"]);
+  assert.equal(first.argv.includes("--review-policy"), false, "ordinary child instructions keep the existing policy");
+  const supervised = buildSpawnInstruction({ ...launch, reviewPolicy: "observer-30m" });
+  assert.equal(supervised.argv[supervised.argv.indexOf("--review-policy") + 1], "observer-30m");
   assert.deepEqual(first.argv.slice(-4), ["--effort", "high", "--", first.prompt]);
   assert.equal(first.prompt, `Read ${JSON.stringify(launch.promptPath)} and carry out the assigned work.`);
   const codex = buildSpawnInstruction({ ...launch, kind: "codex", model: "chosen-model", effort: "xhigh" });
@@ -212,7 +215,7 @@ test("fixed handoff guidance preserves the complete packet outside native launch
   assert.throws(() => buildImplementorPrompt({ slug: "fixture", prdPath: "/fixture/approved.md", statePath: "/fixture/state.json", handoff: "  " }), DispatchRejected);
 });
 test("invalid launch input is refused before producing a command", () => {
-  for (const change of [{ name: "" }, { intent: "bad\nintent" }, { promptPath: "relative.md" }, { kind: "unsupported" }, { effort: "" }]) {
+  for (const change of [{ name: "" }, { intent: "bad\nintent" }, { promptPath: "relative.md" }, { kind: "unsupported" }, { effort: "" }, { reviewPolicy: "unsupported" }]) {
     assert.throws(() => buildSpawnInstruction({ ...launch, ...change }), DispatchRejected);
   }
 });

@@ -195,6 +195,8 @@ export interface SpawnIntent {
   effort: string;
   promptPath: string;
   promptSha256: string;
+  /** Absent on legacy requests and ordinary advisor launches. */
+  reviewPolicy?: "observer-30m";
   /** Complete requested checkout inputs, fixed for retries of this intent. */
   checkout: { repo: string; branch: string; path: string };
 }

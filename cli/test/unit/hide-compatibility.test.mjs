@@ -11,8 +11,10 @@ import { scratchDir } from "../scratch.mjs";
 // This fixture deliberately preserves the published missing guarantees.
 const legacy = JSON.parse(fs.readFileSync(new URL("../fixtures/hide-contract/published-0.1.0.json", import.meta.url), "utf8"));
 const legacyVersion = { version: "0.1.0", commit: "72c2113f29b74d60897e62c33031f32a977c6118", contract: legacy.digest };
-const published = JSON.parse(fs.readFileSync(new URL("../fixtures/hide-contract/published-caller.json", import.meta.url), "utf8"));
-const provenance = JSON.parse(fs.readFileSync(new URL("../fixtures/hide-contract/published-caller.provenance.json", import.meta.url), "utf8"));
+const caller = JSON.parse(fs.readFileSync(new URL("../fixtures/hide-contract/published-caller.json", import.meta.url), "utf8"));
+const callerProvenance = JSON.parse(fs.readFileSync(new URL("../fixtures/hide-contract/published-caller.provenance.json", import.meta.url), "utf8"));
+const published = JSON.parse(fs.readFileSync(new URL("../fixtures/hide-contract/published-observer-review.json", import.meta.url), "utf8"));
+const provenance = JSON.parse(fs.readFileSync(new URL("../fixtures/hide-contract/published-observer-review.provenance.json", import.meta.url), "utf8"));
 const version = { version: "0.1.0", commit: provenance.sourceCommit, contract: published.digest };
 const baselineIssues = [
   "missing or malformed command: agent show here",
@@ -20,12 +22,16 @@ const baselineIssues = [
   "missing or unsupported answer schema: agent_list",
 ];
 
-test("old public export fails and published caller contract with guaranteed fields passes", () => {
+test("older exports fail and the periodic review contract passes", () => {
   const report = compareHideContract(legacyVersion, legacy);
   assert.equal(report.compatible, false);
   assert.equal(report.code, "HIDE_CONTRACT_UNSUPPORTED");
   assert.deepEqual(report.installed, legacyVersion);
-  assert.deepEqual(report.issues, baselineIssues);
+  const reviewIssues = ["unsupported command signature: agent spawn", "unsupported command signature: request reply"];
+  assert.deepEqual(report.issues, [baselineIssues[0], ...reviewIssues, ...baselineIssues.slice(1)]);
+  const priorCaller = compareHideContract({ version: "0.1.0", commit: callerProvenance.sourceCommit, contract: caller.digest }, caller);
+  assert.equal(priorCaller.code, "HIDE_CONTRACT_UNSUPPORTED");
+  assert.deepEqual(priorCaller.issues, reviewIssues);
   const supported = compareHideContract(version, published);
   assert.equal(supported.compatible, true);
   assert.equal(supported.code, "HIDE_COMPATIBLE");
@@ -52,6 +58,9 @@ test("additional commands, optional inputs, response fields and refusal codes re
 
 test("breaking signatures, envelopes and answer fields are reported structurally", () => {
   for (const [mutate, issue] of [
+    [(c) => c.commands.find((v) => v.command === "agent spawn").options = c.commands.find((v) => v.command === "agent spawn").options.filter((v) => v.name !== "--review-policy"), "unsupported command signature: agent spawn"],
+    [(c) => c.commands.find((v) => v.command === "agent spawn").options.find((v) => v.name === "--review-policy").value.values = ["other"], "unsupported command signature: agent spawn"],
+    [(c) => c.commands.find((v) => v.command === "request reply").options.find((v) => v.name === "--review").value.values = ["scope-appropriate"], "unsupported command signature: request reply"],
     [(c) => c.commands.find((v) => v.command === "agent spawn").options.find((v) => v.name === "--path").value.type = "unsigned", "unsupported command signature: agent spawn"],
     [(c) => c.commands.find((v) => v.command === "agent list").options.push({ name: "--new-required", value: { type: "text" }, required: true, requires: [] }), "unsupported command signature: agent list"],
     [(c) => c.commands.find((v) => v.command === "request send").options.find((v) => v.name === "--kind").value.values = ["request"], "unsupported command signature: request send"],

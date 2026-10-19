@@ -33,6 +33,8 @@ export function buildImplementorPrompt(input: { slug: string; prdPath: string; s
     "Read the approved PRD and repository instructions before editing. Implement the complete approved contract and preserve peers' work.",
     "The Observer owns dispatch and escalation. Do not spawn an Implementor or advisor, invoke gates, or change the approved contract without recorded human approval.",
     "Write a concise execution plan answering what must change, how the result will be observed, what can go wrong, and what is outside scope. Send it directly to your Hide parent with hide request send before the first source edit.",
+    "This delegation requests Hide's observer-30m review policy. Child activity and progress do not postpone it; the Observer explicitly reviews contract/plan fidelity, completed results, implementation versus build/CI waiting versus rework, scope/abstraction creep and repeated fixes or full suites without new evidence. Preserve mandatory verification and report the facts needed for that review.",
+    "Keep periodic inspection proportional: reuse the last actual review and unchanged PRD/plan context, inspect new changes/results/failures first, and read the full baseline only when missing or changed. It is not another full verification stage; final independent full-contract reviews remain required.",
     "Use hide agent list to find your live registration and its parent. Use hide inbox and hide request reply for coordination. Send missing decisions or blockers to that parent with hide request send --kind block and end your turn; do not use interactive user-question tools.",
     "Commit coherent work, request native Fidelity and Code review on the committed candidate, fix current-scope defects, then run sasu implement verify on the final committed head. Report unavailable checks honestly.",
     "Before your final response, send your Hide parent a report with hide request send --kind report, including changed files, verification evidence and unresolved items. Letters do not authorize changes to the approved PRD.",
@@ -53,6 +55,7 @@ export interface SpawnInstructionInput {
   branch: string;
   path: string;
   promptPath: string;
+  reviewPolicy?: "observer-30m";
 }
 export interface SpawnInstruction {
   command: string;
@@ -76,6 +79,7 @@ export function buildSpawnInstruction(input: SpawnInstructionInput): SpawnInstru
   const effort = input.effort ?? "high";
   if (!/^[a-z]+$/.test(effort)) throw new DispatchRejected("effort must be a native reasoning effort name");
   if (input.model !== undefined && (input.model.trim() === "" || /[\x00-\x1f\x7f]/.test(input.model))) throw new DispatchRejected("model must be nonempty and contain no control characters");
+  if (input.reviewPolicy !== undefined && input.reviewPolicy !== "observer-30m") throw new DispatchRejected("unsupported review policy; use observer-30m");
   // A live 2026-10-07 launch truncated a long pasted command. Keep the first
   // native prompt short; the caller preserves the full immutable handoff file.
   const prompt = `Read ${JSON.stringify(input.promptPath)} and carry out the assigned work.`;
@@ -84,6 +88,7 @@ export function buildSpawnInstruction(input: SpawnInstructionInput): SpawnInstru
   else native.push("--effort", effort);
   native.push("--", prompt);
   const argv = ["agent", "spawn", "--parent", "here", "--name", input.name, "--intent", input.intent, "--kind", kind,
-    "--repo", input.repo, "--branch", input.branch, "--path", input.path, "--", ...native];
+    "--repo", input.repo, "--branch", input.branch, "--path", input.path,
+    ...(input.reviewPolicy === undefined ? [] : ["--review-policy", input.reviewPolicy]), "--", ...native];
   return { command: `env -u HIDE_CAP_REF hide ${argv.map(shellQuote).join(" ")}`, argv, prompt, kind, effort };
 }

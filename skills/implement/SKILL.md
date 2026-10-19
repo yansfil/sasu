@@ -62,6 +62,7 @@ sasu implement start --prd <approved-prd-path>
 ```
 
 Under Hide the Observer seals the run with `start`, asks `dispatch` for the handoff command, then runs the returned `hide agent spawn --parent here` command directly.
+The Implementor command opts into `--review-policy observer-30m`; advisors retain their existing watch behavior.
 The Implementor reads the sealed run using the explicit state path in its handoff.
 Retry the same spawn intent after an interrupted response; Hide owns child reuse and startup recovery.
 Outside a managed runtime, the implementing session runs `start` in the selected checkout and continues there.
@@ -142,6 +143,8 @@ The Observer reads `hide inbox` and answers with `hide request reply <id> --inte
 Right before its final report, the Implementor sends `hide request send <observer> --kind report --intent <stable-key> --body <current verification and review result>`.
 A report letter requests inspection; it is not a completion verdict.
 Hide owns notification delivery and watch completion.
+Hide also requests periodic Observer reviews every 30 minutes independently of child activity.
+Follow `references/observer-and-herdr.md` for the assessment and explicit `hide request reply <review-letter> --review <assessment>` completion; ordinary receipt, ack, reply and progress do not complete that review.
 
 ## Delivery
 

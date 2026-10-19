@@ -292,6 +292,7 @@ export function parseImplementState(text: string): ImplementState {
     assertNullableString(value["model"], `${label}.model`);
     assertIsoTimestamp(value["at"], `${label}.at`);
     assertSha256(value["promptSha256"], `${label}.promptSha256`);
+    if (value["reviewPolicy"] !== undefined) enumValue(value["reviewPolicy"], ["observer-30m"], `${label}.reviewPolicy`);
     assertRecord(value["checkout"], `${label}.checkout`);
     for (const field of ["repo", "branch", "path"] as const) assertString(value["checkout"][field], `${label}.checkout.${field}`);
     for (const field of ["sessionId", "terminalId", "paneId", "observer", "implementor", "hide", "registration", "watchId"]) {

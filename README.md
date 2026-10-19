@@ -74,6 +74,8 @@ node cli/dist/cli.js --help
 
 The Observer runs `hide agent spawn --parent here`, `hide inbox`, `hide request send` and `hide request reply` directly.
 Sasu prints dispatch and advisor instructions, and reads live parent relationships for role checks.
+Implementor dispatch requests `--review-policy observer-30m`; advisor and ordinary delegation keep their existing watch behavior.
+Hide requests a review every 30 minutes independently of child activity, and the designated Observer completes it with `hide request reply <letter> --review <assessment> --intent <key> --body <grounds and next direction>`.
 See [Sasu on Hide](docs/hide.md) for startup, communication and retry behavior.
 The skill installer installs no coordination daemon, LaunchAgent or Stop hook.
 

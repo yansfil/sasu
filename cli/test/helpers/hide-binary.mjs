@@ -19,6 +19,7 @@ export function requireRealHide() {
   const resources = path.dirname(candidate);
   const platform = process.platform === "darwin" && process.arch === "arm64" ? "macos-aarch64" : process.platform === "linux" && process.arch === "x64" ? "linux-x86_64" : null;
   if (!platform) throw new Error("native Hide integration supports macOS arm64 and Linux x64");
-  for (const executable of ["hided", "herdr", "hide-agent-hooks", `hide-host-helper-${platform}`]) fs.accessSync(path.join(resources, executable), fs.constants.X_OK);
+  for (const executable of ["hided", "herdr", "hide-agent-hooks"]) fs.accessSync(path.join(resources, executable), fs.constants.X_OK);
+  fs.accessSync(path.join(resources, "herdr-bundle.json"), fs.constants.R_OK);
   return { hide: candidate, hided: path.join(resources, "hided"), herdr: path.join(resources, "herdr"), resources };
 }

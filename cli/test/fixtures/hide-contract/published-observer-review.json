@@ -1,0 +1,1555 @@
+{
+  "answers": {
+    "agent": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "definitions": {
+        "Actor": {
+          "properties": {
+            "device_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "session": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "pane_id",
+            "name",
+            "kind",
+            "device_id",
+            "session"
+          ],
+          "type": "object"
+        },
+        "Connection": {
+          "enum": [
+            "connected",
+            "disconnected"
+          ],
+          "type": "string"
+        },
+        "Names": {
+          "properties": {
+            "tab": {
+              "$ref": "#/definitions/Outcome"
+            },
+            "workspace": {
+              "$ref": "#/definitions/Outcome"
+            }
+          },
+          "required": [
+            "workspace",
+            "tab"
+          ],
+          "type": "object"
+        },
+        "Outcome": {
+          "enum": [
+            "pending",
+            "applied",
+            "preserved",
+            "failed"
+          ],
+          "type": "string"
+        },
+        "PeriodicReview": {
+          "properties": {
+            "assessment": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ReviewAssessment"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completed_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "cycle": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "due_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "pending_letter": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "policy": {
+              "$ref": "#/definitions/ReviewPolicy"
+            }
+          },
+          "required": [
+            "policy",
+            "due_at_unix_ms",
+            "pending_letter",
+            "completed_at_unix_ms",
+            "assessment",
+            "cycle"
+          ],
+          "type": "object"
+        },
+        "ReviewAssessment": {
+          "enum": [
+            "scope-appropriate",
+            "delay-justified",
+            "reduce-scope",
+            "diagnosis-needed"
+          ],
+          "type": "string"
+        },
+        "ReviewPolicy": {
+          "description": "An explicit opt-in; ordinary delegation retains its inactivity-only watch.",
+          "enum": [
+            "observer-30m"
+          ],
+          "type": "string"
+        },
+        "Runtime": {
+          "enum": [
+            "running",
+            "ended"
+          ],
+          "type": "string"
+        },
+        "Watch": {
+          "properties": {
+            "activity_failures": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "first_warning_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "generation": {
+              "default": 0,
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "last_activity_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "last_state_change_seq": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "last_status": {
+              "type": "string"
+            },
+            "parent": {
+              "$ref": "#/definitions/Actor"
+            },
+            "review": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/PeriodicReview"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status_changed_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "target": {
+              "$ref": "#/definitions/Actor"
+            },
+            "warning_count": {
+              "format": "uint8",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "parent",
+            "target",
+            "last_activity_at_unix_ms",
+            "first_warning_at_unix_ms",
+            "warning_count",
+            "activity_failures",
+            "last_status",
+            "last_state_change_seq",
+            "status_changed_at_unix_ms",
+            "generation"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "One registered agent, as `hide agent show`, `register`, `end` and `spawn` answer it.",
+      "properties": {
+        "connection": {
+          "$ref": "#/definitions/Connection"
+        },
+        "hostScope": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "instance": {
+          "type": "string"
+        },
+        "machine": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "names": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Names"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Naming has its own receipt; it never changes successful spawn identity."
+        },
+        "origin": {
+          "description": "The spawner, independently of responsibility; null for ordinary roots.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pane": {
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "registered": {
+          "type": "boolean"
+        },
+        "runtime": {
+          "$ref": "#/definitions/Runtime"
+        },
+        "session": {
+          "type": "string"
+        },
+        "watch": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Watch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The watch on this agent, if one is running."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "machine",
+        "hostScope",
+        "session",
+        "instance",
+        "pane",
+        "parent",
+        "origin",
+        "project",
+        "runtime",
+        "connection",
+        "registered",
+        "watch"
+      ],
+      "title": "AgentView",
+      "type": "object"
+    },
+    "agent_list": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "definitions": {
+        "Actor": {
+          "properties": {
+            "device_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "session": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "pane_id",
+            "name",
+            "kind",
+            "device_id",
+            "session"
+          ],
+          "type": "object"
+        },
+        "AgentView": {
+          "description": "One registered agent, as `hide agent show`, `register`, `end` and `spawn` answer it.",
+          "properties": {
+            "connection": {
+              "$ref": "#/definitions/Connection"
+            },
+            "hostScope": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "instance": {
+              "type": "string"
+            },
+            "machine": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "names": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Names"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Naming has its own receipt; it never changes successful spawn identity."
+            },
+            "origin": {
+              "description": "The spawner, independently of responsibility; null for ordinary roots.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pane": {
+              "type": "string"
+            },
+            "parent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "project": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "registered": {
+              "type": "boolean"
+            },
+            "runtime": {
+              "$ref": "#/definitions/Runtime"
+            },
+            "session": {
+              "type": "string"
+            },
+            "watch": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Watch"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The watch on this agent, if one is running."
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "machine",
+            "hostScope",
+            "session",
+            "instance",
+            "pane",
+            "parent",
+            "origin",
+            "project",
+            "runtime",
+            "connection",
+            "registered",
+            "watch"
+          ],
+          "type": "object"
+        },
+        "Connection": {
+          "enum": [
+            "connected",
+            "disconnected"
+          ],
+          "type": "string"
+        },
+        "Names": {
+          "properties": {
+            "tab": {
+              "$ref": "#/definitions/Outcome"
+            },
+            "workspace": {
+              "$ref": "#/definitions/Outcome"
+            }
+          },
+          "required": [
+            "workspace",
+            "tab"
+          ],
+          "type": "object"
+        },
+        "Outcome": {
+          "enum": [
+            "pending",
+            "applied",
+            "preserved",
+            "failed"
+          ],
+          "type": "string"
+        },
+        "PeriodicReview": {
+          "properties": {
+            "assessment": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ReviewAssessment"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completed_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "cycle": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "due_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "pending_letter": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "policy": {
+              "$ref": "#/definitions/ReviewPolicy"
+            }
+          },
+          "required": [
+            "policy",
+            "due_at_unix_ms",
+            "pending_letter",
+            "completed_at_unix_ms",
+            "assessment",
+            "cycle"
+          ],
+          "type": "object"
+        },
+        "ReviewAssessment": {
+          "enum": [
+            "scope-appropriate",
+            "delay-justified",
+            "reduce-scope",
+            "diagnosis-needed"
+          ],
+          "type": "string"
+        },
+        "ReviewPolicy": {
+          "description": "An explicit opt-in; ordinary delegation retains its inactivity-only watch.",
+          "enum": [
+            "observer-30m"
+          ],
+          "type": "string"
+        },
+        "Runtime": {
+          "enum": [
+            "running",
+            "ended"
+          ],
+          "type": "string"
+        },
+        "Watch": {
+          "properties": {
+            "activity_failures": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "first_warning_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "generation": {
+              "default": 0,
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "last_activity_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "last_state_change_seq": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "last_status": {
+              "type": "string"
+            },
+            "parent": {
+              "$ref": "#/definitions/Actor"
+            },
+            "review": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/PeriodicReview"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status_changed_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "target": {
+              "$ref": "#/definitions/Actor"
+            },
+            "warning_count": {
+              "format": "uint8",
+              "minimum": 0.0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "parent",
+            "target",
+            "last_activity_at_unix_ms",
+            "first_warning_at_unix_ms",
+            "warning_count",
+            "activity_failures",
+            "last_status",
+            "last_state_change_seq",
+            "status_changed_at_unix_ms",
+            "generation"
+          ],
+          "type": "object"
+        }
+      },
+      "description": "`hide agent list`.",
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/definitions/AgentView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "title": "AgentList",
+      "type": "object"
+    },
+    "letter": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "definitions": {
+        "Actor": {
+          "properties": {
+            "device_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "session": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "pane_id",
+            "name",
+            "kind",
+            "device_id",
+            "session"
+          ],
+          "type": "object"
+        },
+        "AnswerWaitEnd": {
+          "description": "Why a letter stopped waiting for an answer nobody gave.",
+          "oneOf": [
+            {
+              "description": "The sender's or the recipient's registration ended.",
+              "enum": [
+                "party_ended"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The letter was sent 24 hours ago and no answer came.",
+              "enum": [
+                "deadline"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "BellTurn": {
+          "description": "The native session and submitted bell digest that own this intake.",
+          "properties": {
+            "digest": {
+              "type": "string"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "session",
+            "digest"
+          ],
+          "type": "object"
+        },
+        "ReviewAssessment": {
+          "enum": [
+            "scope-appropriate",
+            "delay-justified",
+            "reduce-scope",
+            "diagnosis-needed"
+          ],
+          "type": "string"
+        },
+        "State": {
+          "enum": [
+            "pending",
+            "delivered",
+            "acknowledged",
+            "cancelled",
+            "expired",
+            "undelivered"
+          ],
+          "type": "string"
+        },
+        "WarningReceipt": {
+          "description": "The inactivity episode and external notification reservation survive the watch itself, so stopping/restarting or sibling watches cannot resend.",
+          "properties": {
+            "activity_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ordinal": {
+              "format": "uint8",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "parent_notified": {
+              "default": false,
+              "type": "boolean"
+            },
+            "target": {
+              "$ref": "#/definitions/Actor"
+            }
+          },
+          "required": [
+            "target",
+            "activity_at_unix_ms",
+            "ordinal",
+            "parent_notified"
+          ],
+          "type": "object"
+        }
+      },
+      "properties": {
+        "answer_wait_ended": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/AnswerWaitEnd"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Set when the wait for an answer ended without one; null otherwise."
+        },
+        "bell_attempts": {
+          "default": null,
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "bell_errors": {
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "bell_line": {
+          "default": null,
+          "description": "The line the doorbell typed for this letter last, saved with its reservation before it was typed; null until the first bell. A submitted prompt is that bell when its canonical digest matches this line; older hooks' whole-line digests remain accepted too.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bell_sent": {
+          "type": "boolean"
+        },
+        "bell_turn": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BellTurn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "body": {
+          "type": "string"
+        },
+        "created_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "finished_at_unix_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "hook_confirmed": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "human_notified": {
+          "default": false,
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "immediate": {
+          "default": false,
+          "description": "Sent with `hide request send --now`: delivered at the recipient's next safe gap while it works, without the mid-turn wait (PRD letters-to-busy-agents D-05). An older build drops the field at its next save, and the letter then waits as any other.",
+          "type": "boolean"
+        },
+        "intake_from": {
+          "default": null,
+          "description": "Where the letter's wait for intake began: on its recipient machine's clock while the ledger keeps one (`Ledger::node_clocks`), on the wall clock otherwise; null is its creation on the wall clock.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "intent": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "recipient": {
+          "$ref": "#/definitions/Actor"
+        },
+        "reply_to": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "review_assessment": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ReviewAssessment"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sender": {
+          "$ref": "#/definitions/Actor"
+        },
+        "state": {
+          "$ref": "#/definitions/State"
+        },
+        "tool_handovers": {
+          "default": 0,
+          "description": "How many tool events handed the letter over while its recipient worked (PRD letters-to-busy-agents D-11): a handover is confirmed by the script once the host kept it, and after three unconfirmed ones the letter waits for the next prompt or `hide inbox`, as it does after three bells.",
+          "format": "uint8",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "waiting_answer": {
+          "type": "boolean"
+        },
+        "watch_warning": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WarningReceipt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "intent",
+        "sender",
+        "recipient",
+        "kind",
+        "body",
+        "state",
+        "hook_confirmed",
+        "waiting_answer",
+        "reply_to",
+        "created_at_unix_ms",
+        "finished_at_unix_ms",
+        "bell_errors",
+        "bell_sent",
+        "bell_attempts",
+        "human_notified",
+        "watch_warning",
+        "answer_wait_ended",
+        "bell_line",
+        "bell_turn",
+        "intake_from",
+        "immediate",
+        "tool_handovers"
+      ],
+      "title": "Letter",
+      "type": "object"
+    },
+    "inbox": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "definitions": {
+        "Actor": {
+          "properties": {
+            "device_id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "session": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "pane_id",
+            "name",
+            "kind",
+            "device_id",
+            "session"
+          ],
+          "type": "object"
+        },
+        "AnswerWaitEnd": {
+          "description": "Why a letter stopped waiting for an answer nobody gave.",
+          "oneOf": [
+            {
+              "description": "The sender's or the recipient's registration ended.",
+              "enum": [
+                "party_ended"
+              ],
+              "type": "string"
+            },
+            {
+              "description": "The letter was sent 24 hours ago and no answer came.",
+              "enum": [
+                "deadline"
+              ],
+              "type": "string"
+            }
+          ]
+        },
+        "BellTurn": {
+          "description": "The native session and submitted bell digest that own this intake.",
+          "properties": {
+            "digest": {
+              "type": "string"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "session",
+            "digest"
+          ],
+          "type": "object"
+        },
+        "InboxEntry": {
+          "description": "One letter of `hide inbox`.",
+          "properties": {
+            "ack_command": {
+              "description": "The command that acknowledges the letter, for an agent with no prompt hook to confirm it.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "answer_wait_ended": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/AnswerWaitEnd"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "description": "Set when the wait for an answer ended without one; null otherwise."
+            },
+            "bell_attempts": {
+              "default": null,
+              "format": "uint8",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "bell_errors": {
+              "format": "uint8",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "bell_line": {
+              "default": null,
+              "description": "The line the doorbell typed for this letter last, saved with its reservation before it was typed; null until the first bell. A submitted prompt is that bell when its canonical digest matches this line; older hooks' whole-line digests remain accepted too.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "bell_sent": {
+              "type": "boolean"
+            },
+            "bell_turn": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/BellTurn"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "body": {
+              "type": "string"
+            },
+            "created_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "finished_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "hook_confirmed": {
+              "default": null,
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "human_notified": {
+              "default": false,
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "immediate": {
+              "default": false,
+              "description": "Sent with `hide request send --now`: delivered at the recipient's next safe gap while it works, without the mid-turn wait (PRD letters-to-busy-agents D-05). An older build drops the field at its next save, and the letter then waits as any other.",
+              "type": "boolean"
+            },
+            "intake_from": {
+              "default": null,
+              "description": "Where the letter's wait for intake began: on its recipient machine's clock while the ledger keeps one (`Ledger::node_clocks`), on the wall clock otherwise; null is its creation on the wall clock.",
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "intent": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "recipient": {
+              "$ref": "#/definitions/Actor"
+            },
+            "reply_to": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "review_assessment": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ReviewAssessment"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "sender": {
+              "$ref": "#/definitions/Actor"
+            },
+            "state": {
+              "$ref": "#/definitions/State"
+            },
+            "tool_handovers": {
+              "default": 0,
+              "description": "How many tool events handed the letter over while its recipient worked (PRD letters-to-busy-agents D-11): a handover is confirmed by the script once the host kept it, and after three unconfirmed ones the letter waits for the next prompt or `hide inbox`, as it does after three bells.",
+              "format": "uint8",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "waiting_answer": {
+              "type": "boolean"
+            },
+            "watch_warning": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/WarningReceipt"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            }
+          },
+          "required": [
+            "id",
+            "intent",
+            "sender",
+            "recipient",
+            "kind",
+            "body",
+            "state",
+            "hook_confirmed",
+            "waiting_answer",
+            "reply_to",
+            "created_at_unix_ms",
+            "finished_at_unix_ms",
+            "bell_errors",
+            "bell_sent",
+            "bell_attempts",
+            "human_notified",
+            "watch_warning",
+            "answer_wait_ended",
+            "bell_line",
+            "bell_turn",
+            "intake_from",
+            "immediate",
+            "tool_handovers"
+          ],
+          "type": "object"
+        },
+        "ReviewAssessment": {
+          "enum": [
+            "scope-appropriate",
+            "delay-justified",
+            "reduce-scope",
+            "diagnosis-needed"
+          ],
+          "type": "string"
+        },
+        "State": {
+          "enum": [
+            "pending",
+            "delivered",
+            "acknowledged",
+            "cancelled",
+            "expired",
+            "undelivered"
+          ],
+          "type": "string"
+        },
+        "WarningReceipt": {
+          "description": "The inactivity episode and external notification reservation survive the watch itself, so stopping/restarting or sibling watches cannot resend.",
+          "properties": {
+            "activity_at_unix_ms": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "ordinal": {
+              "format": "uint8",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "parent_notified": {
+              "default": false,
+              "type": "boolean"
+            },
+            "target": {
+              "$ref": "#/definitions/Actor"
+            }
+          },
+          "required": [
+            "target",
+            "activity_at_unix_ms",
+            "ordinal",
+            "parent_notified"
+          ],
+          "type": "object"
+        }
+      },
+      "items": {
+        "$ref": "#/definitions/InboxEntry"
+      },
+      "title": "Array_of_InboxEntry",
+      "type": "array"
+    }
+  },
+  "commands": [
+    {
+      "answers": [
+        "agent_list"
+      ],
+      "arguments": [],
+      "command": "agent list",
+      "options": [
+        {
+          "name": "--json",
+          "required": false,
+          "requires": [],
+          "value": null
+        }
+      ],
+      "repeats_at_most": null,
+      "rest": null
+    },
+    {
+      "answers": [
+        "agent"
+      ],
+      "arguments": [],
+      "command": "agent show here",
+      "options": [
+        {
+          "name": "--json",
+          "required": false,
+          "requires": [],
+          "value": null
+        }
+      ],
+      "refusals": [
+        "agent_pane_required",
+        "caller_identity_conflict",
+        "participant_unavailable",
+        "participant_ended",
+        "participant_session_changed",
+        "ambiguous_participant"
+      ],
+      "repeats_at_most": null,
+      "rest": null
+    },
+    {
+      "answers": [
+        "agent"
+      ],
+      "arguments": [],
+      "command": "agent spawn",
+      "options": [
+        {
+          "name": "--parent",
+          "required": false,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--review-policy",
+          "required": false,
+          "requires": [
+            "--parent"
+          ],
+          "value": {
+            "type": "one_of",
+            "values": [
+              "observer-30m"
+            ]
+          }
+        },
+        {
+          "name": "--machine",
+          "required": false,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--name",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--intent",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--kind",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--repo",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--branch",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--path",
+          "required": false,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--model",
+          "required": false,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--effort",
+          "required": false,
+          "requires": [],
+          "value": {
+            "type": "text"
+          }
+        },
+        {
+          "name": "--help",
+          "required": false,
+          "requires": [],
+          "value": null
+        },
+        {
+          "name": "--json",
+          "required": false,
+          "requires": [],
+          "value": null
+        }
+      ],
+      "refusals": [
+        "spawn_busy",
+        "review_parent_required",
+        "invalid_review_policy",
+        "machine_unknown",
+        "machine_not_permitted",
+        "machine_unavailable",
+        "repository_unavailable",
+        "agent_not_installed",
+        "intent_conflict",
+        "invalid_launch_choice",
+        "shell_starting",
+        "agent_not_started",
+        "worktree_unconfirmed",
+        "native_identity_unavailable",
+        "identity_waits_full",
+        "session_too_long",
+        "codex_capability_unknown"
+      ],
+      "repeats_at_most": null,
+      "rest": "the agent's own arguments"
+    },
+    {
+      "answers": [
+        "letter"
+      ],
+      "arguments": [
+        {
+          "name": "target",
+          "value": {
+            "type": "key"
+          }
+        }
+      ],
+      "command": "request send",
+      "options": [
+        {
+          "name": "--intent",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "key"
+          }
+        },
+        {
+          "name": "--body",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "body"
+          }
+        },
+        {
+          "name": "--kind",
+          "required": false,
+          "requires": [],
+          "value": {
+            "type": "one_of",
+            "values": [
+              "request",
+              "block",
+              "report",
+              "progress"
+            ]
+          }
+        },
+        {
+          "name": "--now",
+          "required": false,
+          "requires": [],
+          "value": null
+        }
+      ],
+      "repeats_at_most": null,
+      "rest": null
+    },
+    {
+      "answers": [
+        "letter"
+      ],
+      "arguments": [
+        {
+          "name": "id",
+          "value": {
+            "type": "key"
+          }
+        }
+      ],
+      "command": "request reply",
+      "options": [
+        {
+          "name": "--intent",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "key"
+          }
+        },
+        {
+          "name": "--body",
+          "required": true,
+          "requires": [],
+          "value": {
+            "type": "body"
+          }
+        },
+        {
+          "name": "--review",
+          "required": false,
+          "requires": [],
+          "value": {
+            "type": "one_of",
+            "values": [
+              "scope-appropriate",
+              "delay-justified",
+              "reduce-scope",
+              "diagnosis-needed"
+            ]
+          }
+        }
+      ],
+      "repeats_at_most": null,
+      "rest": null
+    },
+    {
+      "answers": [
+        "inbox"
+      ],
+      "arguments": [],
+      "command": "inbox",
+      "options": [],
+      "repeats_at_most": null,
+      "rest": null
+    }
+  ],
+  "digest": "sha256:ffc2390f5af05bb96111f048892ca29b40533f8fe9a126ab1fa39376853725bf",
+  "envelopes": {
+    "agent": {
+      "answer": "value",
+      "code": "error.code",
+      "ok": "ok"
+    },
+    "inbox": {
+      "answer": "result",
+      "code": "reason",
+      "ok": "ok"
+    },
+    "request": {
+      "answer": "result",
+      "code": "reason",
+      "ok": "ok"
+    }
+  },
+  "format": 1
+}

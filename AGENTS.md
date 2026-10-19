@@ -41,7 +41,9 @@ Apply these principles together:
 The approved [stateless verification change](docs/plans/2026-09-15-stateless-verification.md) replaces receipt-backed completion, in-CLI implementation judges, correction budgets, and reviewer finding state.
 The [verification convergence plan](docs/plans/2026-09-24-verification-convergence.md) moves native review ahead of the full verify of the final committed candidate.
 The [observer drift plan](docs/plans/2026-09-25-observer-drift-advisor.md) introduced the execution plan's four questions and inspectable progress and drift facts.
-The current Hide watch is an inactivity watch; it does not promise a wake on each commit or drift fact.
+Sasu Implementor dispatch opts into Hide's `observer-30m` review policy alongside its inactivity watch.
+Child activity does not postpone the review, and only the designated Observer's explicit review conclusion starts the next 30-minute cycle.
+There is no wake on every commit or drift fact.
 Full reasoning lives in [PRINCIPLES.md](PRINCIPLES.md).
 
 ## Current Verification Contract
