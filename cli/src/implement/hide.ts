@@ -48,14 +48,15 @@ export interface ParticipantView {
   pane: string;
   parent: string | null;
   project: string | null;
-  runtime: "running" | "ended";
+  /** Hide's participant runtime; an asleep agent keeps its conversation but runs no process. */
+  runtime: "running" | "asleep" | "ended";
   registered: boolean;
 }
 
 function participantView(value: unknown): ParticipantView {
   if (!record(value) || !["id", "name", "machine", "hostScope", "pane"].every((key) => textField(value[key]))
     || !(value.parent === null || textField(value.parent)) || !(value.project === null || textField(value.project))
-    || !["running", "ended"].includes(String(value.runtime)) || typeof value.registered !== "boolean") {
+    || !["running", "asleep", "ended"].includes(String(value.runtime)) || typeof value.registered !== "boolean") {
     throw new HideCallFailed("hide returned an unusable participant; inspect Hide registrations before retrying", "invalid_response");
   }
   const { id, name, machine, hostScope, pane, parent, project, runtime, registered } = value;

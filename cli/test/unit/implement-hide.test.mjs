@@ -117,6 +117,14 @@ test("a connected-device caller response works without a local socket or rendere
   assert.doesNotThrow(() => assertObserverForRun({ projectRoot }, { ...env, HIDE_FAKE_DEVICE: device, HIDE_FAKE_RENDERER_DOWN: "1" }));
   assert.doesNotThrow(() => assertObserverForRun({ projectRoot }, { ...env, HIDE_FAKE_DEVICE: device, HERDR_SOCKET_PATH: undefined }));
 });
+test("an asleep agent elsewhere in the list neither breaks the read nor counts as live", (t) => {
+  const sleeper = { ...observer, id: "sleeper", name: "sleeper", pane: "w9:p9", parent: null, runtime: "asleep" };
+  const { env } = fixture(t, [observer, sleeper]);
+  assert.deepEqual(listParticipants(env).map((p) => [p.id, p.runtime]), [["observer", "running"], ["sleeper", "asleep"]]);
+  assert.doesNotThrow(() => assertObserverForRun(role, env));
+  const asleepObserver = fixture(t, [{ ...observer, runtime: "asleep" }]);
+  assert.throws(() => assertObserverForRun(role, asleepObserver.env), refusal("native_identity_required"));
+});
 test("another parent cannot dispatch into an existing run child", (t) => {
   const { env } = fixture(t, [observer, { ...child, parent: "another-observer" }]);
   assert.throws(() => assertObserverForRun(role, env), refusal("observer_required"));
